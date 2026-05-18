@@ -19,7 +19,8 @@ import { AuthService } from '@/modules/auth/auth.service';
 import { PlatformService } from '@/modules/platform/platform.service';
 import { SchoolService } from '@/modules/school/school.service';
 import { DomainService } from '@/modules/domain.service';
-import { MailService } from '@/modules/mail/mail.service';
+import { MailService } from '@/infrastructure/mail/mail.service';
+import { RedisService } from '@/infrastructure/redis/redis.service';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { MailService } from '@/modules/mail/mail.service';
   ],
   providers: [
     PrismaService,
+    RedisService,
     AuthService,
     PlatformService,
     SchoolService,

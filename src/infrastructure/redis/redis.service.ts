@@ -7,11 +7,16 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   private client!: Redis;
 
   onModuleInit(): void {
-    const host = process.env.REDIS_HOST ?? 'localhost';
-    const port = Number(process.env.REDIS_PORT ?? 6379);
-    const password = process.env.REDIS_PASSWORD || undefined;
+    const url = process.env.REDIS_URL;
 
-    this.client = new Redis({ host, port, password, lazyConnect: true });
+    this.client = url
+      ? new Redis(url, { lazyConnect: true })
+      : new Redis({
+          host: process.env.REDIS_HOST ?? 'localhost',
+          port: Number(process.env.REDIS_PORT ?? 6379),
+          password: process.env.REDIS_PASSWORD || undefined,
+          lazyConnect: true,
+        });
 
     this.client.on('error', (err: Error) => {
       this.logger.warn(`Redis error: ${err.message}`);
