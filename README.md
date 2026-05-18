@@ -1,15 +1,15 @@
 # NouraSchool Backend NestJS (Nouveau Projet)
 
-Nouveau projet indépendant pour la migration complète du backend vers NestJS.
+Nouveau projet independant pour la migration complete du backend vers NestJS.
 
 ## Ce qui est inclus
 - Architecture NestJS professionnelle (modules + common)
 - Fastify, Helmet, CORS, Rate limit
 - JWT + RBAC (roles) + endpoints publics
 - Multi-tenant via `X-Tenant-Id`
-- Prisma (PostgreSQL) avec schéma de base
+- Prisma (PostgreSQL) avec schema de base
 - Swagger (`/docs`)
-- Routes métier couvrant les contextes:
+- Routes metier couvrant les contextes:
   - `/api/platform/*`
   - `/api/v1/*`
   - `/api/admin/*`
@@ -18,13 +18,18 @@ Nouveau projet indépendant pour la migration complète du backend vers NestJS.
   - `/api/parent/*`
   - `/api/caisse/*`
 
-## Démarrage
+## Demarrage
 ```bash
 npm install
 cp .env.example .env
 npm run prisma:generate
+npm run setup:seed
 npm run start:dev
 ```
 
+## Seed
+- `npm run seed` pour recharger les donnees de demo
+- `npm run setup:seed` pour generer Prisma, synchroniser la base, puis lancer le seed
+
 ## Remarque
-Ce projet est isolé de `nouraschool_backend` (Java/Quarkus), pour permettre une migration progressive sans risque.
+Ce projet est isole de `nouraschool_backend` (Java/Quarkus), pour permettre une migration progressive sans risque.

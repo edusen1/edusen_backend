@@ -12,11 +12,14 @@
     "lint": "eslint \"{src,test}/**/*.ts\"",
     "test": "jest",
     "test:cov": "jest --coverage",
-    "setup:test-users": "npx prisma generate && npx prisma db push && npm run seed:test-users",
-    "seed:test-users": "node scripts/create-test-users.cjs",
+    "setup:seed": "npx prisma generate && npx prisma db push && npm run seed",
+    "seed": "node scripts/seed.cjs",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio"
+  },
+  "prisma": {
+    "seed": "node scripts/seed.cjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.600.0",
