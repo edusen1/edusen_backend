@@ -3,6 +3,10 @@
 # =============================================
 FROM node:20-alpine AS builder
 
+# Force dev deps — Coolify injects NODE_ENV=production at buildtime which
+# causes npm ci to skip devDependencies (@nestjs/cli is there, nest cmd needed)
+ENV NODE_ENV=development
+
 # Native deps for bcrypt (napi-v3 binding)
 RUN apk add --no-cache python3 make g++
 
@@ -45,7 +49,7 @@ EXPOSE 3000
 
 # Simple liveness check — any HTTP response means the server is up
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD wget -q -O /dev/null https://noura-shool.assanediallo.com/ || exit 1
+  CMD wget -q -O /dev/null http://localhost:3000/ || exit 1
 
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["./docker-entrypoint.sh"]
