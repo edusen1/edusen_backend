@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\HP\\\\IdeaProjects\\\\noura-school\\\\nouraschool_backend\\\\src\\\\main\\\\java\\\\com\\\\nouraschool\" -Recurse -Directory)",
-      "Bash(Select-Object FullName)"
+      "Bash(Select-Object FullName)",
+      "Bash(npm install *)"
     ]
   }
 }
