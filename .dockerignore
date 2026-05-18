@@ -1,0 +1,26 @@
+node_modules
+dist
+coverage
+.nyc_output
+
+# Env files (never bake secrets into the image)
+.env
+.env.local
+.env.*.local
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Docs / misc
+README.md
+*.log
+*.md
+
+# IDE
+.vscode
+.idea
+
+# Docker files themselves (not needed in build context)
+docker-compose*.yml

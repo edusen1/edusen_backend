@@ -1,0 +1,907 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== ENUMS ====================
+
+enum UserRole {
+  SUPER_ADMIN
+  GESTIONNAIRE
+  ADMIN
+  CAISSIER
+  SURVEILLANT
+  ENSEIGNANT
+  ELEVE
+  PARENT
+  RH
+}
+
+enum RolePlateforme {
+  SUPER_ADMIN
+  GESTIONNAIRE
+}
+
+enum Genre {
+  M
+  F
+  AUTRE
+}
+
+enum LienParente {
+  PERE
+  MERE
+  TUTEUR
+  TUTRICE
+  ONCLE
+  TANTE
+  GRAND_PERE
+  GRAND_MERE
+  AUTRE
+}
+
+enum TypeEvaluation {
+  DEVOIR
+  INTERROGATION
+  EXAMEN
+  COMPOSITION
+  CONTROLE
+  TP
+  ORAL
+}
+
+enum StatutPaiement {
+  EN_ATTENTE
+  VALIDE
+  REJETE
+}
+
+enum TypePaiement {
+  SCOLARITE
+  INSCRIPTION
+  CANTINE
+  TRANSPORT
+  AUTRE
+}
+
+enum ModePaiement {
+  ESPECES
+  VIREMENT
+  CHEQUE
+  MOBILE_MONEY
+  CARTE
+}
+
+enum TypeAbsence {
+  ABSENT
+  RETARD
+}
+
+enum StatutAbsenceEleve {
+  EN_ATTENTE
+  JUSTIFIEE
+  NON_JUSTIFIEE
+}
+
+enum StatutBulletin {
+  BROUILLON
+  SOUMIS
+  VALIDE
+  PUBLIE
+}
+
+enum StatutInscription {
+  ACTIF
+  TRANSFERE
+  EXCLU
+  TERMINE
+}
+
+enum StatutAppel {
+  BROUILLON
+  SOUMIS
+  VALIDE
+}
+
+enum StatutPresence {
+  PRESENT
+  ABSENT
+  RETARD
+}
+
+enum TypePointage {
+  ENTREE
+  SORTIE
+}
+
+enum TypeContrat {
+  CDI
+  CDD
+  STAGE
+  VACATAIRE
+  BENEVOLE
+}
+
+enum TypeAbsencePersonnel {
+  MALADIE
+  CONGE
+  SANS_SOLDE
+  AUTRE
+}
+
+enum StatutAbsencePersonnel {
+  EN_ATTENTE
+  APPROUVEE
+  REJETEE
+}
+
+enum StatutReclamation {
+  EN_ATTENTE
+  TRAITEE
+  REJETEE
+}
+
+enum CanalNotification {
+  EMAIL
+  SMS
+  WHATSAPP
+  IN_APP
+}
+
+enum StatutNotification {
+  EN_ATTENTE
+  ENVOYE
+  ECHEC
+}
+
+// ==================== TENANT ====================
+
+model Tenant {
+  id             String    @id @default(uuid()) @db.Uuid
+  slug           String    @unique @db.VarChar(100)
+  nom            String
+  emailContact   String?   @db.VarChar(254)
+  telephone      String?   @db.VarChar(20)
+  adresse        String?
+  logoUrl        String?
+  plan           String    @default("TRIAL") @db.VarChar(50)
+  actif          Boolean   @default(true)
+  dateExpiration DateTime? @db.Date
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  users               User[]
+  cycles              Cycle[]
+  niveaux             Niveau[]
+  batiments           Batiment[]
+  salles              Salle[]
+  annees              AnneeAcademique[]
+  classes             Classe[]
+  matieres            Matiere[]
+  matiereClasses      MatiereClasse[]
+  cours               Cours[]
+  inscriptions        Inscription[]
+  paiements           Paiement[]
+  absencesEleves      AbsenceEleve[]
+  absencesEnseignants AbsenceEnseignant[]
+  emploisDuTemps      EmploiDuTemps[]
+  notes               Note[]
+  bulletins           Bulletin[]
+  reclamations        Reclamation[]
+  appels              Appel[]
+  cahiersTexte        CahierTexte[]
+  annonces            Annonce[]
+  convocations        Convocation[]
+  liensBulletin       LienBulletinParent[]
+  liensPaiement       LienPaiementParent[]
+  personnels          Personnel[]
+  pointages           Pointage[]
+  absencesPersonnel   AbsencePersonnel[]
+  notifications       Notification[]
+  notificationLogs    NotificationLog[]
+  auditLogs           AuditLog[]
+  calendrier          CalendrierScolaire[]
+  surveillantCycles   SurveillantCycle[]
+}
+
+// ==================== PLATFORM USERS ====================
+
+model PlateformeUtilisateur {
+  id             String         @id @default(uuid()) @db.Uuid
+  nom            String         @db.VarChar(100)
+  prenom         String         @db.VarChar(100)
+  email          String         @unique @db.VarChar(254)
+  telephone      String?        @db.VarChar(20)
+  motDePasse     String
+  rolePlateforme RolePlateforme
+  actif          Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  deletedAt      DateTime?
+
+  auditLogs AuditLog[]
+}
+
+// ==================== USERS (flat model - all roles) ====================
+
+model User {
+  id            String    @id @default(uuid()) @db.Uuid
+  tenantId      String    @db.Uuid
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  username      String?   @db.VarChar(100)
+  email         String    @db.VarChar(254)
+  passwordHash  String
+  firstName     String    @db.VarChar(100)
+  lastName      String    @db.VarChar(100)
+  telephone     String?   @db.VarChar(20)
+  adresse       String?
+  role          UserRole
+  actif         Boolean   @default(true)
+  mustChangePwd Boolean   @default(true)
+
+  // ELEVE
+  matricule       String?   @db.VarChar(50)
+  dateNaissance   DateTime? @db.Date
+  lieuNaissance   String?
+  genre           Genre?
+  numeroUrgence   String?   @db.VarChar(20)
+  dateInscription DateTime? @db.Date
+  photoUrl        String?
+  classeId        String?   @db.Uuid
+
+  // ENSEIGNANT
+  specialite            String?
+  dateEmbauche          DateTime? @db.Date
+  numeroCNPS            String?   @db.VarChar(50)
+  numeroSecuriteSociale String?   @db.VarChar(50)
+
+  // PARENT
+  profession       String?
+  lieuTravail      String?
+  telephoneTravail String?     @db.VarChar(20)
+  lienParente      LienParente?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, email])
+  @@unique([tenantId, matricule], map: "users_tenant_matricule_unique")
+  @@index([tenantId, role])
+
+  refreshTokens      RefreshToken[]
+  resetTokens        PasswordResetToken[]
+  eleveClasse        Classe?              @relation("EleveClasse", fields: [classeId], references: [id])
+  elevParents        EleveParent[]        @relation("EleveParents")
+  parentEleves       EleveParent[]        @relation("ParentEleves")
+  matiereClasses     MatiereClasse[]      @relation("EnseignantMatiereClasses")
+  absencesEnseignant AbsenceEnseignant[]
+  surveillantCycles  SurveillantCycle[]
+  auditLogs          AuditLog[]
+  personnelRecord    Personnel?
+}
+
+// ==================== ELEVE-PARENT ====================
+
+model EleveParent {
+  eleveId  String @db.Uuid
+  parentId String @db.Uuid
+  eleve    User   @relation("EleveParents", fields: [eleveId], references: [id], onDelete: Cascade)
+  parent   User   @relation("ParentEleves", fields: [parentId], references: [id], onDelete: Cascade)
+
+  @@id([eleveId, parentId])
+}
+
+// ==================== ACADEMIC STRUCTURE ====================
+
+model Cycle {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  code      String   @db.VarChar(20)
+  libelle   String
+  actif     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  niveaux           Niveau[]
+  surveillantCycles SurveillantCycle[]
+
+  @@unique([tenantId, code])
+}
+
+model Niveau {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  cycleId   String   @db.Uuid
+  cycle     Cycle    @relation(fields: [cycleId], references: [id])
+  code      String   @db.VarChar(20)
+  libelle   String
+  ordre     Int
+  actif     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  classes Classe[]
+
+  @@unique([tenantId, code])
+}
+
+model AnneeAcademique {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  libelle     String
+  dateDebut   DateTime @db.Date
+  dateFin     DateTime @db.Date
+  estCourante Boolean  @default(false)
+  actif       Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  classes        Classe[]
+  cours          Cours[]
+  inscriptions   Inscription[]
+  matiereClasses MatiereClasse[]
+
+  @@unique([tenantId, libelle])
+}
+
+model Batiment {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  nom         String
+  description String?
+  actif       Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  salles Salle[]
+}
+
+model Salle {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @db.Uuid
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  batimentId String   @db.Uuid
+  batiment   Batiment @relation(fields: [batimentId], references: [id])
+  nom        String
+  capacite   Int?
+  typeSalle  String?  @db.VarChar(50)
+  actif      Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  classes        Classe[]
+  emploisDuTemps EmploiDuTemps[]
+}
+
+model Classe {
+  id                String           @id @default(uuid()) @db.Uuid
+  tenantId          String           @db.Uuid
+  tenant            Tenant           @relation(fields: [tenantId], references: [id])
+  nom               String
+  niveauId          String?          @db.Uuid
+  niveau            Niveau?          @relation(fields: [niveauId], references: [id])
+  anneeAcademiqueId String?          @db.Uuid
+  anneeAcademique   AnneeAcademique? @relation(fields: [anneeAcademiqueId], references: [id])
+  salleId           String?          @db.Uuid
+  salle             Salle?           @relation(fields: [salleId], references: [id])
+  effectifMax       Int?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@unique([tenantId, nom, anneeAcademiqueId])
+
+  eleves         User[]          @relation("EleveClasse")
+  matiereClasses MatiereClasse[]
+  cours          Cours[]
+  emploisDuTemps EmploiDuTemps[]
+  absences       AbsenceEleve[]
+  bulletins      Bulletin[]
+  inscriptions   Inscription[]
+  appels         Appel[]
+}
+
+model Matiere {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  code        String   @db.VarChar(20)
+  libelle     String
+  coefficient Float    @default(1)
+  description String?
+  actif       Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, code])
+
+  matiereClasses MatiereClasse[]
+  cours          Cours[]
+  notes          Note[]
+}
+
+model MatiereClasse {
+  id                String          @id @default(uuid()) @db.Uuid
+  tenantId          String          @db.Uuid
+  tenant            Tenant          @relation(fields: [tenantId], references: [id])
+  matiereId         String          @db.Uuid
+  matiere           Matiere         @relation(fields: [matiereId], references: [id])
+  classeId          String          @db.Uuid
+  classe            Classe          @relation(fields: [classeId], references: [id])
+  enseignantId      String          @db.Uuid
+  enseignant        User            @relation("EnseignantMatiereClasses", fields: [enseignantId], references: [id])
+  anneeAcademiqueId String          @db.Uuid
+  anneeAcademique   AnneeAcademique @relation(fields: [anneeAcademiqueId], references: [id])
+  anneeScolaire     String          @db.VarChar(10)
+  volumeHoraire     Int?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@unique([matiereId, classeId, enseignantId, anneeAcademiqueId])
+}
+
+model Cours {
+  id                String           @id @default(uuid()) @db.Uuid
+  tenantId          String           @db.Uuid
+  tenant            Tenant           @relation(fields: [tenantId], references: [id])
+  matiereId         String           @db.Uuid
+  matiere           Matiere          @relation(fields: [matiereId], references: [id])
+  classeId          String           @db.Uuid
+  classe            Classe           @relation(fields: [classeId], references: [id])
+  enseignantId      String           @db.Uuid
+  anneeAcademiqueId String?          @db.Uuid
+  anneeAcademique   AnneeAcademique? @relation(fields: [anneeAcademiqueId], references: [id])
+  volumeHoraireHebdo Int?
+  coefficient       Float?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@unique([matiereId, enseignantId, classeId, anneeAcademiqueId])
+
+  emploisDuTemps EmploiDuTemps[]
+  appels         Appel[]
+  cahiersTexte   CahierTexte[]
+}
+
+// ==================== ENROLLMENT ====================
+
+model Inscription {
+  id                String            @id @default(uuid()) @db.Uuid
+  tenantId          String            @db.Uuid
+  tenant            Tenant            @relation(fields: [tenantId], references: [id])
+  numeroInscription String            @unique @db.VarChar(50)
+  eleveId           String            @db.Uuid
+  classeId          String            @db.Uuid
+  classe            Classe            @relation(fields: [classeId], references: [id])
+  anneeAcademiqueId String            @db.Uuid
+  anneeAcademique   AnneeAcademique   @relation(fields: [anneeAcademiqueId], references: [id])
+  statut            StatutInscription @default(ACTIF)
+  creePar           String            @db.Uuid
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  paiements Paiement[]
+}
+
+// ==================== GRADES ====================
+
+model Note {
+  id             String         @id @default(uuid()) @db.Uuid
+  tenantId       String         @db.Uuid
+  tenant         Tenant         @relation(fields: [tenantId], references: [id])
+  eleveId        String         @db.Uuid
+  matiereId      String         @db.Uuid
+  matiere        Matiere        @relation(fields: [matiereId], references: [id])
+  typeEvaluation TypeEvaluation
+  note           Float
+  noteSur        Float          @default(20)
+  trimestre      String         @db.VarChar(20)
+  anneeScolaire  String         @db.VarChar(10)
+  dateEvaluation DateTime?      @db.Date
+  commentaire    String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  reclamations Reclamation[]
+}
+
+model Bulletin {
+  id             String         @id @default(uuid()) @db.Uuid
+  tenantId       String         @db.Uuid
+  tenant         Tenant         @relation(fields: [tenantId], references: [id])
+  eleveId        String         @db.Uuid
+  classeId       String         @db.Uuid
+  classe         Classe         @relation(fields: [classeId], references: [id])
+  trimestre      String         @db.VarChar(20)
+  anneeScolaire  String         @db.VarChar(10)
+  moyenne        Float?
+  moyenneClasse  Float?
+  rang           Int?
+  totalEleves    Int?
+  appreciation   String?
+  nombreAbsences Int            @default(0)
+  nombreRetards  Int            @default(0)
+  fichierPdfUrl  String?
+  statut         StatutBulletin @default(BROUILLON)
+  soumisPar      String?        @db.Uuid
+  validePar      String?        @db.Uuid
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([eleveId, classeId, trimestre, anneeScolaire])
+
+  liensBulletin LienBulletinParent[]
+}
+
+// ==================== ATTENDANCE ====================
+
+model AbsenceEleve {
+  id          String             @id @default(uuid()) @db.Uuid
+  tenantId    String             @db.Uuid
+  tenant      Tenant             @relation(fields: [tenantId], references: [id])
+  eleveId     String             @db.Uuid
+  classeId    String             @db.Uuid
+  classe      Classe             @relation(fields: [classeId], references: [id])
+  date        DateTime           @db.Date
+  typeAbsence TypeAbsence        @default(ABSENT)
+  justifiee   Boolean            @default(false)
+  motif       String?
+  documentUrl String?
+  statut      StatutAbsenceEleve @default(EN_ATTENTE)
+  approuvePar String?            @db.Uuid
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+}
+
+model AbsenceEnseignant {
+  id                      String   @id @default(uuid()) @db.Uuid
+  tenantId                String   @db.Uuid
+  tenant                  Tenant   @relation(fields: [tenantId], references: [id])
+  enseignantId            String   @db.Uuid
+  enseignant              User     @relation(fields: [enseignantId], references: [id])
+  dateDebut               DateTime @db.Date
+  dateFin                 DateTime @db.Date
+  motif                   String
+  justifiee               Boolean  @default(false)
+  documentJustificatifUrl String?
+  remplacantId            String?  @db.Uuid
+  notificationEnvoyee     Boolean  @default(false)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+}
+
+// ==================== SCHEDULE ====================
+
+model EmploiDuTemps {
+  id                String    @id @default(uuid()) @db.Uuid
+  tenantId          String    @db.Uuid
+  tenant            Tenant    @relation(fields: [tenantId], references: [id])
+  classeId          String    @db.Uuid
+  classe            Classe    @relation(fields: [classeId], references: [id])
+  coursId           String?   @db.Uuid
+  cours             Cours?    @relation(fields: [coursId], references: [id])
+  salleId           String?   @db.Uuid
+  salle             Salle?    @relation(fields: [salleId], references: [id])
+  enseignantId      String?   @db.Uuid
+  matiereId         String?   @db.Uuid
+  jourSemaine       String    @db.VarChar(20)
+  heureDebut        String    @db.VarChar(10)
+  heureFin          String    @db.VarChar(10)
+  anneeScolaire     String?   @db.VarChar(10)
+  dateDebutValidite DateTime? @db.Date
+  dateFinValidite   DateTime? @db.Date
+  publie            Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+// ==================== TEACHER TOOLS ====================
+
+model Appel {
+  id         String      @id @default(uuid()) @db.Uuid
+  tenantId   String      @db.Uuid
+  tenant     Tenant      @relation(fields: [tenantId], references: [id])
+  coursId    String      @db.Uuid
+  cours      Cours       @relation(fields: [coursId], references: [id])
+  classeId   String?     @db.Uuid
+  classe     Classe?     @relation(fields: [classeId], references: [id])
+  dateCours  DateTime    @db.Date
+  heureDebut String?     @db.VarChar(10)
+  statut     StatutAppel @default(BROUILLON)
+  soumisPar  String      @db.Uuid
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  lignes AppelLigne[]
+}
+
+model AppelLigne {
+  id        String         @id @default(uuid()) @db.Uuid
+  appelId   String         @db.Uuid
+  appel     Appel          @relation(fields: [appelId], references: [id], onDelete: Cascade)
+  eleveId   String         @db.Uuid
+  statut    StatutPresence @default(PRESENT)
+  createdAt DateTime       @default(now())
+}
+
+model CahierTexte {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @db.Uuid
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  coursId         String   @db.Uuid
+  cours           Cours    @relation(fields: [coursId], references: [id])
+  dateCours       DateTime @db.Date
+  contenuTraite   String
+  observations    String?
+  etapeProgramme  String?
+  programmeValide Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// ==================== COMMUNICATION ====================
+
+model Annonce {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @db.Uuid
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  titre     String
+  contenu   String
+  dateDebut DateTime  @db.Date
+  dateFin   DateTime? @db.Date
+  actif     Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Convocation {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @db.Uuid
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  parentId        String   @db.Uuid
+  eleveId         String   @db.Uuid
+  motif           String
+  dateConvocation DateTime
+  statut          String   @default("EN_ATTENTE") @db.VarChar(20)
+  compteRendu     String?
+  creePar         String?  @db.Uuid
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Notification {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @db.Uuid
+  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+  destinataireId String   @db.Uuid
+  titre          String
+  contenu        String?
+  lu             Boolean  @default(false)
+  createdAt      DateTime @default(now())
+}
+
+model NotificationLog {
+  id           String             @id @default(uuid()) @db.Uuid
+  tenantId     String?            @db.Uuid
+  tenant       Tenant?            @relation(fields: [tenantId], references: [id])
+  canal        CanalNotification
+  destinataire String
+  sujet        String?
+  contenu      String?
+  statut       StatutNotification @default(EN_ATTENTE)
+  erreur       String?
+  envoyeLe     DateTime?
+  createdAt    DateTime           @default(now())
+}
+
+// ==================== PAYMENT ====================
+
+model Paiement {
+  id            String         @id @default(uuid()) @db.Uuid
+  tenantId      String         @db.Uuid
+  tenant        Tenant         @relation(fields: [tenantId], references: [id])
+  inscriptionId String?        @db.Uuid
+  inscription   Inscription?   @relation(fields: [inscriptionId], references: [id])
+  eleveId       String         @db.Uuid
+  parentId      String?        @db.Uuid
+  reference     String         @unique @db.VarChar(100)
+  montant       Float
+  typePaiement  TypePaiement
+  modePaiement  ModePaiement
+  statut        StatutPaiement @default(EN_ATTENTE)
+  anneeScolaire String         @db.VarChar(10)
+  trimestre     String?        @db.VarChar(20)
+  transactionId String?
+  description   String?
+  datePaiement  DateTime?
+  validePar     String?        @db.Uuid
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+model LienPaiementParent {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @db.Uuid
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  parentId     String   @db.Uuid
+  token        String   @unique @db.VarChar(255)
+  montantTotal Float
+  mois         String   @db.VarChar(7)
+  statut       String   @default("EN_ATTENTE") @db.VarChar(20)
+  expiresAt    DateTime
+  otpHash      String?
+  otpExpiresAt DateTime?
+  otpVerified  Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model LienBulletinParent {
+  id           String    @id @default(uuid()) @db.Uuid
+  tenantId     String    @db.Uuid
+  tenant       Tenant    @relation(fields: [tenantId], references: [id])
+  bulletinId   String    @db.Uuid
+  bulletin     Bulletin  @relation(fields: [bulletinId], references: [id])
+  parentId     String    @db.Uuid
+  token        String    @unique @db.VarChar(255)
+  otpHash      String?
+  otpExpiresAt DateTime?
+  otpVerified  Boolean   @default(false)
+  expiresAt    DateTime
+  ouvertLe     DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+// ==================== HR & PERSONNEL ====================
+
+model Personnel {
+  id              String       @id @default(uuid()) @db.Uuid
+  tenantId        String       @db.Uuid
+  tenant          Tenant       @relation(fields: [tenantId], references: [id])
+  utilisateurId   String       @unique @db.Uuid
+  utilisateur     User         @relation(fields: [utilisateurId], references: [id])
+  numeroMatricule String?      @db.VarChar(50)
+  typeContrat     TypeContrat?
+  dateEmbauche    DateTime?    @db.Date
+  salaire         Float?
+  soldeConge      Int          @default(0)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  pointages         Pointage[]
+  absencesPersonnel AbsencePersonnel[]
+}
+
+model Pointage {
+  id           String       @id @default(uuid()) @db.Uuid
+  tenantId     String       @db.Uuid
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  personnelId  String       @db.Uuid
+  personnel    Personnel    @relation(fields: [personnelId], references: [id])
+  typePointage TypePointage
+  dateHeure    DateTime
+  methode      String?      @db.VarChar(50)
+  createdBy    String?      @db.Uuid
+  createdAt    DateTime     @default(now())
+}
+
+model AbsencePersonnel {
+  id              String                 @id @default(uuid()) @db.Uuid
+  tenantId        String                 @db.Uuid
+  tenant          Tenant                 @relation(fields: [tenantId], references: [id])
+  personnelId     String                 @db.Uuid
+  personnel       Personnel              @relation(fields: [personnelId], references: [id])
+  dateDebut       DateTime               @db.Date
+  dateFin         DateTime               @db.Date
+  motif           String?
+  typeAbsence     TypeAbsencePersonnel?
+  justificatifUrl String?
+  statut          StatutAbsencePersonnel @default(EN_ATTENTE)
+  validePar       String?                @db.Uuid
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+}
+
+// ==================== SURVEILLANCE ====================
+
+model SurveillantCycle {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @db.Uuid
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  surveillantId String   @db.Uuid
+  surveillant   User     @relation(fields: [surveillantId], references: [id])
+  cycleId       String   @db.Uuid
+  cycle         Cycle    @relation(fields: [cycleId], references: [id])
+  createdAt     DateTime @default(now())
+
+  @@unique([surveillantId, cycleId])
+}
+
+// ==================== RECLAMATION ====================
+
+model Reclamation {
+  id        String            @id @default(uuid()) @db.Uuid
+  tenantId  String            @db.Uuid
+  tenant    Tenant            @relation(fields: [tenantId], references: [id])
+  eleveId   String            @db.Uuid
+  noteId    String?           @db.Uuid
+  note      Note?             @relation(fields: [noteId], references: [id])
+  motif     String
+  statut    StatutReclamation @default(EN_ATTENTE)
+  reponse   String?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+}
+
+// ==================== CALENDAR ====================
+
+model CalendrierScolaire {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @db.Uuid
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  titre       String
+  description String?
+  dateDebut   DateTime  @db.Date
+  dateFin     DateTime? @db.Date
+  type        String?   @db.VarChar(50)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// ==================== AUDIT ====================
+
+model AuditLog {
+  id               String                 @id @default(uuid()) @db.Uuid
+  tenantId         String?                @db.Uuid
+  tenant           Tenant?                @relation(fields: [tenantId], references: [id])
+  utilisateurId    String?                @db.Uuid
+  utilisateur      User?                  @relation(fields: [utilisateurId], references: [id])
+  plateformeUserId String?                @db.Uuid
+  plateformeUser   PlateformeUtilisateur? @relation(fields: [plateformeUserId], references: [id])
+  role             String?                @db.VarChar(50)
+  action           String                 @db.VarChar(100)
+  resourceType     String?                @db.VarChar(100)
+  resourceId       String?                @db.Uuid
+  details          Json?
+  ipAddress        String?                @db.VarChar(45)
+  userAgent        String?
+  createdAt        DateTime               @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([utilisateurId])
+}
+
+// ==================== AUTH TOKENS ====================
+
+model RefreshToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, expiresAt])
+}
