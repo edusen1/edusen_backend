@@ -3,6 +3,7 @@
 const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcrypt');
 const { spawnSync } = require('node:child_process');
+const path = require('node:path');
 
 let prisma = new PrismaClient();
 
@@ -23,21 +24,25 @@ function slugify(value) {
 
 async function ensureSchemaReady() {
   const result = await prisma.$queryRawUnsafe(
-    'SELECT to_regclass(\'public."Tenant"\') AS table_name',
+    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'Tenant' LIMIT 1",
   );
 
-  if (Array.isArray(result) && result[0] && result[0].table_name) {
+  if (Array.isArray(result) && result.length > 0) {
     return;
   }
 
   await prisma.$disconnect();
 
-  const npxCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-  const dbPush = spawnSync(npxCommand, ['prisma', 'db', 'push', '--skip-generate'], {
+  const prismaCliPath = require.resolve('prisma/build/index.js');
+  const dbPush = spawnSync(process.execPath, [prismaCliPath, 'db', 'push', '--skip-generate'], {
     stdio: 'inherit',
     env: process.env,
-    cwd: process.cwd(),
+    cwd: path.resolve(process.cwd()),
   });
+
+  if (dbPush.error) {
+    throw dbPush.error;
+  }
 
   if (dbPush.status !== 0) {
     throw new Error('Unable to initialize database schema with "prisma db push".');
