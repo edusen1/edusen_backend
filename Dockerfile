@@ -21,7 +21,7 @@ RUN npm prune --omit=dev
 FROM node:20-alpine AS runner
 
 # dumb-init: proper PID 1 signal handling
-RUN apk add --no-cache dumb-init
+RUN apk add --no-cache dumb-init wget
 
 WORKDIR /app
 
@@ -40,7 +40,7 @@ EXPOSE 3000
 
 # Simple liveness check: any HTTP response means the server is up
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD wget -q -O /dev/null http://localhost:3000/ || exit 1
+  CMD wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1
 
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["./docker-entrypoint.sh"]
