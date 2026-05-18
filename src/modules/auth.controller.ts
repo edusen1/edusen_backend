@@ -22,6 +22,13 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Public()
+  @Get('/health')
+  @ApiOperation({ summary: 'Healthcheck public' })
+  health() {
+    return { ok: true };
+  }
+
+  @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Connexion utilisateur ou plateforme' })
