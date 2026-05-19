@@ -13,8 +13,24 @@ async function bootstrap(): Promise<void> {
     new FastifyAdapter({ logger: true }),
   );
 
-  await app.register(helmet);
-  await app.register(cors, { origin: true, credentials: true });
+  await app.register(helmet, {
+    contentSecurityPolicy: false,
+  });
+
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? 'http://localhost:4200').split(',').map((o) => o.trim());
+  await app.register(cors, {
+    origin: (origin, cb) => {
+      if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+        cb(null, true);
+      } else {
+        cb(new Error(`Origin ${origin} not allowed`), false);
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Tenant-Id', 'Accept'],
+    exposedHeaders: ['X-Total-Count'],
+  });
   await app.register(rateLimit, { max: 200, timeWindow: '1 minute' });
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
@@ -22,7 +38,7 @@ async function bootstrap(): Promise<void> {
 
   const config = new DocumentBuilder()
     .setTitle('NouraSchool API')
-    .setDescription('Migration complète vers NestJS + Fastify')
+    .setDescription('Migration complï¿½te vers NestJS + Fastify')
     .setVersion('1.0.0')
     .addBearerAuth()
     .build();
