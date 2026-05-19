@@ -15,7 +15,8 @@ import type { JwtUser } from '@/common/types/auth.types';
 
 const LOCKOUT_KEY = 'auth:lockout:';
 const RATELIMIT_FORGOT_KEY = 'auth:ratelimit:forgot:';
-const REFRESH_TOKEN_DAYS = 7;
+const REFRESH_TOKEN_DAYS = Number(process.env.AUTH_REFRESH_TOKEN_DAYS ?? 1);
+const REFRESH_TOKEN_SECONDS = REFRESH_TOKEN_DAYS * 24 * 60 * 60;
 const LOCKOUT_MAX_ATTEMPTS = Number(process.env.AUTH_LOCKOUT_MAX_ATTEMPTS ?? 5);
 const LOCKOUT_TTL = Number(process.env.AUTH_LOCKOUT_TTL_SECONDS ?? 600);
 const FORGOT_PER_EMAIL = Number(process.env.AUTH_FORGOT_PER_EMAIL ?? 3);
@@ -40,6 +41,7 @@ export class AuthService {
     accessToken: string;
     refreshToken: string | null;
     expiresIn: number;
+    refreshExpiresIn: number;
     passwordChangeRequired: boolean;
   }> {
     const normalizedLogin = dto.login.trim().toLowerCase();
@@ -105,7 +107,7 @@ export class AuthService {
     const mustChange = user.mustChangePwd ?? true;
 
     this.logger.log(`Login success userId=${user.id} role=${user.role}`);
-    return { accessToken, refreshToken, expiresIn: 900, passwordChangeRequired: mustChange };
+    return { accessToken, refreshToken, expiresIn: 900, refreshExpiresIn: REFRESH_TOKEN_SECONDS, passwordChangeRequired: mustChange };
   }
 
   private async loginPlatformUser(
@@ -116,6 +118,7 @@ export class AuthService {
     accessToken: string;
     refreshToken: null;
     expiresIn: number;
+    refreshExpiresIn: number;
     passwordChangeRequired: boolean;
   }> {
     const pu = await this.prisma.plateformeUtilisateur.findUnique({
@@ -151,7 +154,7 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
     this.logger.log(`Platform login success userId=${pu.id} role=${pu.rolePlateforme}`);
-    return { accessToken, refreshToken: null, expiresIn: 900, passwordChangeRequired: false };
+    return { accessToken, refreshToken: null, expiresIn: 900, refreshExpiresIn: 0, passwordChangeRequired: false };
   }
 
   // ==================== REFRESH ====================
@@ -160,6 +163,7 @@ export class AuthService {
     accessToken: string;
     refreshToken: string;
     expiresIn: number;
+    refreshExpiresIn: number;
   }> {
     const normalizedRefreshToken = (refreshTokenValue ?? '').trim();
     if (!normalizedRefreshToken || normalizedRefreshToken === 'null' || normalizedRefreshToken === 'undefined') {
@@ -201,7 +205,7 @@ export class AuthService {
     };
 
     const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
-    return { accessToken, refreshToken: newRefreshToken, expiresIn: 900 };
+    return { accessToken, refreshToken: newRefreshToken, expiresIn: 900, refreshExpiresIn: REFRESH_TOKEN_SECONDS };
   }
 
   // ==================== ME ====================
@@ -368,11 +372,16 @@ export class AuthService {
   private async createRefreshToken(userId: string): Promise<string> {
     const rawToken = randomBytes(32).toString('hex');
     const tokenHash = createHash('sha256').update(rawToken).digest('hex');
-    const expiresAt = new Date(Date.now() + REFRESH_TOKEN_DAYS * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + REFRESH_TOKEN_SECONDS * 1000);
 
-    await this.prisma.refreshToken.create({
-      data: { userId, tokenHash, expiresAt, revoked: false },
-    });
+    await this.prisma.$transaction([
+      this.prisma.refreshToken.deleteMany({
+        where: { userId, OR: [{ revoked: true }, { expiresAt: { lt: new Date() } }] },
+      }),
+      this.prisma.refreshToken.create({
+        data: { userId, tokenHash, expiresAt, revoked: false },
+      }),
+    ]);
 
     return rawToken;
   }
