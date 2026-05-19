@@ -3,7 +3,9 @@
     "allow": [
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\HP\\\\IdeaProjects\\\\noura-school\\\\nouraschool_backend\\\\src\\\\main\\\\java\\\\com\\\\nouraschool\" -Recurse -Directory)",
       "Bash(Select-Object FullName)",
-      "Bash(npm install *)"
+      "Bash(npm install *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\HP\\\\IdeaProjects\\\\noura-school\\\\nouraschool_frontend\" -Recurse -Filter \"*.java\")",
+      "Bash(Sort-Object FullName)"
     ]
   }
 }

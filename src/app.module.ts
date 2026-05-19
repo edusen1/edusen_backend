@@ -19,8 +19,10 @@ import { AuthService } from '@/modules/auth/auth.service';
 import { PlatformService } from '@/modules/platform/platform.service';
 import { SchoolService } from '@/modules/school/school.service';
 import { DomainService } from '@/modules/domain.service';
+import { LegacyCrudService } from '@/modules/legacy-crud.service';
 import { MailService } from '@/infrastructure/mail/mail.service';
 import { RedisService } from '@/infrastructure/redis/redis.service';
+import { StorageService } from '@/infrastructure/storage/storage.service';
 
 @Module({
   imports: [
@@ -48,7 +50,9 @@ import { RedisService } from '@/infrastructure/redis/redis.service';
     PlatformService,
     SchoolService,
     DomainService,
+    LegacyCrudService,
     MailService,
+    StorageService,
     { provide: APP_GUARD, useClass: AppAuthGuard },
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },

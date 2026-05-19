@@ -1,72 +1,121 @@
-import { Body, Controller, Get, Headers, Param } from "@nestjs/common";
-import { Roles } from "@/common/decorators/roles.decorator";
-import { DomainService } from "@/modules/domain.service";
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Headers,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Put,
+  Query,
+} from '@nestjs/common';
+import { Roles } from '@/common/decorators/roles.decorator';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import type { JwtUser } from '@/common/types/auth.types';
+import { LegacyCrudService } from '@/modules/legacy-crud.service';
 
-@Roles("ADMIN", "SURVEILLANT", "CAISSIER")
-@Controller("admin")
+type QueryParams = Record<string, string | string[] | undefined>;
+type Payload = Record<string, unknown>;
+
+@Roles('ADMIN', 'SURVEILLANT', 'CAISSIER', 'RH')
+@Controller('admin')
 export class AdminController {
-  constructor(private readonly domain: DomainService) {}
+  constructor(private readonly crud: LegacyCrudService) {}
 
-  @Get("users") users(@Headers("x-tenant-id") tenantId: string) {
-    return this.domain.adminUsers(tenantId);
+  @Get('reports/rapport-trimestre')
+  rapportTrimestre(@Headers('x-tenant-id') tenantId: string | undefined, @Query() query: QueryParams) {
+    return this.crud.findAll(this.crud.adminConfig('bulletins'), tenantId, query);
   }
-  @Get("classes") classes(@Headers("x-tenant-id") tenantId: string) {
-    return this.domain.adminEmplois(tenantId);
+
+  @Get('bulletins/download/by-classe')
+  downloadByClasse(@Query() query: QueryParams) {
+    return { type: 'classe', ...query };
   }
-  @Get("enseignants") enseignants(@Headers("x-tenant-id") tenantId: string) {
-    return this.domain.adminTeachers(tenantId);
+
+  @Get('bulletins/download/all')
+  downloadAll(@Query() query: QueryParams) {
+    return { type: 'all', ...query };
   }
-  @Get("eleves") eleves(@Headers("x-tenant-id") tenantId: string) {
-    return this.domain.adminStudents(tenantId);
+
+  @Get('bulletins/:id/download')
+  downloadBulletin(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string) {
+    return this.crud.getBulletinDownload(tenantId, id);
   }
-  @Get("parents") parents(@Headers("x-tenant-id") tenantId: string) {
-    return this.domain.adminParents(tenantId);
-  }
-  @Get("matieres") matieres(@Headers("x-tenant-id") tenantId: string) {
-    return this.domain.adminMatieres(tenantId);
-  }
-  @Get("matieres-classes") matieresClasses(
-    @Headers("x-tenant-id") tenantId: string,
+
+  @Post('bulletins/generer')
+  genererBulletins(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.domain.adminEmplois(tenantId);
+    return this.crud.generateBulletinsForClasse(tenantId, body, user?.sub);
   }
-  @Get("calendrier-scolaire") calendrier() {
-    return [];
-  }
-  @Get("reports/rapport-trimestre") rapport(
-    @Headers("x-tenant-id") tenantId: string,
+
+  @Post('absences-eleves/:id/approuver')
+  approuverAbsenceEleve(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.domain.adminBulletins(tenantId);
+    return this.crud.approveAbsenceEleve(tenantId, id, user?.sub);
   }
-  @Get("reclamations") reclamations(@Headers("x-tenant-id") tenantId: string) {
-    return this.domain.adminReclamations(tenantId);
-  }
-  @Get("paiements") paiements(@Headers("x-tenant-id") tenantId: string) {
-    return this.domain.adminPaiements(tenantId);
-  }
-  @Get("absences-eleves") absencesEleves(
-    @Headers("x-tenant-id") tenantId: string,
+
+  @Post('absences-eleves/:id/rejeter')
+  rejeterAbsenceEleve(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.domain.adminAbsencesEleves(tenantId);
+    return this.crud.rejectAbsenceEleve(tenantId, id, user?.sub);
   }
-  @Get("notes") notes(@Headers("x-tenant-id") tenantId: string) {
-    return this.domain.adminNotes(tenantId);
-  }
-  @Get("bulletins") bulletins(@Headers("x-tenant-id") tenantId: string) {
-    return this.domain.adminBulletins(tenantId);
-  }
-  @Get("bulletins/:id/download") downloadBulletin(@Param("id") id: string) {
-    return { id, type: "single" };
-  }
-  @Get("bulletins/download/by-classe") downloadByClasse() {
-    return { type: "classe" };
-  }
-  @Get("bulletins/download/all") downloadAll() {
-    return { type: "all" };
-  }
-  @Get("emplois-du-temps") emploisDuTemps(
-    @Headers("x-tenant-id") tenantId: string,
+
+  @Get(':resource')
+  findAll(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('resource') resource: string,
+    @Query() query: QueryParams,
   ) {
-    return this.domain.adminEmplois(tenantId);
+    return this.crud.findAll(this.crud.adminConfig(resource), tenantId, query);
+  }
+
+  @Get(':resource/:id')
+  findById(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('resource') resource: string,
+    @Param('id') id: string,
+  ) {
+    return this.crud.findOne(this.crud.adminConfig(resource), tenantId, id);
+  }
+
+  @Post(':resource')
+  create(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('resource') resource: string,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.crud.create(this.crud.adminConfig(resource), tenantId, body, user?.sub);
+  }
+
+  @Put(':resource/:id')
+  update(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('resource') resource: string,
+    @Param('id') id: string,
+    @Body() body: Payload,
+  ) {
+    return this.crud.update(this.crud.adminConfig(resource), tenantId, id, body);
+  }
+
+  @Delete(':resource/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  delete(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('resource') resource: string,
+    @Param('id') id: string,
+  ) {
+    return this.crud.delete(this.crud.adminConfig(resource), tenantId, id);
   }
 }

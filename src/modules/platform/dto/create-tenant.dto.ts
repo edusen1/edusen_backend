@@ -1,8 +1,9 @@
-import { IsBoolean, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEmail, IsInt, IsOptional, IsString } from 'class-validator';
 
 export class CreateTenantDto {
+  @IsOptional()
   @IsString()
-  slug!: string;
+  slug?: string;
 
   @IsString()
   nom!: string;
@@ -22,6 +23,22 @@ export class CreateTenantDto {
   @IsOptional()
   @IsString()
   logoUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  plan?: string;
+
+  @IsOptional()
+  @IsInt()
+  durationMonths?: number;
+
+  @IsOptional()
+  @IsEmail()
+  initialAdminEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  initialAdminTelephone?: string;
 
   @IsOptional()
   @IsBoolean()

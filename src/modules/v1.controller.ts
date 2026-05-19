@@ -1,205 +1,223 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Headers,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
-} from "@nestjs/common";
-import { Public } from "@/common/decorators/public.decorator";
-import { SchoolService } from "@/modules/school/school.service";
-import { DomainService } from "@/modules/domain.service";
-import {
-  CreateAnneeDto,
-  CreateBatimentDto,
-  CreateClasseDto,
-  CreateCycleDto,
-  CreateNiveauDto,
-  CreateSalleDto,
-} from "@/modules/school/dto/school.dto";
+  Put,
+  Query,
+} from '@nestjs/common';
+import { Public } from '@/common/decorators/public.decorator';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import type { JwtUser } from '@/common/types/auth.types';
+import { LegacyCrudService } from '@/modules/legacy-crud.service';
 
-@Controller("v1")
+type QueryParams = Record<string, string | string[] | undefined>;
+type Payload = Record<string, unknown>;
+
+@Controller('v1')
 export class V1Controller {
-  constructor(
-    private readonly schoolService: SchoolService,
-    private readonly domain: DomainService,
-  ) {}
+  constructor(private readonly crud: LegacyCrudService) {}
 
   @Public()
-  @Get("liens-bulletin/:token/consulter")
-  bulletinPublic() {
-    return { ok: true };
-  }
-  @Public()
-  @Post("liens-bulletin/:token/verifier-otp")
-  bulletinOtp() {
-    return { ok: true };
-  }
-  @Public()
-  @Get("liens-paiement/:token/detail")
-  paiementDetail() {
-    return { ok: true };
-  }
-  @Public()
-  @Post("liens-paiement/:token/verifier-otp")
-  paiementOtp() {
-    return { ok: true };
-  }
-  @Public()
-  @Post("liens-paiement/:token/payer")
-  paiementPayer() {
-    return { ok: true };
+  @Get('liens-bulletin/:token/consulter')
+  consulterBulletin(@Param('token') token: string) {
+    return this.crud.getLienBulletin(token);
   }
 
-  @Get("utilisateurs") utilisateurs(@Headers("x-tenant-id") tenantId: string) {
-    return this.schoolService.listUsers(tenantId);
-  }
-  @Get("annees-academiques") annees(@Headers("x-tenant-id") tenantId: string) {
-    return this.schoolService.listAnnees(tenantId);
-  }
-  @Post("annees-academiques") createAnnee(
-    @Headers("x-tenant-id") tenantId: string,
-    @Body() dto: CreateAnneeDto,
-  ) {
-    return this.schoolService.createAnnee(tenantId, dto);
-  }
-  @Get("cycles") cycles(@Headers("x-tenant-id") tenantId: string) {
-    return this.schoolService.listCycles(tenantId);
-  }
-  @Post("cycles") createCycle(
-    @Headers("x-tenant-id") tenantId: string,
-    @Body() dto: CreateCycleDto,
-  ) {
-    return this.schoolService.createCycle(tenantId, dto);
-  }
-  @Get("niveaux") niveaux(@Headers("x-tenant-id") tenantId: string) {
-    return this.schoolService.listNiveaux(tenantId);
-  }
-  @Post("niveaux") createNiveau(
-    @Headers("x-tenant-id") tenantId: string,
-    @Body() dto: CreateNiveauDto,
-  ) {
-    return this.schoolService.createNiveau(tenantId, dto);
-  }
-  @Get("batiments") batiments(@Headers("x-tenant-id") tenantId: string) {
-    return this.schoolService.listBatiments(tenantId);
-  }
-  @Post("batiments") createBatiment(
-    @Headers("x-tenant-id") tenantId: string,
-    @Body() dto: CreateBatimentDto,
-  ) {
-    return this.schoolService.createBatiment(tenantId, dto);
-  }
-  @Get("salles") salles(@Headers("x-tenant-id") tenantId: string) {
-    return this.schoolService.listSalles(tenantId);
-  }
-  @Post("salles") createSalle(
-    @Headers("x-tenant-id") tenantId: string,
-    @Body() dto: CreateSalleDto,
-  ) {
-    return this.schoolService.createSalle(tenantId, dto);
-  }
-  @Get("classes") classes(@Headers("x-tenant-id") tenantId: string) {
-    return this.schoolService.listClasses(tenantId);
-  }
-  @Post("classes") createClasse(
-    @Headers("x-tenant-id") tenantId: string,
-    @Body() dto: CreateClasseDto,
-  ) {
-    return this.schoolService.createClasse(tenantId, dto);
-  }
-  @Get("enseignants") enseignants(@Headers("x-tenant-id") tenantId: string) {
-    return this.schoolService.listTeachers(tenantId);
-  }
-  @Get("eleves") eleves(@Headers("x-tenant-id") tenantId: string) {
-    return this.schoolService.listStudents(tenantId);
-  }
-  @Get("parents") parents(@Headers("x-tenant-id") tenantId: string) {
-    return this.schoolService.listParents(tenantId);
-  }
-  @Get("cours") cours(@Headers("x-tenant-id") tenantId: string) {
-    return this.domain.adminEmplois(tenantId);
-  }
-  @Get("stats/etablissement") etabStats(
-    @Headers("x-tenant-id") tenantId: string,
-  ) {
-    return this.schoolService.etabStats(tenantId);
+  @Public()
+  @Post('liens-bulletin/:token/verifier-otp')
+  verifierOtpBulletin(@Param('token') token: string) {
+    return this.crud.getLienBulletin(token);
   }
 
-  @Get("paiements") paiements(@Headers("x-tenant-id") tenantId: string) {
-    return this.domain.v1Paiements(tenantId);
-  }
-  @Get("inscriptions") inscriptions(@Headers("x-tenant-id") tenantId: string) {
-    return this.domain.v1Inscriptions(tenantId);
-  }
-  @Patch("inscriptions/:id/transferer") transfererInscription(
-    @Param("id") id: string,
-    @Body() body: { classeId: string },
-  ) {
-    return this.domain.v1TransferInscription(id, body.classeId);
-  }
-  @Post("liens-paiement/generer") genererLienPaiement() {
-    return { generated: true };
+  @Public()
+  @Get('liens-paiement/:token/detail')
+  detailPaiement(@Param('token') token: string) {
+    return this.crud.getLienPaiement(token);
   }
 
-  @Get("absences-eleves") absencesEleves(
-    @Headers("x-tenant-id") tenantId: string,
-  ) {
-    return this.domain.v1AbsencesEleves(tenantId);
-  }
-  @Post("absences-eleves/:id/approuver") approuverAbsenceEleve(
-    @Param("id") id: string,
-  ) {
-    return this.domain.v1ApprouverAbsence(id);
-  }
-  @Post("absences-eleves/:id/rejeter") rejeterAbsenceEleve(
-    @Param("id") id: string,
-  ) {
-    return this.domain.v1RejeterAbsence(id);
-  }
-  @Get("emplois-du-temps") emploisDuTemps(
-    @Headers("x-tenant-id") tenantId: string,
-  ) {
-    return this.domain.v1Emplois(tenantId);
-  }
-  @Get("convocations") convocations(@Headers("x-tenant-id") tenantId: string) {
-    return this.domain.v1Convocations(tenantId);
-  }
-  @Patch("convocations/:id/compte-rendu") compteRenduConvocation(
-    @Param("id") id: string,
-    @Body() body: { compteRendu: string },
-  ) {
-    return this.domain.v1CompteRenduConvocation(id, body.compteRendu);
-  }
-  @Post("liens-bulletin/generer") genererLienBulletin() {
-    return { generated: true };
+  @Public()
+  @Post('liens-paiement/:token/verifier-otp')
+  verifierOtpPaiement(@Param('token') token: string) {
+    return this.crud.getLienPaiement(token);
   }
 
-  @Get("personnel") personnel(@Headers("x-tenant-id") tenantId: string) {
-    return this.domain.v1Personnel(tenantId);
+  @Public()
+  @Post('liens-paiement/:token/payer')
+  payerLienPaiement(@Param('token') token: string) {
+    return this.crud.payerLienPaiement(token);
   }
-  @Get("pointages") pointages(@Headers("x-tenant-id") tenantId: string) {
-    return this.domain.v1Pointages(tenantId);
+
+  @Get('stats/etablissement')
+  stats(@Headers('x-tenant-id') tenantId?: string) {
+    return this.crud.statsEtablissement(tenantId);
   }
-  @Get("pointages/rapport") pointagesRapport(
-    @Headers("x-tenant-id") tenantId: string,
+
+  @Get('annees-academiques/courante')
+  anneeCourante(@Headers('x-tenant-id') tenantId?: string) {
+    return this.crud.findCurrentAnnee(tenantId);
+  }
+
+  @Post('annees-academiques/:id/activer')
+  activerAnnee(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string) {
+    return this.crud.activateAnnee(tenantId, id);
+  }
+
+  @Get('batiments/:id/salles')
+  sallesBatiment(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string) {
+    return this.crud.getBatimentSalles(tenantId, id);
+  }
+
+  @Patch('inscriptions/:id/transferer')
+  transfererInscription(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: Payload,
   ) {
-    return this.domain.v1Pointages(tenantId);
+    return this.crud.transferInscription(tenantId, id, String(body.classeId));
   }
-  @Get("absences-personnel") absencesPersonnel(
-    @Headers("x-tenant-id") tenantId: string,
+
+  @Post('absences-eleves/:id/approuver')
+  approuverAbsenceEleve(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.domain.v1AbsencesPersonnel(tenantId);
+    return this.crud.approveAbsenceEleve(tenantId, id, user?.sub);
   }
-  @Patch("absences-personnel/:id/valider") validerAbsencePersonnel(
-    @Param("id") id: string,
+
+  @Post('absences-eleves/:id/rejeter')
+  rejeterAbsenceEleve(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.domain.v1ValiderAbsencePersonnel(id);
+    return this.crud.rejectAbsenceEleve(tenantId, id, user?.sub);
   }
-  @Patch("absences-personnel/:id/refuser") refuserAbsencePersonnel(
-    @Param("id") id: string,
+
+  @Patch('convocations/:id/compte-rendu')
+  compteRenduConvocation(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: Payload,
   ) {
-    return this.domain.v1RefuserAbsencePersonnel(id);
+    return this.crud.compteRenduConvocation(tenantId, id, String(body.compteRendu ?? ''));
+  }
+
+  @Patch('absences-personnel/:id/valider')
+  @Post('absences-personnel/:id/valider')
+  validerAbsencePersonnel(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.crud.validateAbsencePersonnel(tenantId, id, user?.sub);
+  }
+
+  @Patch('absences-personnel/:id/refuser')
+  @Post('absences-personnel/:id/rejeter')
+  @Post('absences-personnel/:id/refuser')
+  refuserAbsencePersonnel(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string) {
+    return this.crud.refuseAbsencePersonnel(tenantId, id);
+  }
+
+  @Get('pointages/rapport')
+  rapportPointages(@Headers('x-tenant-id') tenantId: string | undefined, @Query() query: QueryParams) {
+    return this.crud.rapportPointages(tenantId, query);
+  }
+
+  @Post('utilisateurs/:id/reinitialiser-mdp')
+  reinitialiserMdp(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string) {
+    return this.crud.resetPassword(tenantId, id);
+  }
+
+  @Post('utilisateurs/:id/cycles')
+  assignerCycles(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: Payload,
+  ) {
+    const cycles = Array.isArray(body.cycleIds) ? body.cycleIds.map(String) : [];
+    return this.crud.assignCycles(tenantId, id, cycles);
+  }
+
+  @Delete('utilisateurs/:id/cycles/:cycleId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  retirerCycle(@Param('id') id: string, @Param('cycleId') cycleId: string) {
+    return this.crud.removeCycle(id, cycleId);
+  }
+
+  @Post('liens-paiement/generer')
+  genererLienPaiement(@Headers('x-tenant-id') tenantId: string | undefined, @Body() body: Payload) {
+    return this.crud.createLienPaiement(tenantId, body);
+  }
+
+  @Post('liens-bulletin/generer')
+  genererLienBulletin(@Headers('x-tenant-id') tenantId: string | undefined, @Body() body: Payload) {
+    return this.crud.createLienBulletin(tenantId, body);
+  }
+
+  @Post('bulletins/generer')
+  genererBulletins(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.crud.generateBulletinsForClasse(tenantId, body, user?.sub);
+  }
+
+  @Get(':resource')
+  findAll(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('resource') resource: string,
+    @Query() query: QueryParams,
+  ) {
+    return this.crud.findAll(this.crud.v1Config(resource), tenantId, query);
+  }
+
+  @Get(':resource/:id')
+  findById(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('resource') resource: string,
+    @Param('id') id: string,
+  ) {
+    return this.crud.findOne(this.crud.v1Config(resource), tenantId, id);
+  }
+
+  @Post(':resource')
+  create(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('resource') resource: string,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.crud.create(this.crud.v1Config(resource), tenantId, body, user?.sub);
+  }
+
+  @Put(':resource/:id')
+  @Patch(':resource/:id')
+  update(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('resource') resource: string,
+    @Param('id') id: string,
+    @Body() body: Payload,
+  ) {
+    return this.crud.update(this.crud.v1Config(resource), tenantId, id, body);
+  }
+
+  @Delete(':resource/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  delete(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('resource') resource: string,
+    @Param('id') id: string,
+  ) {
+    return this.crud.delete(this.crud.v1Config(resource), tenantId, id);
   }
 }

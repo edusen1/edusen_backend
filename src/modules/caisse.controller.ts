@@ -10,12 +10,6 @@ export class CaisseController {
   @Get("paiements") paiements(@Headers("x-tenant-id") tenantId: string) {
     return this.domain.caissePaiements(tenantId);
   }
-  @Get("paiements/:id") paiementById(@Param("id") id: string) {
-    return this.domain.caissePaiementById(id);
-  }
-  @Post("paiements/:id/valider") validerPaiement(@Param("id") id: string) {
-    return this.domain.caisseValiderPaiement(id);
-  }
   @Get("paiements/historique") historiquePaiements(
     @Headers("x-tenant-id") tenantId: string,
   ) {
@@ -25,5 +19,11 @@ export class CaisseController {
     @Headers("x-tenant-id") tenantId: string,
   ) {
     return this.domain.caissePaiements(tenantId);
+  }
+  @Get("paiements/:id") paiementById(@Param("id") id: string) {
+    return this.domain.caissePaiementById(id);
+  }
+  @Post("paiements/:id/valider") validerPaiement(@Param("id") id: string) {
+    return this.domain.caisseValiderPaiement(id);
   }
 }

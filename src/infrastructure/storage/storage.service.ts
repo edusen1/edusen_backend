@@ -17,19 +17,20 @@ export class StorageService {
   private readonly presignedTtl: number;
 
   constructor() {
-    const region = process.env.AWS_REGION ?? 'us-east-1';
-    const endpoint = process.env.S3_ENDPOINT_OVERRIDE ?? undefined;
+    const region = process.env.S3_REGION ?? process.env.AWS_REGION ?? 'us-east-1';
+    const endpoint = process.env.S3_ENDPOINT ?? process.env.S3_ENDPOINT_OVERRIDE ?? undefined;
+    const forcePathStyle = (process.env.S3_FORCE_PATH_STYLE ?? 'true') !== 'false';
 
     this.bucket = process.env.S3_BUCKET ?? 'noura-school-files';
-    this.publicBaseUrl = process.env.S3_PUBLIC_BASE_URL ?? null;
+    this.publicBaseUrl = process.env.S3_PUBLIC_URL ?? process.env.S3_PUBLIC_BASE_URL ?? null;
     this.presignedTtl = Number(process.env.S3_PRESIGNED_TTL_SECONDS ?? 900);
 
     this.client = new S3Client({
       region,
-      ...(endpoint ? { endpoint, forcePathStyle: true } : {}),
+      ...(endpoint ? { endpoint, forcePathStyle } : {}),
       credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID ?? '',
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? '',
+        accessKeyId: process.env.S3_ACCESS_KEY ?? process.env.AWS_ACCESS_KEY_ID ?? '',
+        secretAccessKey: process.env.S3_SECRET_KEY ?? process.env.AWS_SECRET_ACCESS_KEY ?? '',
       },
     });
   }
@@ -50,7 +51,7 @@ export class StorageService {
     }
 
     this.logger.log(`[Storage] Uploaded key=${key} contentType=${contentType}`);
-    return this.publicBaseUrl ? `${this.publicBaseUrl}/${key}` : key;
+    return this.publicBaseUrl ? `${this.publicBaseUrl.replace(/\/$/, '')}/${this.bucket}/${key}` : key;
   }
 
   async getPresignedUrl(key: string, ttlSeconds?: number): Promise<string> {
