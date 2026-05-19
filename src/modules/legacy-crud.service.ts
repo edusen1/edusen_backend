@@ -390,11 +390,18 @@ export class LegacyCrudService {
   }
 
   async createLienBulletin(tenantId: string | undefined, body: Payload) {
+    const bulletinId = body.bulletinId
+      ? this.assertUuid(body.bulletinId, 'bulletinId')
+      : await this.findLatestBulletinId(tenantId, body);
+    const parentId = body.parentId
+      ? this.assertUuid(body.parentId, 'parentId')
+      : await this.findFirstParentIdForBulletin(bulletinId);
+
     return this.prisma.lienBulletinParent.create({
       data: {
         tenantId: tenantId ?? String(body.tenantId ?? ''),
-        bulletinId: String(body.bulletinId),
-        parentId: String(body.parentId),
+        bulletinId,
+        parentId,
         token: randomBytes(32).toString('hex'),
         expiresAt: body.expiresAt ? new Date(String(body.expiresAt)) : new Date(Date.now() + 7 * 86400000),
       },
@@ -426,16 +433,19 @@ export class LegacyCrudService {
   async generateBulletinsForClasse(tenantId: string | undefined, body: Payload, userId?: string) {
     if (!tenantId) throw new NotFoundException('Tenant introuvable');
     const academicYear = await this.ensureCurrentAcademicYear(tenantId);
-    const classeId = String(body.classeId ?? '');
+    const classeId = this.assertUuid(body.classeId, 'classeId');
     const trimestre = this.normalizeTrimestre(body.trimestre);
     const anneeScolaire = String(body.anneeScolaire ?? academicYear.libelle);
+    const anneeAcademiqueId = body.anneeAcademiqueId
+      ? this.assertUuid(body.anneeAcademiqueId, 'anneeAcademiqueId')
+      : academicYear.id;
 
     const inscriptions = await this.prisma.inscription.findMany({
       where: {
         tenantId,
         classeId,
         statut: 'ACTIF',
-        anneeAcademiqueId: String(body.anneeAcademiqueId ?? academicYear.id),
+        anneeAcademiqueId,
       },
     });
 
@@ -529,8 +539,11 @@ export class LegacyCrudService {
   }
 
   private fixedWhere(config: CrudConfig, tenantId: string | undefined): Payload {
+    if (config.tenantScoped && !tenantId) {
+      throw new BadRequestException('tenantId requis');
+    }
     return {
-      ...(config.tenantScoped ? { tenantId } : {}),
+      ...(config.tenantScoped ? { tenantId: this.assertUuid(tenantId, 'tenantId') } : {}),
       ...(config.role ? { role: config.role } : {}),
     };
   }
@@ -552,7 +565,10 @@ export class LegacyCrudService {
     userId?: string,
   ): Promise<Payload> {
     const data: Payload = { ...body };
-    if (config.tenantScoped && create) data.tenantId = tenantId ?? data.tenantId;
+    if (create) delete data.id;
+    if (config.tenantScoped && create) {
+      data.tenantId = this.assertUuid(tenantId ?? data.tenantId, 'tenantId');
+    }
     if (config.role) data.role = config.role;
 
     for (const field of config.dateFields ?? []) {
@@ -566,7 +582,6 @@ export class LegacyCrudService {
       data.genre = this.normalizeGenre(data.genre ?? data.sexe);
       if (data.active !== undefined) data.actif = Boolean(data.active);
       if (data.statut !== undefined) data.actif = String(data.statut).toLowerCase() !== 'inactif';
-      if (data.role === 'ENSEIGNANT') delete data.matricule;
       if (create) {
         data.username = await this.generateUsername(
           tenantId ?? String(data.tenantId ?? ''),
@@ -574,8 +589,12 @@ export class LegacyCrudService {
           String(data.lastName),
         );
         data.email ??= `${data.username}@local.noura-school`;
-        data.passwordHash ??= await bcrypt.hash(String(data.password ?? data.motDePasse ?? this.generateTempPassword()), 12);
+        const generatedPassword = String(data.password ?? data.motDePasse ?? this.generateTempPassword());
+        data.passwordHash ??= await bcrypt.hash(generatedPassword, 12);
         data.mustChangePwd ??= true;
+        if (data.role === 'ENSEIGNANT') {
+          data.matricule = await this.generateMatricule(tenantId ?? String(data.tenantId ?? ''), 'ENS');
+        }
       }
       for (const field of ['dateNaissance', 'dateInscription', 'dateEmbauche']) {
         if (data[field]) data[field] = new Date(String(data[field]));
@@ -661,6 +680,7 @@ export class LegacyCrudService {
   }
 
   private async normalizeNoteData(tenantId: string, data: Payload): Promise<void> {
+    this.validateUuidFields(data, ['coursId', 'eleveId', 'matiereId']);
     if (!data.matiereId && data.coursId) {
       const cours = await this.prisma.cours.findFirst({
         where: { id: String(data.coursId), tenantId },
@@ -694,6 +714,7 @@ export class LegacyCrudService {
   }
 
   private async normalizeBulletinData(tenantId: string, data: Payload, userId?: string): Promise<void> {
+    this.validateUuidFields(data, ['eleveId', 'classeId', 'soumisPar', 'validePar']);
     data.trimestre = this.normalizeTrimestre(data.trimestre);
     data.anneeScolaire = String(data.anneeScolaire ?? (await this.ensureCurrentAcademicYear(tenantId)).libelle);
     data.moyenne ??= data.moyenneGenerale;
@@ -936,6 +957,43 @@ export class LegacyCrudService {
       if (!existing) return username;
     }
     return `${base}${randomBytes(3).toString('hex')}`;
+  }
+
+  private async generateMatricule(tenantId: string, prefix: string): Promise<string> {
+    const year = new Date().getUTCFullYear();
+    for (let index = 0; index < 50; index += 1) {
+      const suffix = `${Date.now().toString(36).toUpperCase()}${index ? index.toString().padStart(2, '0') : ''}`;
+      const matricule = `${prefix}-${year}-${suffix}`;
+      const existing = await this.prisma.user.findFirst({ where: { tenantId, matricule } });
+      if (!existing) return matricule;
+    }
+    return `${prefix}-${year}-${randomBytes(4).toString('hex').toUpperCase()}`;
+  }
+
+  private async findLatestBulletinId(tenantId: string | undefined, body: Payload): Promise<string> {
+    if (!tenantId) throw new NotFoundException('Tenant introuvable');
+    const eleveId = this.assertUuid(body.eleveId, 'eleveId');
+    const trimestre = body.trimestre ? this.normalizeTrimestre(body.trimestre) : undefined;
+    const bulletin = await this.prisma.bulletin.findFirst({
+      where: {
+        tenantId,
+        eleveId,
+        ...(trimestre ? { trimestre } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!bulletin) throw new NotFoundException('Bulletin introuvable pour cet eleve');
+    return bulletin.id;
+  }
+
+  private async findFirstParentIdForBulletin(bulletinId: string): Promise<string> {
+    const bulletin = await this.prisma.bulletin.findUnique({ where: { id: bulletinId }, select: { eleveId: true } });
+    if (!bulletin) throw new NotFoundException('Bulletin introuvable');
+    const link = await this.prisma.eleveParent.findFirst({
+      where: { eleveId: bulletin.eleveId },
+    });
+    if (!link) throw new BadRequestException('parentId est requis: aucun parent lie a cet eleve');
+    return link.parentId;
   }
 
   private slugify(value: string): string {

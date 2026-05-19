@@ -172,6 +172,11 @@ export class V1Controller {
     return this.crud.generateBulletinsForClasse(tenantId, body, user?.sub);
   }
 
+  @Get('bulletins/:id/download')
+  telechargerBulletin(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string) {
+    return this.crud.getBulletinDownload(tenantId, id);
+  }
+
   @Get(':resource')
   findAll(
     @Headers('x-tenant-id') tenantId: string | undefined,
