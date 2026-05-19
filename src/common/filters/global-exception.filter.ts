@@ -65,12 +65,14 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   private mapPrismaStatus(code: string): HttpStatus {
     if (code === 'P2002') return HttpStatus.CONFLICT;
     if (code === 'P2025') return HttpStatus.NOT_FOUND;
+    if (code === 'P2023') return HttpStatus.BAD_REQUEST;
     return HttpStatus.BAD_REQUEST;
   }
 
   private mapPrismaMessage(code: string): string {
     if (code === 'P2002') return 'Conflit de données: une valeur unique existe déjà';
     if (code === 'P2025') return 'Ressource introuvable';
+    if (code === 'P2023') return 'Identifiant invalide: UUID attendu';
     return 'Erreur de persistance des données';
   }
 }

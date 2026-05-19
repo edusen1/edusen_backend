@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '@/config/prisma.service';
@@ -129,6 +129,7 @@ export class LegacyCrudService {
   }
 
   async findOne(config: CrudConfig, tenantId: string | undefined, id: string) {
+    this.assertUuid(id, 'id');
     const entity = await this.delegate(config.model).findFirst({
       where: { id, ...this.fixedWhere(config, tenantId) },
     });
@@ -137,7 +138,9 @@ export class LegacyCrudService {
   }
 
   async create(config: CrudConfig, tenantId: string | undefined, body: Payload, userId?: string) {
-    const parentIds = this.extractStringArray(body.parentIds);
+    const parentIds = this.extractStringArray(body.parentIds).map((parentId, index) =>
+      this.assertUuid(parentId, `parentIds[${index}]`),
+    );
     const data = await this.prepareData(config, tenantId, body, true, userId);
     const created = await this.delegate(config.model).create({ data });
 
@@ -206,6 +209,7 @@ export class LegacyCrudService {
 
   async transferInscription(tenantId: string | undefined, id: string, classeId: string) {
     await this.findOne(V1_RESOURCES.inscriptions, tenantId, id);
+    this.assertUuid(classeId, 'classeId');
     const updated = await this.prisma.inscription.update({ where: { id }, data: { classeId, statut: 'TRANSFERE' } });
     await this.syncEleveClasse(updated.eleveId, classeId);
     return updated;
@@ -487,6 +491,33 @@ export class LegacyCrudService {
     return (this.prisma as unknown as Record<string, any>)[model];
   }
 
+  private assertUuid(value: unknown, field: string): string {
+    const uuid = String(value ?? '').trim();
+    const uuidPattern =
+      /^(?:00000000-0000-0000-0000-000000000000|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+    if (!uuidPattern.test(uuid)) {
+      throw new BadRequestException(`${field} invalide: UUID attendu`);
+    }
+    return uuid;
+  }
+
+  private validateUuidFields(data: Payload, fields: string[]): void {
+    for (const field of fields) {
+      if (data[field] !== undefined && data[field] !== null && data[field] !== '') {
+        data[field] = this.assertUuid(data[field], field);
+      }
+    }
+  }
+
+  private normalizeGenre(value: unknown): 'M' | 'F' | 'AUTRE' | undefined {
+    if (value === undefined || value === null || value === '') return undefined;
+    const raw = String(value).trim().toUpperCase();
+    if (['M', 'MASCULIN', 'HOMME', 'MALE'].includes(raw)) return 'M';
+    if (['F', 'FEMININ', 'FÉMININ', 'FEMME', 'FEMALE'].includes(raw)) return 'F';
+    if (raw === 'AUTRE') return 'AUTRE';
+    throw new BadRequestException('genre invalide: valeurs autorisées M, F, AUTRE');
+  }
+
   private buildWhere(config: CrudConfig, tenantId: string | undefined, query: QueryParams): Payload {
     const where = this.fixedWhere(config, tenantId);
     for (const [key, raw] of Object.entries(query)) {
@@ -532,6 +563,7 @@ export class LegacyCrudService {
       if (data.email) data.email = String(data.email).trim().toLowerCase();
       data.firstName ??= data.prenom ?? data.first_name ?? '';
       data.lastName ??= data.nom ?? data.last_name ?? '';
+      data.genre = this.normalizeGenre(data.genre ?? data.sexe);
       if (data.active !== undefined) data.actif = Boolean(data.active);
       if (data.statut !== undefined) data.actif = String(data.statut).toLowerCase() !== 'inactif';
       if (data.role === 'ENSEIGNANT') delete data.matricule;
@@ -554,6 +586,7 @@ export class LegacyCrudService {
       delete data.prenom;
       delete data.first_name;
       delete data.last_name;
+      delete data.sexe;
       delete data.parentIds;
       delete data.active;
       delete data.statut;
@@ -597,7 +630,34 @@ export class LegacyCrudService {
     if (config.model === 'absencePersonnel' && create) data.statut ??= 'EN_ATTENTE';
     if (config.model === 'pointage' && create) data.createdBy ??= userId;
 
+    this.validateModelUuids(config.model, data);
+
     return this.stripUndefined(data);
+  }
+
+  private validateModelUuids(model: string, data: Payload): void {
+    const common = ['tenantId'];
+    const fieldsByModel: Record<string, string[]> = {
+      user: [...common, 'classeId'],
+      inscription: [...common, 'eleveId', 'classeId', 'anneeAcademiqueId', 'creePar'],
+      note: [...common, 'eleveId', 'matiereId'],
+      bulletin: [...common, 'eleveId', 'classeId', 'soumisPar', 'validePar'],
+      paiement: [...common, 'inscriptionId', 'eleveId', 'parentId', 'validePar'],
+      absenceEleve: [...common, 'eleveId', 'classeId', 'approuvePar'],
+      emploiDuTemps: [...common, 'classeId', 'coursId', 'salleId', 'enseignantId', 'matiereId'],
+      appel: [...common, 'coursId', 'classeId', 'soumisPar'],
+      cahierTexte: [...common, 'coursId'],
+      convocation: [...common, 'parentId', 'eleveId'],
+      notification: [...common, 'destinataireId'],
+      reclamation: [...common, 'eleveId', 'noteId'],
+      matiereClasse: [...common, 'matiereId', 'classeId', 'enseignantId', 'anneeAcademiqueId'],
+      calendrierScolaire: common,
+      personnel: [...common, 'utilisateurId'],
+      pointage: [...common, 'personnelId', 'createdBy'],
+      absencePersonnel: [...common, 'personnelId', 'validePar'],
+    };
+
+    this.validateUuidFields(data, fieldsByModel[model] ?? common);
   }
 
   private async normalizeNoteData(tenantId: string, data: Payload): Promise<void> {
