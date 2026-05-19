@@ -161,7 +161,12 @@ export class AuthService {
     refreshToken: string;
     expiresIn: number;
   }> {
-    const tokenHash = createHash('sha256').update(refreshTokenValue).digest('hex');
+    const normalizedRefreshToken = (refreshTokenValue ?? '').trim();
+    if (!normalizedRefreshToken || normalizedRefreshToken === 'null' || normalizedRefreshToken === 'undefined') {
+      throw new UnauthorizedException('REFRESH_TOKEN_INVALID');
+    }
+
+    const tokenHash = createHash('sha256').update(normalizedRefreshToken).digest('hex');
 
     const stored = await this.prisma.refreshToken.findUnique({
       where: { tokenHash },
