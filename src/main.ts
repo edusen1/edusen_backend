@@ -17,13 +17,16 @@ async function bootstrap(): Promise<void> {
     contentSecurityPolicy: false,
   });
 
-  const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? 'http://localhost:4200').split(',').map((o) => o.trim());
+  const allowedOrigins = (
+    process.env.ALLOWED_ORIGINS
+    ?? 'http://localhost:4200,https://nouraschool.assanediallo.com,http://127.0.0.1:4200'
+  ).split(',').map((o) => o.trim());
   await app.register(cors, {
     origin: (origin, cb) => {
       if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
         cb(null, true);
       } else {
-        cb(new Error(`Origin ${origin} not allowed`), false);
+        cb(null, false);
       }
     },
     credentials: true,
