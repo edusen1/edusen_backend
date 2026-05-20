@@ -24,6 +24,14 @@ type Payload = Record<string, unknown>;
 export class V1Controller {
   constructor(private readonly crud: LegacyCrudService) {}
 
+  private resolveTenantId(tenantId: string | undefined, user?: JwtUser): string | undefined {
+    const headerTenantId = tenantId?.trim();
+    const isUuid = !!headerTenantId
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(headerTenantId);
+
+    return isUuid ? headerTenantId : user?.tenantId;
+  }
+
   @Public()
   @Get('liens-bulletin/:token/consulter')
   consulterBulletin(@Param('token') token: string) {
@@ -182,8 +190,9 @@ export class V1Controller {
     @Headers('x-tenant-id') tenantId: string | undefined,
     @Param('resource') resource: string,
     @Query() query: QueryParams,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.crud.findAll(this.crud.v1Config(resource), tenantId, query);
+    return this.crud.findAll(this.crud.v1Config(resource), this.resolveTenantId(tenantId, user), query);
   }
 
   @Get(':resource/:id')
@@ -191,8 +200,9 @@ export class V1Controller {
     @Headers('x-tenant-id') tenantId: string | undefined,
     @Param('resource') resource: string,
     @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.crud.findOne(this.crud.v1Config(resource), tenantId, id);
+    return this.crud.findOne(this.crud.v1Config(resource), this.resolveTenantId(tenantId, user), id);
   }
 
   @Post(':resource')
@@ -202,7 +212,7 @@ export class V1Controller {
     @Body() body: Payload,
     @CurrentUser() user?: JwtUser,
   ) {
-    return this.crud.create(this.crud.v1Config(resource), tenantId, body, user?.sub);
+    return this.crud.create(this.crud.v1Config(resource), this.resolveTenantId(tenantId, user), body, user?.sub);
   }
 
   @Put(':resource/:id')
@@ -212,8 +222,9 @@ export class V1Controller {
     @Param('resource') resource: string,
     @Param('id') id: string,
     @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.crud.update(this.crud.v1Config(resource), tenantId, id, body);
+    return this.crud.update(this.crud.v1Config(resource), this.resolveTenantId(tenantId, user), id, body);
   }
 
   @Delete(':resource/:id')
@@ -222,7 +233,8 @@ export class V1Controller {
     @Headers('x-tenant-id') tenantId: string | undefined,
     @Param('resource') resource: string,
     @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.crud.delete(this.crud.v1Config(resource), tenantId, id);
+    return this.crud.delete(this.crud.v1Config(resource), this.resolveTenantId(tenantId, user), id);
   }
 }

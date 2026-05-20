@@ -649,6 +649,26 @@ export class LegacyCrudService {
     if (config.model === 'absencePersonnel' && create) data.statut ??= 'EN_ATTENTE';
     if (config.model === 'pointage' && create) data.createdBy ??= userId;
 
+    if (config.model === 'classe') {
+      await this.normalizeClasseData(tenantId ?? String(data.tenantId ?? ''), data);
+    }
+
+    if (config.model === 'cours') {
+      await this.normalizeCoursData(tenantId ?? String(data.tenantId ?? ''), data);
+    }
+
+    if (config.model === 'salle') {
+      this.normalizeSalleData(data);
+    }
+
+    if (config.model === 'absencePersonnel') {
+      this.normalizeAbsencePersonnelData(data);
+    }
+
+    if (config.model === 'personnel') {
+      await this.normalizePersonnelData(tenantId ?? String(data.tenantId ?? ''), data);
+    }
+
     this.validateModelUuids(config.model, data);
 
     return this.stripUndefined(data);
@@ -677,6 +697,190 @@ export class LegacyCrudService {
     };
 
     this.validateUuidFields(data, fieldsByModel[model] ?? common);
+  }
+
+  private async normalizeClasseData(tenantId: string, data: Payload): Promise<void> {
+    if (!data.niveauId && data.niveau) {
+      const niveauInput = String(data.niveau).trim();
+      if (this.isUuidLike(niveauInput)) {
+        data.niveauId = niveauInput;
+      } else if (niveauInput) {
+        const niveau = await this.prisma.niveau.findFirst({
+          where: {
+            tenantId,
+            OR: [{ libelle: niveauInput }, { code: niveauInput }],
+          },
+        });
+        if (niveau) {
+          data.niveauId = niveau.id;
+        }
+      }
+    }
+
+    if (!data.anneeAcademiqueId && data.anneeScolaire) {
+      const anneeInput = String(data.anneeScolaire).trim();
+      if (this.isUuidLike(anneeInput)) {
+        data.anneeAcademiqueId = anneeInput;
+      } else if (anneeInput) {
+        const annee = await this.prisma.anneeAcademique.findFirst({
+          where: { tenantId, libelle: anneeInput },
+        });
+        if (annee) {
+          data.anneeAcademiqueId = annee.id;
+        }
+      }
+    }
+
+    if (!data.salleId && data.salleClasse) {
+      const salleInput = String(data.salleClasse).trim();
+      if (this.isUuidLike(salleInput)) {
+        data.salleId = salleInput;
+      } else if (salleInput) {
+        const salle = await this.prisma.salle.findFirst({
+          where: { tenantId, nom: salleInput },
+        });
+        if (salle) {
+          data.salleId = salle.id;
+        }
+      }
+    }
+
+    if (data.nombreMaxEleves !== undefined && data.effectifMax === undefined) {
+      data.effectifMax = Number(data.nombreMaxEleves);
+    }
+
+    delete data.niveau;
+    delete data.anneeScolaire;
+    delete data.salleClasse;
+    delete data.nombreMaxEleves;
+    delete data.enseignantPrincipalId;
+    delete data.elevesIds;
+    delete data.matieres;
+    delete data.salle;
+    delete data.horaires;
+  }
+
+  private async normalizeCoursData(tenantId: string, data: Payload): Promise<void> {
+    if (!data.matiereId && data.titre) {
+      const titre = String(data.titre).trim();
+      const matiere = await this.prisma.matiere.findFirst({
+        where: {
+          tenantId,
+          OR: [{ libelle: titre }, { code: titre }],
+        },
+      });
+      if (matiere) {
+        data.matiereId = matiere.id;
+      }
+    }
+
+    if (data.heures !== undefined && data.volumeHoraireHebdo === undefined) {
+      const heures = Number(data.heures);
+      if (!Number.isNaN(heures)) {
+        data.volumeHoraireHebdo = heures;
+      }
+    }
+
+    if (data.description && data.coefficient === undefined) {
+      delete data.description;
+    }
+
+    delete data.titre;
+    delete data.dateDebut;
+    delete data.dateFin;
+    delete data.heures;
+  }
+
+  private normalizeSalleData(data: Payload): void {
+    if (data.type !== undefined && data.typeSalle === undefined) {
+      data.typeSalle = String(data.type);
+    }
+    if (data.capacite !== undefined) {
+      const capacite = Number(data.capacite);
+      data.capacite = Number.isNaN(capacite) ? undefined : capacite;
+    }
+    delete data.type;
+  }
+
+  private normalizeAbsencePersonnelData(data: Payload): void {
+    if (data.type !== undefined && data.typeAbsence === undefined) {
+      data.typeAbsence = String(data.type);
+    }
+    delete data.type;
+  }
+
+  private async normalizePersonnelData(tenantId: string, data: Payload): Promise<void> {
+    if ((!data.utilisateurId || !this.isUuidLike(String(data.utilisateurId))) && data.email) {
+      const firstName = String(data.prenom ?? data.firstName ?? '').trim();
+      const lastName = String(data.nom ?? data.lastName ?? '').trim();
+      const email = String(data.email).trim().toLowerCase();
+      const role = this.normalizePersonnelRole(data.type);
+
+      const existingUser = await this.prisma.user.findFirst({
+        where: { tenantId, email },
+      });
+
+      if (existingUser) {
+        data.utilisateurId = existingUser.id;
+      } else if (firstName && lastName) {
+        const username = await this.generateUsername(tenantId, firstName, lastName);
+        const generatedPassword = this.generateTempPassword();
+        const passwordHash = await bcrypt.hash(generatedPassword, 12);
+        const createdUser = await this.prisma.user.create({
+          data: {
+            tenantId,
+            username,
+            email,
+            passwordHash,
+            firstName,
+            lastName,
+            telephone: data.telephone ? String(data.telephone) : undefined,
+            adresse: data.adresse ? String(data.adresse) : undefined,
+            role,
+            actif: true,
+            mustChangePwd: true,
+            specialite: data.specialite ? String(data.specialite) : undefined,
+          },
+        });
+        data.utilisateurId = createdUser.id;
+      }
+    }
+
+    if (data.salaire !== undefined) {
+      const salaire = Number(data.salaire);
+      data.salaire = Number.isNaN(salaire) ? undefined : salaire;
+    }
+
+    if (data.soldeConge !== undefined) {
+      const soldeConge = Number(data.soldeConge);
+      data.soldeConge = Number.isNaN(soldeConge) ? 0 : soldeConge;
+    }
+
+    delete data.prenom;
+    delete data.nom;
+    delete data.firstName;
+    delete data.lastName;
+    delete data.email;
+    delete data.telephone;
+    delete data.adresse;
+    delete data.type;
+    delete data.specialite;
+    delete data.cycleId;
+    delete data.matieres;
+  }
+
+  private normalizePersonnelRole(value: unknown): 'ENSEIGNANT' | 'SURVEILLANT' | 'CAISSIER' | 'RH' {
+    const role = String(value ?? '').trim().toUpperCase();
+    if (role === 'ENSEIGNANT') return 'ENSEIGNANT';
+    if (role === 'SURVEILLANT') return 'SURVEILLANT';
+    if (role === 'CAISSIER') return 'CAISSIER';
+    return 'RH';
+  }
+
+  private isUuidLike(value: string): boolean {
+    return /^(?:00000000-0000-0000-0000-000000000000|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(
+      value.trim(),
+    );
   }
 
   private async normalizeNoteData(tenantId: string, data: Payload): Promise<void> {
