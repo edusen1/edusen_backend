@@ -319,17 +319,26 @@ export class WhatsappService implements OnApplicationShutdown {
       this.logger.log(`WhatsApp prêt (tenant=${tenantId})`);
 
       // Récupérer les infos du téléphone connecté
-      void client.getInfo().then((info: { wid?: { user?: string }; pushname?: string }) => {
-        state.phoneNumber = info?.wid?.user ?? null;
-        state.displayName = info?.pushname ?? null;
+      void Promise.resolve(client.info ?? client.getInfo?.()).then((info: { wid?: { user?: string; _serialized?: string }; me?: { user?: string; _serialized?: string }; pushname?: string; displayName?: string }) => {
+        state.phoneNumber = info?.wid?.user ?? info?.me?.user ?? info?.wid?._serialized?.split('@')[0] ?? info?.me?._serialized?.split('@')[0] ?? null;
+        state.displayName = info?.pushname ?? info?.displayName ?? null;
         state.connectedAt = new Date();
+        this.logger.log(`Infos WhatsApp tenant=${tenantId} phone=${state.phoneNumber ?? 'n/a'} name=${state.displayName ?? 'n/a'}`);
         // Persister en base
         void this.prisma.whatsappSession.upsert({
           where: { tenantId },
           create: { tenantId, connected: true, phoneNumber: state.phoneNumber, displayName: state.displayName, connectedAt: state.connectedAt },
           update: { connected: true, phoneNumber: state.phoneNumber, displayName: state.displayName, connectedAt: state.connectedAt },
         }).catch(() => null);
-      }).catch(() => null);
+      }).catch((err: unknown) => {
+        state.connectedAt = new Date();
+        this.logger.warn(`Infos WhatsApp indisponibles (tenant=${tenantId}): ${this.formatError(err)}`);
+        void this.prisma.whatsappSession.upsert({
+          where: { tenantId },
+          create: { tenantId, connected: true, connectedAt: state.connectedAt },
+          update: { connected: true, connectedAt: state.connectedAt },
+        }).catch(() => null);
+      });
     });
 
     client.on('authenticated', () => {
