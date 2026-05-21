@@ -518,9 +518,21 @@ export class ClasseService {
     });
     if (existing) throw new ConflictException('Ce stagiaire est déjà rattaché à cette classe');
 
-    await this.prisma.classeStagiaire.create({
-      data: { tenantId, classeId, stagiaireId, dateDebut: new Date(), actif: true },
+    const previousContract = await this.prisma.classeStagiaire.findFirst({
+      where: { classeId, stagiaireId, actif: false },
+      orderBy: { dateFin: 'desc' },
     });
+
+    if (previousContract) {
+      await this.prisma.classeStagiaire.update({
+        where: { id: previousContract.id },
+        data: { dateDebut: new Date(), dateFin: null, actif: true },
+      });
+    } else {
+      await this.prisma.classeStagiaire.create({
+        data: { tenantId, classeId, stagiaireId, dateDebut: new Date(), actif: true },
+      });
+    }
 
     return this.getClasse(tenantId, classeId);
   }
