@@ -117,39 +117,32 @@ export class EcoleConfigService {
   }
 
   async updateApparence(tenantId: string, dto: UpdateApparenceDto): Promise<ApparenceResponse> {
-    const data = {
+    const apparenceData = {
       themeColor: dto.themeColor,
       sidebarMode: dto.sidebarMode,
       displayMode: dto.displayMode,
     };
 
-    await this.prisma.ecoleConfig.upsert({
-      where: { tenantId },
-      // If no EcoleConfig row yet, create a minimal one seeded from Tenant
-      create: {
-        tenantId,
-        ...(await this.buildFallbackCreate(tenantId)),
-        ...data,
-      },
-      update: data,
-    });
-
-    return data;
-  }
-
-  /** Builds minimum fields for a create when only apparence is being saved first */
-  private async buildFallbackCreate(tenantId: string): Promise<Record<string, string>> {
     const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId } });
     if (!tenant) throw new NotFoundException('Tenant introuvable');
-    return {
-      nom: tenant.nom,
-      adresse: tenant.adresse ?? '',
-      ville: '',
-      pays: 'SN',
-      telephone: tenant.telephone ?? '',
-      email: tenant.emailContact ?? '',
-      typeEtablissement: 'PRIVE',
-    };
+
+    await this.prisma.ecoleConfig.upsert({
+      where: { tenantId },
+      create: {
+        tenantId,
+        nom: tenant.nom,
+        adresse: tenant.adresse ?? '',
+        ville: '',
+        pays: 'SN',
+        telephone: tenant.telephone ?? '',
+        email: tenant.emailContact ?? '',
+        typeEtablissement: 'PRIVE',
+        ...apparenceData,
+      },
+      update: apparenceData,
+    });
+
+    return apparenceData;
   }
 
   private toResponse(config: {
