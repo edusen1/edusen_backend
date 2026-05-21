@@ -15,9 +15,10 @@ export class PlatformService {
       const dateExpiration = dto.durationMonths
         ? new Date(Date.now() + dto.durationMonths * 30 * 24 * 60 * 60 * 1000)
         : undefined;
+      const slug = await this.ensureUniqueTenantSlug(dto.slug ?? this.schoolCode(dto.nom));
       return await this.prisma.tenant.create({
         data: {
-          slug: dto.slug ?? this.slugify(dto.nom),
+          slug,
           nom: dto.nom,
           emailContact: dto.emailContact,
           telephone: dto.telephone,
@@ -33,11 +34,15 @@ export class PlatformService {
     }
   }
   findTenantById(id: string) { return this.prisma.tenant.findUnique({ where: { id } }); }
-  updateTenant(id: string, dto: Partial<CreateTenantDto>) {
+  async updateTenant(id: string, dto: Partial<CreateTenantDto>) {
+    const slug = dto.slug || dto.nom
+      ? await this.ensureUniqueTenantSlug(dto.slug ?? this.schoolCode(dto.nom ?? ''), id)
+      : undefined;
+
     return this.prisma.tenant.update({
       where: { id },
       data: {
-        slug: dto.slug,
+        slug,
         nom: dto.nom,
         emailContact: dto.emailContact,
         telephone: dto.telephone,
@@ -92,13 +97,41 @@ export class PlatformService {
     return this.prisma.auditLog.findMany({ orderBy: { createdAt: 'desc' }, take: 200 });
   }
 
-  private slugify(value: string): string {
-    return value
+  private schoolCode(value: string): string {
+    const normalized = value
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 100);
+      .toLowerCase();
+    const compact = normalized.replace(/[^a-z0-9]/g, '');
+    if (compact.length > 0 && compact.length <= 15) {
+      return compact;
+    }
+
+    const initials = normalized
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean)
+      .map((word) => word[0])
+      .join('');
+
+    return initials || compact.slice(0, 15) || 'ecole';
+  }
+
+  private async ensureUniqueTenantSlug(base: string, excludeTenantId?: string): Promise<string> {
+    const normalizedBase = (this.schoolCode(base) || 'ecole').slice(0, 90);
+    let candidate = normalizedBase;
+    let index = 2;
+
+    while (await this.prisma.tenant.findFirst({
+      where: {
+        slug: candidate,
+        ...(excludeTenantId ? { id: { not: excludeTenantId } } : {}),
+      },
+      select: { id: true },
+    })) {
+      candidate = `${normalizedBase}${index}`;
+      index++;
+    }
+
+    return candidate;
   }
 }

@@ -3,6 +3,8 @@ import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '@/config/prisma.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
+import { MailService } from '@/infrastructure/mail/mail.service';
+import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 
 type QueryValue = string | string[] | undefined;
 type QueryParams = Record<string, QueryValue>;
@@ -91,6 +93,8 @@ export class LegacyCrudService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly mailService: MailService,
+    private readonly whatsappService: WhatsappService,
   ) {}
 
   v1Config(resource: string): CrudConfig {
@@ -106,11 +110,30 @@ export class LegacyCrudService {
     const where = this.buildWhere(config, tenantId, query);
     const orderBy = this.orderBy(config, query);
 
+    if (config.model === 'classe' && !where.anneeAcademiqueId) {
+      const currentYear = await this.findCurrentAnnee(tenantId);
+      if (currentYear) {
+        where.anneeAcademiqueId = currentYear.id;
+      }
+    }
+
+    const include = config.model === 'classe' ? {
+      niveau: { include: { cycle: true } },
+      anneeAcademique: true,
+      professeurResponsable: true,
+      salle: true,
+      stagiaires: { include: { stagiaire: true } },
+      _count: { select: { eleves: true } }
+    } : config.model === 'matiereClasse' ? {
+      matiere: true,
+      enseignant: true
+    } : undefined;
+
     if (config.paged || query.page !== undefined || query.size !== undefined) {
       const page = this.toInt(query.page, 0);
       const size = this.toInt(query.size, 20);
       const [content, totalElements] = await Promise.all([
-        delegate.findMany({ where, skip: page * size, take: size, orderBy }),
+        delegate.findMany({ where, skip: page * size, take: size, orderBy, ...(include ? { include } : {}) }),
         delegate.count({ where }),
       ]);
       const totalPages = size > 0 ? Math.ceil(totalElements / size) : 0;
@@ -125,13 +148,26 @@ export class LegacyCrudService {
       };
     }
 
-    return delegate.findMany({ where, orderBy });
+    return delegate.findMany({ where, orderBy, ...(include ? { include } : {}) });
   }
 
   async findOne(config: CrudConfig, tenantId: string | undefined, id: string) {
     this.assertUuid(id, 'id');
+    const include = config.model === 'classe' ? {
+      niveau: { include: { cycle: true } },
+      anneeAcademique: true,
+      professeurResponsable: true,
+      salle: true,
+      stagiaires: { include: { stagiaire: true } },
+      _count: { select: { eleves: true } }
+    } : config.model === 'matiereClasse' ? {
+      matiere: true,
+      enseignant: true
+    } : undefined;
+
     const entity = await this.delegate(config.model).findFirst({
       where: { id, ...this.fixedWhere(config, tenantId) },
+      ...(include ? { include } : {}),
     });
     if (!entity) throw new NotFoundException('Ressource introuvable');
     return entity;
@@ -141,7 +177,15 @@ export class LegacyCrudService {
     const parentIds = this.extractStringArray(body.parentIds).map((parentId, index) =>
       this.assertUuid(parentId, `parentIds[${index}]`),
     );
+    const stagiaireIds = config.model === 'classe' && Array.isArray(body.stagiaireIds)
+      ? body.stagiaireIds.map(String).map((id, index) => this.assertUuid(id, `stagiaireIds[${index}]`))
+      : undefined;
+
     const data = await this.prepareData(config, tenantId, body, true, userId);
+    const tempPassword = typeof data.__tempPasswordForNotification === 'string'
+      ? data.__tempPasswordForNotification
+      : null;
+    delete data.__tempPasswordForNotification;
     const created = await this.delegate(config.model).create({ data });
 
     if (config.model === 'user' && data.role === 'ELEVE' && parentIds.length > 0) {
@@ -163,11 +207,34 @@ export class LegacyCrudService {
       return this.attachBulletinPdf(tenantId, created);
     }
 
+    if (config.model === 'classe' && stagiaireIds && stagiaireIds.length > 0) {
+      await this.prisma.classeStagiaire.createMany({
+        data: stagiaireIds.map((stagiaireId) => ({
+          tenantId: tenantId ?? '',
+          classeId: created.id,
+          stagiaireId,
+        })),
+        skipDuplicates: true,
+      });
+    }
+
+    if (config.model === 'classe') {
+      return this.findOne(config, tenantId, created.id);
+    }
+
+    if (config.model === 'user' && data.role === 'ENSEIGNANT' && tempPassword) {
+      void this.sendTeacherCredentials(tenantId, created, tempPassword);
+    }
+
     return created;
   }
 
   async update(config: CrudConfig, tenantId: string | undefined, id: string, body: Payload) {
     await this.findOne(config, tenantId, id);
+    const stagiaireIds = config.model === 'classe' && Array.isArray(body.stagiaireIds)
+      ? body.stagiaireIds.map(String).map((id, index) => this.assertUuid(id, `stagiaireIds[${index}]`))
+      : undefined;
+
     const data = await this.prepareData(config, tenantId, body, false);
     const updated = await this.delegate(config.model).update({ where: { id }, data });
 
@@ -181,6 +248,24 @@ export class LegacyCrudService {
 
     if (config.model === 'bulletin') {
       return this.attachBulletinPdf(tenantId, updated);
+    }
+
+    if (config.model === 'classe' && stagiaireIds !== undefined) {
+      await this.prisma.classeStagiaire.deleteMany({ where: { classeId: id } });
+      if (stagiaireIds.length > 0) {
+        await this.prisma.classeStagiaire.createMany({
+          data: stagiaireIds.map((stagiaireId) => ({
+            tenantId: tenantId ?? '',
+            classeId: id,
+            stagiaireId,
+          })),
+          skipDuplicates: true,
+        });
+      }
+    }
+
+    if (config.model === 'classe') {
+      return this.findOne(config, tenantId, id);
     }
 
     return updated;
@@ -591,9 +676,11 @@ export class LegacyCrudService {
         data.email ??= `${data.username}@local.noura-school`;
         const generatedPassword = String(data.password ?? data.motDePasse ?? this.generateTempPassword());
         data.passwordHash ??= await bcrypt.hash(generatedPassword, 12);
+        data.__tempPasswordForNotification = generatedPassword;
         data.mustChangePwd ??= true;
         if (data.role === 'ENSEIGNANT') {
           data.matricule = await this.generateMatricule(tenantId ?? String(data.tenantId ?? ''), 'ENS');
+          data.dateEmbauche ??= new Date();
         }
       }
       for (const field of ['dateNaissance', 'dateInscription', 'dateEmbauche']) {
@@ -672,6 +759,62 @@ export class LegacyCrudService {
     this.validateModelUuids(config.model, data);
 
     return this.stripUndefined(data);
+  }
+
+  private async sendTeacherCredentials(tenantId: string | undefined, user: Payload, tempPassword: string): Promise<void> {
+    const email = String(user.email ?? '');
+    const firstName = String(user.firstName ?? '');
+    const lastName = String(user.lastName ?? '');
+    const from = tenantId ? await this.resolveSchoolSender(tenantId) : undefined;
+
+    if (email) {
+      this.mailService.sendCompteCree(email, firstName, lastName, tempPassword, from);
+    }
+
+    const telephone = String(user.telephone ?? '').trim();
+    if (!tenantId || !telephone || !this.whatsappService.isReady(tenantId)) {
+      return;
+    }
+
+    const message = [
+      `Bonjour ${firstName} ${lastName},`,
+      'Votre compte NouraSchool a été créé.',
+      `Identifiant : ${email}`,
+      `Mot de passe temporaire : ${tempPassword}`,
+      'Veuillez le modifier à la première connexion.',
+    ].join('\n');
+
+    this.whatsappService.sendMessage(tenantId, telephone, message).catch(() => null);
+  }
+
+  private async resolveSchoolSender(tenantId: string): Promise<string | undefined> {
+    const [config, tenant] = await Promise.all([
+      this.prisma.ecoleConfig.findUnique({ where: { tenantId }, select: { nom: true } }),
+      this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { nom: true, slug: true } }),
+    ]);
+
+    const schoolName = config?.nom || tenant?.nom || 'Noura School';
+    const localDomain = tenant?.slug || this.schoolDomainName(schoolName);
+    return `${schoolName} <contact@${localDomain}.assanediallo.com>`;
+  }
+
+  private schoolDomainName(schoolName: string): string {
+    const normalized = schoolName
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+    const compact = normalized.replace(/[^a-z0-9]/g, '');
+    if (compact.length > 0 && compact.length <= 15) {
+      return compact;
+    }
+
+    const initials = normalized
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean)
+      .map((word) => word[0])
+      .join('');
+
+    return initials || compact.slice(0, 15) || 'nouraschool';
   }
 
   private validateModelUuids(model: string, data: Payload): void {
@@ -758,6 +901,8 @@ export class LegacyCrudService {
     delete data.matieres;
     delete data.salle;
     delete data.horaires;
+    delete data.stagiaireIds;
+    delete data.stagiaires;
   }
 
   private async normalizeCoursData(tenantId: string, data: Payload): Promise<void> {

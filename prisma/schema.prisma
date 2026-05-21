@@ -210,6 +210,7 @@ model Tenant {
   auditLogs           AuditLog[]
   calendrier          CalendrierScolaire[]
   surveillantCycles   SurveillantCycle[]
+  classeStagiaires    ClasseStagiaire[]
 }
 
 // ==================== FRAIS NIVEAU CONFIG ====================
@@ -354,6 +355,8 @@ model User {
   surveillantCycles  SurveillantCycle[]
   auditLogs          AuditLog[]
   personnelRecord    Personnel?
+  classesResponsable Classe[]             @relation("ClasseProfResponsable")
+  stagiaireIn        ClasseStagiaire[]    @relation("UserStagiaires")
 }
 
 // ==================== ELEVE-PARENT ====================
@@ -470,7 +473,10 @@ model Classe {
 
   @@unique([tenantId, nom, anneeAcademiqueId])
 
-  eleves         User[]          @relation("EleveClasse")
+  professeurResponsableId String? @db.Uuid
+  professeurResponsable   User?   @relation("ClasseProfResponsable", fields: [professeurResponsableId], references: [id])
+
+  eleves         User[]            @relation("EleveClasse")
   matiereClasses MatiereClasse[]
   cours          Cours[]
   emploisDuTemps EmploiDuTemps[]
@@ -478,6 +484,21 @@ model Classe {
   bulletins      Bulletin[]
   inscriptions   Inscription[]
   appels         Appel[]
+  stagiaires     ClasseStagiaire[]
+}
+
+model ClasseStagiaire {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  classeId    String   @db.Uuid
+  classe      Classe   @relation(fields: [classeId], references: [id], onDelete: Cascade)
+  stagiaireId String   @db.Uuid
+  stagiaire   User     @relation("UserStagiaires", fields: [stagiaireId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@unique([classeId, stagiaireId])
+  @@map("classe_stagiaires")
 }
 
 model Matiere {

@@ -27,6 +27,7 @@ import { StorageService } from '@/infrastructure/storage/storage.service';
 import { EcoleConfigService } from '@/modules/configuration/ecole-config.service';
 import { AcademiqueConfigService } from '@/modules/configuration/academique-config.service';
 import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
+import { ClasseService } from '@/modules/classes/classe.service';
 
 @Module({
   imports: [
@@ -61,6 +62,7 @@ import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
     EcoleConfigService,
     AcademiqueConfigService,
     WhatsappService,
+    ClasseService,
     { provide: APP_GUARD, useClass: AppAuthGuard },
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },

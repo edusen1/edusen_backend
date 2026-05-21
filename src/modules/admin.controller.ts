@@ -23,6 +23,9 @@ import { AcademiqueConfigService } from '@/modules/configuration/academique-conf
 import { SaveFraisDto } from '@/modules/configuration/dto/save-frais.dto';
 import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 import { UpdateWhatsappFeaturesDto } from '@/modules/whatsapp/dto/update-whatsapp-features.dto';
+import { ClasseService } from '@/modules/classes/classe.service';
+import { CreateClasseDto } from '@/modules/classes/dto/create-classe.dto';
+import { UpdateClasseDto } from '@/modules/classes/dto/update-classe.dto';
 
 type QueryParams = Record<string, string | string[] | undefined>;
 type Payload = Record<string, unknown>;
@@ -35,7 +38,70 @@ export class AdminController {
     private readonly ecoleConfig: EcoleConfigService,
     private readonly academiqueConfig: AcademiqueConfigService,
     private readonly whatsapp: WhatsappService,
+    private readonly classeService: ClasseService,
   ) {}
+
+  // ----------------------------------------------------------------
+  // Classes
+  // ----------------------------------------------------------------
+
+  @Get('classes')
+  getClasses(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Query('anneeId') anneeId?: string,
+    @Query('niveauId') niveauId?: string,
+    @Query('cycleId') cycleId?: string,
+  ) {
+    return this.classeService.getClasses(tenantId!, anneeId, niveauId, cycleId);
+  }
+
+  @Post('classes')
+  createClasse(@Headers('x-tenant-id') tenantId: string | undefined, @Body() dto: CreateClasseDto) {
+    return this.classeService.createClasse(tenantId!, dto);
+  }
+
+  @Get('classes/enseignants')
+  getEnseignants(@Headers('x-tenant-id') tenantId: string | undefined) {
+    return this.classeService.getEnseignants(tenantId!);
+  }
+
+  @Get('classes/:id')
+  getClasse(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string) {
+    return this.classeService.getClasse(tenantId!, id);
+  }
+
+  @Put('classes/:id')
+  updateClasse(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() dto: UpdateClasseDto,
+  ) {
+    return this.classeService.updateClasse(tenantId!, id, dto);
+  }
+
+  @Delete('classes/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  deleteClasse(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string) {
+    return this.classeService.deleteClasse(tenantId!, id);
+  }
+
+  @Post('classes/:id/stagiaires')
+  addStagiaire(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') classeId: string,
+    @Body('stagiaireId') stagiaireId: string,
+  ) {
+    return this.classeService.addStagiaire(tenantId!, classeId, stagiaireId);
+  }
+
+  @Delete('classes/:id/stagiaires/:stagiaireId')
+  removeStagiaire(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') classeId: string,
+    @Param('stagiaireId') stagiaireId: string,
+  ) {
+    return this.classeService.removeStagiaire(tenantId!, classeId, stagiaireId);
+  }
 
   @Get('reports/rapport-trimestre')
   rapportTrimestre(@Headers('x-tenant-id') tenantId: string | undefined, @Query() query: QueryParams) {

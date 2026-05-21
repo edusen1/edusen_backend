@@ -45,11 +45,14 @@ export interface WhatsappQrResponse {
   expiresInSeconds: number;
 }
 
+const QR_TTL_SECONDS = 20;
+
 interface TenantWaState {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   client: any | null;
   ready: boolean;
   latestQr: string | null;
+  qrGeneratedAt: number | null;
   initializing: boolean;
   reconnectTimer: NodeJS.Timeout | null;
   phoneNumber: string | null;
@@ -129,7 +132,7 @@ export class WhatsappService implements OnApplicationShutdown {
 
     loadWWebDeps();
     const dataUrl: string = await QRCodeLib.toDataURL(rawQr, { width: 300, margin: 1 });
-    return { qrCode: dataUrl, expiresInSeconds: 45 };
+    return { qrCode: dataUrl, expiresInSeconds: QR_TTL_SECONDS };
   }
 
   async logout(tenantId: string): Promise<void> {
@@ -215,6 +218,7 @@ export class WhatsappService implements OnApplicationShutdown {
         client: null,
         ready: false,
         latestQr: null,
+        qrGeneratedAt: null,
         initializing: false,
         reconnectTimer: null,
         phoneNumber: null,
@@ -279,6 +283,7 @@ export class WhatsappService implements OnApplicationShutdown {
 
     client.on('qr', (qr: string) => {
       state.latestQr = qr;
+      state.qrGeneratedAt = Date.now();
       state.ready = false;
       // Résoudre les waiters
       const waiters = state.qrWaiters.splice(0);
@@ -289,6 +294,7 @@ export class WhatsappService implements OnApplicationShutdown {
     client.on('ready', () => {
       state.ready = true;
       state.latestQr = null;
+      state.qrGeneratedAt = null;
       const waiters = state.qrWaiters.splice(0);
       for (const resolve of waiters) resolve(null);
       this.logger.log(`WhatsApp prêt (tenant=${tenantId})`);
@@ -309,6 +315,7 @@ export class WhatsappService implements OnApplicationShutdown {
 
     client.on('authenticated', () => {
       state.latestQr = null;
+      state.qrGeneratedAt = null;
       this.logger.log(`WhatsApp authentifié (tenant=${tenantId})`);
     });
 
@@ -318,12 +325,20 @@ export class WhatsappService implements OnApplicationShutdown {
 
     client.on('auth_failure', (msg: string) => {
       state.ready = false;
+      state.latestQr = null;
+      state.qrGeneratedAt = null;
       this.logger.error(`Auth failure (tenant=${tenantId}): ${msg}`);
+      void this.prisma.whatsappSession.updateMany({
+        where: { tenantId },
+        data: { sessionData: null, connected: false, phoneNumber: null, displayName: null, connectedAt: null },
+      }).catch(() => null);
       this.scheduleReconnect(tenantId);
     });
 
     client.on('disconnected', (reason: string) => {
       state.ready = false;
+      state.latestQr = null;
+      state.qrGeneratedAt = null;
       state.phoneNumber = null;
       state.displayName = null;
       this.logger.warn(`Déconnecté (tenant=${tenantId}): ${reason}`);
@@ -356,7 +371,11 @@ export class WhatsappService implements OnApplicationShutdown {
 
   private waitForQr(tenantId: string, timeoutMs: number): Promise<string | null> {
     const state = this.getOrCreateState(tenantId);
-    if (state.latestQr) return Promise.resolve(state.latestQr);
+    if (state.latestQr && state.qrGeneratedAt && Date.now() - state.qrGeneratedAt < QR_TTL_SECONDS * 1000) {
+      return Promise.resolve(state.latestQr);
+    }
+    state.latestQr = null;
+    state.qrGeneratedAt = null;
     if (state.ready) return Promise.resolve(null);
 
     return new Promise<string | null>((resolve) => {

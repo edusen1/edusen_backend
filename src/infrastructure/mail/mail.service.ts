@@ -34,7 +34,7 @@ export class MailService {
   }
 
   /** Envoie un email de manière asynchrone via worker thread (fire-and-forget). */
-  sendAsync(to: string, subject: string, html: string): void {
+  sendAsync(to: string, subject: string, html: string, from?: string): void {
     if (!this.apiKey) {
       this.logger.warn(
         `[Mail] RESEND_API_KEY manquante - email non envoyé à ${this.maskEmail(to)}`,
@@ -47,7 +47,7 @@ export class MailService {
       to,
       subject,
       html,
-      from: this.from,
+      from: from ?? this.from,
       apiKey: this.apiKey,
     };
 
@@ -85,7 +85,7 @@ export class MailService {
   }
 
   /** Envoie et attend la confirmation (await). */
-  async send(to: string, subject: string, html: string): Promise<void> {
+  async send(to: string, subject: string, html: string, from?: string): Promise<void> {
     if (!this.apiKey) {
       this.logger.warn(
         `[Mail] RESEND_API_KEY manquante - email non envoyé à ${this.maskEmail(to)}`,
@@ -98,7 +98,7 @@ export class MailService {
       to,
       subject,
       html,
-      from: this.from,
+      from: from ?? this.from,
       apiKey: this.apiKey,
     };
 
@@ -142,11 +142,13 @@ export class MailService {
     prenom: string,
     nom: string,
     motDePasseTemporaire: string,
+    from?: string,
   ): void {
     this.sendAsync(
       to,
       "Votre compte Noura School a été créé",
       this.tplCompteCree(prenom, nom, to, motDePasseTemporaire),
+      from,
     );
   }
 

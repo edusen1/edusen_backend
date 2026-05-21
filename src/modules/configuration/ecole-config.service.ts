@@ -89,9 +89,11 @@ export class EcoleConfigService {
     });
 
     // Keep Tenant base fields in sync for coherence across the platform
+    const codeEcole = await this.ensureUniqueTenantSlug(this.schoolCode(dto.nom), tenantId);
     await this.prisma.tenant.update({
       where: { id: tenantId },
       data: {
+        slug: codeEcole,
         nom: dto.nom,
         emailContact: dto.email,
         telephone: dto.telephone,
@@ -171,5 +173,40 @@ export class EcoleConfigService {
       typeEtablissement: 'PRIVE',
       logoUrl: config.logoUrl ?? undefined,
     };
+  }
+
+  private schoolCode(value: string): string {
+    const normalized = value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+    const compact = normalized.replace(/[^a-z0-9]/g, '');
+    if (compact.length > 0 && compact.length <= 15) {
+      return compact;
+    }
+
+    const initials = normalized
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean)
+      .map((word) => word[0])
+      .join('');
+
+    return initials || compact.slice(0, 15) || 'ecole';
+  }
+
+  private async ensureUniqueTenantSlug(base: string, excludeTenantId: string): Promise<string> {
+    const normalizedBase = (this.schoolCode(base) || 'ecole').slice(0, 90);
+    let candidate = normalizedBase;
+    let index = 2;
+
+    while (await this.prisma.tenant.findFirst({
+      where: { slug: candidate, id: { not: excludeTenantId } },
+      select: { id: true },
+    })) {
+      candidate = `${normalizedBase}${index}`;
+      index++;
+    }
+
+    return candidate;
   }
 }
