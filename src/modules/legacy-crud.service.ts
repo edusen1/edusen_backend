@@ -138,7 +138,7 @@ export class LegacyCrudService {
       ]);
       const totalPages = size > 0 ? Math.ceil(totalElements / size) : 0;
       return {
-        content,
+        content: content.map((item: Payload) => this.sanitizeEntity(config.model, item)),
         page,
         size,
         totalElements,
@@ -148,7 +148,8 @@ export class LegacyCrudService {
       };
     }
 
-    return delegate.findMany({ where, orderBy, ...(include ? { include } : {}) });
+    const rows = await delegate.findMany({ where, orderBy, ...(include ? { include } : {}) });
+    return rows.map((item: Payload) => this.sanitizeEntity(config.model, item));
   }
 
   async findOne(config: CrudConfig, tenantId: string | undefined, id: string) {
@@ -170,7 +171,7 @@ export class LegacyCrudService {
       ...(include ? { include } : {}),
     });
     if (!entity) throw new NotFoundException('Ressource introuvable');
-    return entity;
+    return this.sanitizeEntity(config.model, entity);
   }
 
   async create(config: CrudConfig, tenantId: string | undefined, body: Payload, userId?: string) {
@@ -226,7 +227,7 @@ export class LegacyCrudService {
       void this.sendTeacherCredentials(tenantId, created, tempPassword);
     }
 
-    return created;
+    return this.sanitizeEntity(config.model, created);
   }
 
   async update(config: CrudConfig, tenantId: string | undefined, id: string, body: Payload) {
@@ -268,7 +269,7 @@ export class LegacyCrudService {
       return this.findOne(config, tenantId, id);
     }
 
-    return updated;
+    return this.sanitizeEntity(config.model, updated);
   }
 
   async delete(config: CrudConfig, tenantId: string | undefined, id: string) {
@@ -662,8 +663,16 @@ export class LegacyCrudService {
 
     if (config.model === 'user') {
       if (data.email) data.email = String(data.email).trim().toLowerCase();
-      data.firstName ??= data.prenom ?? data.first_name ?? '';
-      data.lastName ??= data.nom ?? data.last_name ?? '';
+
+      const incomingFirstName = data.firstName ?? data.prenom ?? data.first_name;
+      const incomingLastName = data.lastName ?? data.nom ?? data.last_name;
+      if (create || incomingFirstName !== undefined) {
+        data.firstName = String(incomingFirstName ?? '').trim();
+      }
+      if (create || incomingLastName !== undefined) {
+        data.lastName = String(incomingLastName ?? '').trim();
+      }
+
       data.genre = this.normalizeGenre(data.genre ?? data.sexe);
       if (data.active !== undefined) data.actif = Boolean(data.active);
       if (data.statut !== undefined) data.actif = String(data.statut).toLowerCase() !== 'inactif';
@@ -785,6 +794,12 @@ export class LegacyCrudService {
     ].join('\n');
 
     this.whatsappService.sendMessage(tenantId, telephone, message).catch(() => null);
+  }
+
+  private sanitizeEntity(model: string, entity: Payload): Payload {
+    if (!entity || model !== 'user') return entity;
+    const { passwordHash: _passwordHash, ...safeEntity } = entity;
+    return safeEntity;
   }
 
   private async resolveSchoolSender(tenantId: string): Promise<string | undefined> {
