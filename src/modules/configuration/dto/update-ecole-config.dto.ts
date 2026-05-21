@@ -31,6 +31,25 @@ const PHONE_RULES: Record<(typeof PAYS_SUPPORTES)[number], { indicatif: string; 
   ML: { indicatif: '+223', digits: 8 },
 };
 
+const normalizePhoneValue = (
+  value: unknown,
+  obj: { pays?: (typeof PAYS_SUPPORTES)[number] },
+): string => {
+  if (typeof value !== 'string') return String(value ?? '');
+  const cleaned = value.trim().replace(/[\s().-]/g, '');
+  const country = obj.pays;
+  const rule = country ? PHONE_RULES[country] : undefined;
+  if (!rule) return cleaned;
+
+  const digitsOnly = cleaned.replace(/^\+/, '');
+  const prefixWithoutPlus = rule.indicatif.slice(1);
+  if (digitsOnly.startsWith(prefixWithoutPlus)) {
+    return `+${digitsOnly}`;
+  }
+
+  return `${rule.indicatif}${digitsOnly}`;
+};
+
 @ValidatorConstraint({ name: 'PhoneByCountry', async: false })
 class PhoneByCountryConstraint implements ValidatorConstraintInterface {
   validate(value: unknown, args: ValidationArguments): boolean {
@@ -39,8 +58,14 @@ class PhoneByCountryConstraint implements ValidatorConstraintInterface {
     if (typeof value !== 'string' || !rule) return false;
 
     const normalized = value.trim().replace(/[\s().-]/g, '');
-    const pattern = new RegExp(`^\\${rule.indicatif}\\d{${rule.digits}}$`);
-    return pattern.test(normalized);
+
+    if (normalized.startsWith('+')) {
+      const pattern = new RegExp(`^\\${rule.indicatif}\\d{${rule.digits}}$`);
+      return pattern.test(normalized);
+    }
+
+    const localPattern = new RegExp(`^\\d{${rule.digits}}$`);
+    return localPattern.test(normalized);
   }
 
   defaultMessage(): string {
@@ -79,6 +104,7 @@ export class UpdateEcoleConfigDto {
   pays!: (typeof PAYS_SUPPORTES)[number];
 
   /** Chiffres, espaces, +, -, (, ), . uniquement */
+  @Transform(({ value, obj }) => normalizePhoneValue(value, obj))
   @Trim()
   @IsString()
   @Matches(/^[\d\s+\-().]{7,25}$/, { message: 'Numéro de téléphone invalide' })
