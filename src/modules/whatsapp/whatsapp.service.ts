@@ -271,10 +271,11 @@ export class WhatsappService implements OnApplicationShutdown {
       qrMaxRetries: 6,
       takeoverOnConflict: true,
       takeoverTimeoutMs: 5_000,
-      userAgent: false,
+      userAgent:
+        process.env.WHATSAPP_USER_AGENT ??
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       deviceName: 'NouraSchool',
       browserName: 'Chrome',
-      webVersionCache: { type: 'none' },
       authStrategy: new WWebRemoteAuth({
         clientId,
         dataPath,
@@ -282,7 +283,7 @@ export class WhatsappService implements OnApplicationShutdown {
         backupSyncIntervalMs: 60_000,
       }),
       puppeteer: {
-        headless: true,
+        headless: 'new',
         ...(executablePath ? { executablePath } : {}),
         args: [
           '--no-sandbox',
@@ -378,9 +379,10 @@ export class WhatsappService implements OnApplicationShutdown {
       this.scheduleReconnect(tenantId);
     });
 
-    client.initialize().catch((err: Error) => {
-      state.lastError = err.message;
-      this.logger.error(`Erreur init (tenant=${tenantId}): ${err.message}`);
+    client.initialize().catch((err: unknown) => {
+      const message = this.formatError(err);
+      state.lastError = message;
+      this.logger.error(`Erreur init (tenant=${tenantId}): ${message}`);
       state.initializing = false;
       this.scheduleReconnect(tenantId);
     }).then(() => {
@@ -434,5 +436,19 @@ export class WhatsappService implements OnApplicationShutdown {
   private async assertTenantExists(tenantId: string): Promise<void> {
     const exists = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true } });
     if (!exists) throw new NotFoundException('Tenant introuvable');
+  }
+
+  private formatError(error: unknown): string {
+    if (error instanceof Error) {
+      return error.stack || error.message;
+    }
+    if (typeof error === 'string') {
+      return error;
+    }
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
   }
 }
