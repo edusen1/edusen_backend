@@ -45,7 +45,7 @@ export interface WhatsappQrResponse {
   expiresInSeconds: number;
 }
 
-const QR_TTL_SECONDS = 20;
+const QR_TTL_SECONDS = 120;
 
 interface TenantWaState {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
