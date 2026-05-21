@@ -189,6 +189,185 @@ async function upsertNote(tenantId, eleveId, matiereId, trimestre, typeEvaluatio
   return prisma.note.create({ data });
 }
 
+async function upsertCalendrierEvent(tenantId, event) {
+  const where = {
+    tenantId,
+    titre: event.titre,
+    dateDebut: event.dateDebut,
+    sectionId: event.sectionId || null,
+  };
+  const data = {
+    tenantId,
+    sectionId: event.sectionId || null,
+    titre: event.titre,
+    description: event.description || null,
+    dateDebut: event.dateDebut,
+    dateFin: event.dateFin || null,
+    type: event.type,
+  };
+  const existing = await prisma.calendrierScolaire.findFirst({ where });
+
+  if (existing) {
+    return prisma.calendrierScolaire.update({
+      where: { id: existing.id },
+      data,
+    });
+  }
+
+  return prisma.calendrierScolaire.create({ data });
+}
+
+async function seedCalendrierScolaire(tenantId) {
+  const sections = await prisma.cycle.findMany({
+    where: { tenantId, code: { in: ['MATERNELLE', 'PRIMAIRE', 'COLLEGE', 'LYCEE'] } },
+    select: { id: true, code: true },
+  });
+  const sectionByCode = new Map(sections.map((section) => [section.code, section]));
+
+  const globalEvents = [
+    {
+      titre: 'Rentrée des enseignants',
+      description: 'Préparation pédagogique, réunions de rentrée et organisation des classes.',
+      dateDebut: new Date('2025-09-29'),
+      type: 'RENTREE',
+    },
+    {
+      titre: 'Rentrée des élèves',
+      description: 'Accueil général des élèves et démarrage des cours.',
+      dateDebut: new Date('2025-10-06'),
+      type: 'RENTREE',
+    },
+    {
+      titre: 'Vacances de Noël',
+      description: 'Départ en vacances après les cours, reprise le matin du jour indiqué.',
+      dateDebut: new Date('2025-12-24'),
+      dateFin: new Date('2026-01-05'),
+      type: 'VACANCES',
+    },
+    {
+      titre: 'Journée sans école - Lundi de Pentecôte',
+      description: 'Journée sans école prévue comme journée de solidarité dans le calendrier national.',
+      dateDebut: new Date('2026-05-25'),
+      type: 'FERIE',
+    },
+    {
+      titre: 'Assemblée générale FOSCO',
+      description: 'Lancement des activités sociales, culturelles, sportives et éducatives du foyer scolaire.',
+      dateDebut: new Date('2026-02-14'),
+      type: 'ACTIVITE_FOSCO',
+    },
+    {
+      titre: 'Semaine culturelle et sportive',
+      description: 'Activités FOSCO, clubs, génie en herbe, théâtre, sport et valorisation des talents.',
+      dateDebut: new Date('2026-04-20'),
+      dateFin: new Date('2026-04-25'),
+      type: 'ACTIVITE_FOSCO',
+    },
+    {
+      titre: 'Clôture administrative de l’année',
+      description: 'Finalisation des dossiers, archives, bilans pédagogiques et préparation de l’année suivante.',
+      dateDebut: new Date('2026-07-31'),
+      type: 'AUTRE',
+    },
+  ];
+
+  const sectionEvents = [
+    {
+      sectionCode: 'MATERNELLE',
+      titre: 'Activités d’éveil et fête de la petite enfance',
+      description: 'Activités périscolaires adaptées à la maternelle : chants, dessins, motricité et exposition.',
+      dateDebut: new Date('2026-03-18'),
+      type: 'ACTIVITE_PERISCOLAIRE',
+    },
+    {
+      sectionCode: 'PRIMAIRE',
+      titre: 'Compositions du 1er semestre - Primaire',
+      description: 'Période de compositions du primaire et organisation des corrections.',
+      dateDebut: new Date('2026-01-20'),
+      dateFin: new Date('2026-02-06'),
+      type: 'COMPOSITION',
+    },
+    {
+      sectionCode: 'PRIMAIRE',
+      titre: 'Remise des bulletins - Primaire',
+      description: 'Communication des résultats aux familles après les compositions.',
+      dateDebut: new Date('2026-03-28'),
+      type: 'REMISE_BULLETINS',
+    },
+    {
+      sectionCode: 'PRIMAIRE',
+      titre: 'CFEE et entrée en 6ème - préparation',
+      description: 'Révisions dirigées, encadrement des candidats et organisation administrative.',
+      dateDebut: new Date('2026-05-18'),
+      dateFin: new Date('2026-06-12'),
+      type: 'EXAMEN',
+    },
+    {
+      sectionCode: 'COLLEGE',
+      titre: 'Compositions du 1er semestre - Collège',
+      description: 'Fenêtre des compositions, avec priorité d’organisation pour les classes d’examen.',
+      dateDebut: new Date('2026-01-20'),
+      dateFin: new Date('2026-02-20'),
+      type: 'COMPOSITION',
+    },
+    {
+      sectionCode: 'COLLEGE',
+      titre: 'Conseils de classe - Collège',
+      description: 'Bilan du travail et de la vie des classes, appréciations et décisions pédagogiques.',
+      dateDebut: new Date('2026-03-16'),
+      dateFin: new Date('2026-03-21'),
+      type: 'CONSEIL_CLASSE',
+    },
+    {
+      sectionCode: 'COLLEGE',
+      titre: 'BFEM - préparation',
+      description: 'Révisions, examens blancs et suivi des classes de troisième.',
+      dateDebut: new Date('2026-05-25'),
+      dateFin: new Date('2026-06-19'),
+      type: 'EXAMEN',
+    },
+    {
+      sectionCode: 'LYCEE',
+      titre: 'Compositions du 1er semestre - Lycée',
+      description: 'Compositions du lycée, transmission des notes et préparation des conseils.',
+      dateDebut: new Date('2026-01-20'),
+      dateFin: new Date('2026-02-20'),
+      type: 'COMPOSITION',
+    },
+    {
+      sectionCode: 'LYCEE',
+      titre: 'Conseils de classe - Lycée',
+      description: 'Bilan pédagogique, orientation et suivi des classes de première et terminale.',
+      dateDebut: new Date('2026-03-16'),
+      dateFin: new Date('2026-03-21'),
+      type: 'CONSEIL_CLASSE',
+    },
+    {
+      sectionCode: 'LYCEE',
+      titre: 'Baccalauréat - préparation',
+      description: 'Révisions, examens blancs et encadrement des candidats au baccalauréat.',
+      dateDebut: new Date('2026-05-25'),
+      dateFin: new Date('2026-06-26'),
+      type: 'EXAMEN',
+    },
+  ];
+
+  const created = [];
+  for (const event of globalEvents) {
+    created.push(await upsertCalendrierEvent(tenantId, event));
+  }
+  for (const event of sectionEvents) {
+    const section = sectionByCode.get(event.sectionCode);
+    if (!section) continue;
+    created.push(await upsertCalendrierEvent(tenantId, {
+      ...event,
+      sectionId: section.id,
+    }));
+  }
+
+  return created;
+}
+
 async function ensureActiveClasseStagiaire(tenantId, classeId, stagiaireId) {
   const active = await prisma.classeStagiaire.findFirst({
     where: { classeId, stagiaireId, actif: true, dateFin: null },
@@ -514,13 +693,11 @@ async function main() {
       tenantId: tenant.id,
       code: 'FR',
       libelle: 'Francais',
-      coefficient: 2,
       description: 'Langue francaise',
       actif: true,
     },
     {
       libelle: 'Francais',
-      coefficient: 2,
       description: 'Langue francaise',
       actif: true,
     },
@@ -533,13 +710,11 @@ async function main() {
       tenantId: tenant.id,
       code: 'MATH',
       libelle: 'Mathematiques',
-      coefficient: 3,
       description: 'Arithmetique et calcul',
       actif: true,
     },
     {
       libelle: 'Mathematiques',
-      coefficient: 3,
       description: 'Arithmetique et calcul',
       actif: true,
     },
@@ -552,13 +727,11 @@ async function main() {
       tenantId: tenant.id,
       code: 'LECT',
       libelle: 'Lecture',
-      coefficient: 1,
       description: 'Lecture et comprehension',
       actif: true,
     },
     {
       libelle: 'Lecture',
-      coefficient: 1,
       description: 'Lecture et comprehension',
       actif: true,
     },
@@ -817,6 +990,8 @@ async function main() {
     await syncEleveParent(eleveAwa.id, parentAminata.id, tenant.id);
   }
 
+  const calendrierEvents = await seedCalendrierScolaire(tenant.id);
+
   console.log(`Tenant: ${tenant.nom} (${tenant.slug})`);
   console.log(`Tenant ID: ${tenant.id}`);
   console.log(`School year: ${SCHOOL_YEAR}`);
@@ -844,6 +1019,7 @@ async function main() {
   console.log(`- Classes: ${seededClasses.map((classe) => classe.nom).join(', ')}`);
   console.log(`- Matieres: ${matiereFrancais.libelle}, ${matiereMaths.libelle}, ${matiereLecture.libelle}`);
   console.log(`- Courses: ${coursMaths.id}, ${coursFrancais.id}`);
+  console.log(`- Calendrier scolaire: ${calendrierEvents.length} événements`);
 }
 
 main()

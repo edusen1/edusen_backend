@@ -41,6 +41,17 @@ export interface NiveauResponse {
   actif: boolean;
 }
 
+export interface CalendrierScolaireResponse {
+  id: string;
+  sectionId?: string | null;
+  section?: string | null;
+  titre: string;
+  description?: string | null;
+  dateDebut: string;
+  dateFin?: string | null;
+  type: string;
+}
+
 type CycleRow = {
   id: string;
   code: string;
@@ -299,6 +310,88 @@ export class AcademiqueConfigService {
   }
 
   // ----------------------------------------------------------------
+  // Calendrier scolaire
+  // ----------------------------------------------------------------
+
+  async getCalendrier(tenantId: string, sectionId?: string): Promise<CalendrierScolaireResponse[]> {
+    await this.assertTenantExists(tenantId);
+    await this.ensureDefaultAcademicSetup(tenantId);
+    const rows = await this.prisma.calendrierScolaire.findMany({
+      where: { tenantId, ...(sectionId ? { sectionId } : {}) },
+      include: { section: { select: { libelle: true } } },
+      orderBy: [{ dateDebut: 'asc' }, { titre: 'asc' }],
+    });
+    return rows.map((row) => this.toCalendrierResponse(row));
+  }
+
+  async createCalendrier(
+    tenantId: string,
+    dto: {
+      sectionId?: string | null;
+      titre: string;
+      description?: string | null;
+      dateDebut: string;
+      dateFin?: string | null;
+      type?: string;
+    },
+  ): Promise<CalendrierScolaireResponse> {
+    await this.assertTenantExists(tenantId);
+    await this.assertSectionBelongsToTenant(tenantId, dto.sectionId);
+    const created = await this.prisma.calendrierScolaire.create({
+      data: {
+        tenantId,
+        sectionId: dto.sectionId || null,
+        titre: dto.titre.trim(),
+        description: dto.description?.trim() || null,
+        dateDebut: new Date(dto.dateDebut),
+        dateFin: dto.dateFin ? new Date(dto.dateFin) : null,
+        type: dto.type || 'AUTRE',
+      },
+      include: { section: { select: { libelle: true } } },
+    });
+    return this.toCalendrierResponse(created);
+  }
+
+  async updateCalendrier(
+    tenantId: string,
+    id: string,
+    dto: Partial<{
+      sectionId: string | null;
+      titre: string;
+      description: string | null;
+      dateDebut: string;
+      dateFin: string | null;
+      type: string;
+    }>,
+  ): Promise<CalendrierScolaireResponse> {
+    await this.assertTenantExists(tenantId);
+    await this.assertSectionBelongsToTenant(tenantId, dto.sectionId);
+    const existing = await this.prisma.calendrierScolaire.findFirst({ where: { id, tenantId }, select: { id: true } });
+    if (!existing) throw new NotFoundException('Événement introuvable');
+
+    const updated = await this.prisma.calendrierScolaire.update({
+      where: { id },
+      data: {
+        ...(dto.sectionId !== undefined ? { sectionId: dto.sectionId || null } : {}),
+        ...(dto.titre !== undefined ? { titre: dto.titre.trim() } : {}),
+        ...(dto.description !== undefined ? { description: dto.description?.trim() || null } : {}),
+        ...(dto.dateDebut !== undefined ? { dateDebut: new Date(dto.dateDebut) } : {}),
+        ...(dto.dateFin !== undefined ? { dateFin: dto.dateFin ? new Date(dto.dateFin) : null } : {}),
+        ...(dto.type !== undefined ? { type: dto.type || 'AUTRE' } : {}),
+      },
+      include: { section: { select: { libelle: true } } },
+    });
+    return this.toCalendrierResponse(updated);
+  }
+
+  async deleteCalendrier(tenantId: string, id: string): Promise<void> {
+    await this.assertTenantExists(tenantId);
+    const existing = await this.prisma.calendrierScolaire.findFirst({ where: { id, tenantId }, select: { id: true } });
+    if (!existing) throw new NotFoundException('Événement introuvable');
+    await this.prisma.calendrierScolaire.delete({ where: { id } });
+  }
+
+  // ----------------------------------------------------------------
   // Années académiques — lecture via Prisma
   // Les mutations passent par le CRUD générique /v1/annees-academiques
   // ----------------------------------------------------------------
@@ -406,6 +499,12 @@ export class AcademiqueConfigService {
   private async assertTenantExists(tenantId: string): Promise<void> {
     const exists = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true } });
     if (!exists) throw new NotFoundException('Tenant introuvable');
+  }
+
+  private async assertSectionBelongsToTenant(tenantId: string, sectionId?: string | null): Promise<void> {
+    if (!sectionId) return;
+    const section = await this.prisma.cycle.findFirst({ where: { id: sectionId, tenantId }, select: { id: true } });
+    if (!section) throw new NotFoundException('Section introuvable');
   }
 
   private async ensureDefaultAcademicSetup(tenantId: string): Promise<void> {
@@ -560,6 +659,28 @@ export class AcademiqueConfigService {
       moisFin: row.moisFin ?? undefined,
       moyennePassage,
       actif: row.actif,
+    };
+  }
+
+  private toCalendrierResponse(row: {
+    id: string;
+    sectionId: string | null;
+    section?: { libelle: string } | null;
+    titre: string;
+    description: string | null;
+    dateDebut: Date;
+    dateFin: Date | null;
+    type: string | null;
+  }): CalendrierScolaireResponse {
+    return {
+      id: row.id,
+      sectionId: row.sectionId,
+      section: row.section?.libelle ?? null,
+      titre: row.titre,
+      description: row.description,
+      dateDebut: row.dateDebut.toISOString(),
+      dateFin: row.dateFin?.toISOString() ?? null,
+      type: row.type ?? 'AUTRE',
     };
   }
 }

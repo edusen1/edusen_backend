@@ -360,6 +360,65 @@ export class AdminController {
     return this.academiqueConfig.saveFrais(tid!, dto);
   }
 
+  @Roles('ADMIN')
+  @Get('configuration/calendrier-scolaire')
+  getCalendrierScolaire(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Query('sectionId') sectionId: string | undefined,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = tenantId?.trim() || user?.tenantId;
+    return this.academiqueConfig.getCalendrier(tid!, sectionId);
+  }
+
+  @Roles('ADMIN')
+  @Post('configuration/calendrier-scolaire')
+  createCalendrierScolaire(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = tenantId?.trim() || user?.tenantId;
+    return this.academiqueConfig.createCalendrier(tid!, {
+      sectionId: body.sectionId ? String(body.sectionId) : null,
+      titre: String(body.titre ?? ''),
+      description: body.description !== undefined ? String(body.description) : null,
+      dateDebut: String(body.dateDebut ?? ''),
+      dateFin: body.dateFin ? String(body.dateFin) : null,
+      type: body.type ? String(body.type) : 'AUTRE',
+    });
+  }
+
+  @Roles('ADMIN')
+  @Patch('configuration/calendrier-scolaire/:id')
+  updateCalendrierScolaire(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = tenantId?.trim() || user?.tenantId;
+    return this.academiqueConfig.updateCalendrier(tid!, id, {
+      sectionId: body.sectionId !== undefined ? (body.sectionId ? String(body.sectionId) : null) : undefined,
+      titre: body.titre !== undefined ? String(body.titre) : undefined,
+      description: body.description !== undefined ? String(body.description) : undefined,
+      dateDebut: body.dateDebut !== undefined ? String(body.dateDebut) : undefined,
+      dateFin: body.dateFin !== undefined ? (body.dateFin ? String(body.dateFin) : null) : undefined,
+      type: body.type !== undefined ? String(body.type) : undefined,
+    });
+  }
+
+  @Roles('ADMIN')
+  @Delete('configuration/calendrier-scolaire/:id')
+  deleteCalendrierScolaire(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = tenantId?.trim() || user?.tenantId;
+    return this.academiqueConfig.deleteCalendrier(tid!, id);
+  }
+
   // ----------------------------------------------------------------
   // WhatsApp — ADMIN uniquement
   // ----------------------------------------------------------------
