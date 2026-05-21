@@ -25,9 +25,8 @@ const CLASSE_INCLUDE = {
   anneeAcademique: { select: { id: true, libelle: true, estCourante: true, actif: true } },
   professeurResponsable: { select: PROF_SELECT },
   stagiaires: {
-    where: { actif: true, dateFin: null },
     include: { stagiaire: { select: PROF_SELECT } },
-    orderBy: { dateDebut: 'desc' as const },
+    orderBy: [{ actif: 'desc' as const }, { dateDebut: 'desc' as const }],
   },
   _count: { select: { eleves: true } },
 };
