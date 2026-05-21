@@ -22,7 +22,7 @@ const CLASSE_INCLUDE = {
       cycle: { select: { id: true, code: true, libelle: true } },
     },
   },
-  anneeAcademique: { select: { id: true, libelle: true, estCourante: true } },
+  anneeAcademique: { select: { id: true, libelle: true, estCourante: true, actif: true } },
   professeurResponsable: { select: PROF_SELECT },
   stagiaires: {
     where: { actif: true, dateFin: null },
@@ -48,13 +48,15 @@ export class ClasseService {
     let resolvedAnneeId = anneeId;
     if (!resolvedAnneeId) {
       const courante = await this.prisma.anneeAcademique.findFirst({
-        where: { tenantId, estCourante: true },
+        where: { tenantId, actif: true },
+        orderBy: { dateDebut: 'desc' },
         select: { id: true },
       });
       resolvedAnneeId = courante?.id;
     }
 
-    const where: Record<string, unknown> = { tenantId, actif: true };
+    const where: Record<string, unknown> = { tenantId };
+    if (!anneeId) where.actif = true;
     if (resolvedAnneeId) where.anneeAcademiqueId = resolvedAnneeId;
     if (niveauId) where.niveauId = niveauId;
     if (cycleId) {
@@ -103,7 +105,7 @@ export class ClasseService {
         anneeAcademiqueId: dto.anneeAcademiqueId,
         professeurResponsableId: dto.professeurResponsableId ?? null,
         effectifMax: dto.effectifMax ?? null,
-        actif: Boolean(annee.estCourante && annee.actif),
+        actif: Boolean(annee.actif),
       },
       include: CLASSE_INCLUDE,
     });
@@ -562,7 +564,8 @@ export class ClasseService {
 
   private async syncClassActivityForCurrentYear(tenantId: string): Promise<void> {
     const current = await this.prisma.anneeAcademique.findFirst({
-      where: { tenantId, estCourante: true, actif: true },
+      where: { tenantId, actif: true },
+      orderBy: { dateDebut: 'desc' },
       select: { id: true },
     });
     if (!current) return;
@@ -586,7 +589,7 @@ export class ClasseService {
       nom: classe.nom,
       effectifMax: classe.effectifMax,
       anneeAcademique: classe.anneeAcademique
-        ? { id: classe.anneeAcademique.id, libelle: classe.anneeAcademique.libelle, courante: classe.anneeAcademique.estCourante }
+        ? { id: classe.anneeAcademique.id, libelle: classe.anneeAcademique.libelle, courante: classe.anneeAcademique.actif }
         : null,
       niveau: classe.niveau
         ? {

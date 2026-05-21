@@ -29,12 +29,12 @@ BEGIN
       "id", "tenantId", "libelle", "dateDebut", "dateFin", "estCourante", "actif", "createdAt", "updatedAt", "classesDupliquees"
     )
     VALUES (
-      gen_random_uuid(), t."id", '2025-2026', DATE '2025-10-01', DATE '2026-07-31', false, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true
+      gen_random_uuid(), t."id", '2025-2026', DATE '2025-10-01', DATE '2026-07-31', false, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true
     )
     ON CONFLICT ("tenantId", "libelle") DO UPDATE SET
       "dateDebut" = EXCLUDED."dateDebut",
       "dateFin" = EXCLUDED."dateFin",
-      "actif" = true,
+      "actif" = false,
       "updatedAt" = CURRENT_TIMESTAMP;
 
     SELECT "id" INTO annee_id
@@ -121,12 +121,12 @@ BEGIN
         "id", "tenantId", "nom", "niveauId", "anneeAcademiqueId", "effectifMax", "actif", "createdAt", "updatedAt"
       )
       VALUES (
-        gen_random_uuid(), t."id", cls.nom, niveau_id, annee_id, cls.effectif_max, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        gen_random_uuid(), t."id", cls.nom, niveau_id, annee_id, cls.effectif_max, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
       )
       ON CONFLICT ("tenantId", "nom", "anneeAcademiqueId") DO UPDATE SET
         "niveauId" = EXCLUDED."niveauId",
         "effectifMax" = EXCLUDED."effectifMax",
-        "actif" = true,
+        "actif" = false,
         "updatedAt" = CURRENT_TIMESTAMP;
     END LOOP;
 

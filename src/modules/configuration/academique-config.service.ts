@@ -310,10 +310,10 @@ export class AcademiqueConfigService {
       orderBy: { dateDebut: 'desc' },
     })) as AnneeRow[];
 
-    // Guarantee at least one active year (most recent if none marked)
-    const hasActive = rows.some((r: AnneeRow) => r.estCourante || r.actif);
+    // L'annee en cours est l'annee active metier.
+    const activeRow = rows.find((r: AnneeRow) => r.actif) ?? rows[0] ?? null;
     return rows.map((r: AnneeRow, i: number) => {
-      const isActive = hasActive ? (r.estCourante || r.actif) : i === 0;
+      const isActive = activeRow ? r.id === activeRow.id : i === 0;
       return {
         id: r.id,
         libelle: r.libelle,
@@ -338,7 +338,7 @@ export class AcademiqueConfigService {
 
     if (active) {
       await this.prisma.anneeAcademique.updateMany({
-        where: { tenantId, estCourante: true },
+        where: { tenantId, OR: [{ estCourante: true }, { actif: true }] },
         data: { estCourante: false, actif: false, dateFin: new Date() },
       });
       await this.prisma.classe.updateMany({
@@ -368,8 +368,8 @@ export class AcademiqueConfigService {
       libelle: created.libelle,
       dateDebut: created.dateDebut.toISOString(),
       dateFin: created.dateFin?.toISOString() ?? null,
-      active: created.estCourante,
-      statut: created.estCourante ? 'OUVERTE' : 'CLOTUREE',
+      active: created.actif,
+      statut: created.actif ? 'OUVERTE' : 'CLOTUREE',
     };
   }
 
@@ -379,7 +379,7 @@ export class AcademiqueConfigService {
     if (!annee) throw new NotFoundException('Année académique introuvable');
 
     await this.prisma.anneeAcademique.updateMany({
-      where: { tenantId, id: { not: id }, estCourante: true },
+      where: { tenantId, id: { not: id }, OR: [{ estCourante: true }, { actif: true }] },
       data: { estCourante: false, actif: false, dateFin: new Date() },
     });
     const updated = await this.prisma.anneeAcademique.update({
@@ -394,8 +394,8 @@ export class AcademiqueConfigService {
       libelle: updated.libelle,
       dateDebut: updated.dateDebut.toISOString(),
       dateFin: updated.dateFin?.toISOString() ?? null,
-      active: true,
-      statut: 'OUVERTE',
+      active: updated.actif,
+      statut: updated.actif ? 'OUVERTE' : 'CLOTUREE',
     };
   }
 
