@@ -11,12 +11,19 @@ import { mkdirSync } from 'fs';
 import { PrismaService } from '@/config/prisma.service';
 import { PrismaRemoteAuthTenantStore } from './prisma-remote-auth-tenant.store';
 
-// whatsapp-web.js est importé dynamiquement pour éviter les erreurs si non installé
-// Installer : npm install whatsapp-web.js qrcode @types/qrcode
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { Client, RemoteAuth } = require('whatsapp-web.js');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const QRCode = require('qrcode');
+// Lazy-loaded au premier appel pour ne pas crasher si Chromium absent au démarrage
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let WWebClient: any, WWebRemoteAuth: any, QRCodeLib: any;
+
+function loadWWebDeps(): void {
+  if (WWebClient) return;
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const wweb = require('whatsapp-web.js');
+  WWebClient = wweb.Client;
+  WWebRemoteAuth = wweb.RemoteAuth;
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  QRCodeLib = require('qrcode');
+}
 
 export interface WhatsappStatusResponse {
   connected: boolean;
@@ -120,7 +127,8 @@ export class WhatsappService implements OnApplicationShutdown {
       throw new ServiceUnavailableException('QR code indisponible — réessayez dans quelques secondes');
     }
 
-    const dataUrl: string = await QRCode.toDataURL(rawQr, { width: 300, margin: 1 });
+    loadWWebDeps();
+    const dataUrl: string = await QRCodeLib.toDataURL(rawQr, { width: 300, margin: 1 });
     return { qrCode: dataUrl, expiresInSeconds: 45 };
   }
 
@@ -242,11 +250,12 @@ export class WhatsappService implements OnApplicationShutdown {
     const dataPath = join(basePath, tenantId);
     mkdirSync(dataPath, { recursive: true });
 
+    loadWWebDeps();
     const store = new PrismaRemoteAuthTenantStore(this.prisma, tenantId, dataPath);
     const clientId = `school-${tenantId}`;
 
-    const client = new Client({
-      authStrategy: new RemoteAuth({
+    const client = new WWebClient({
+      authStrategy: new WWebRemoteAuth({
         clientId,
         dataPath,
         store,

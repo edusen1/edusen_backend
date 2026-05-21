@@ -20,8 +20,18 @@ RUN npm prune --omit=dev
 
 FROM node:20-alpine AS runner
 
-# dumb-init: proper PID 1 signal handling
-RUN apk add --no-cache dumb-init wget
+# dumb-init + Chromium pour whatsapp-web.js (Puppeteer)
+RUN apk add --no-cache \
+    dumb-init wget \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont
+
+ENV PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 WORKDIR /app
 
