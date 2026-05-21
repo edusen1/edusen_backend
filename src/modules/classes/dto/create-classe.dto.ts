@@ -17,10 +17,6 @@ export class CreateClasseDto {
   professeurResponsableId?: string;
 
   @IsOptional()
-  @IsUUID()
-  salleId?: string;
-
-  @IsOptional()
   @IsInt()
   @Min(1)
   effectifMax?: number;

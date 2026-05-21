@@ -16,10 +16,6 @@ export class UpdateClasseDto {
   professeurResponsableId?: string | null;
 
   @IsOptional()
-  @IsUUID()
-  salleId?: string | null;
-
-  @IsOptional()
   @IsInt()
   @Min(1)
   effectifMax?: number | null;

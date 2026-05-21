@@ -52,6 +52,12 @@ export class FraisNiveauItemDto {
   @IsOptional()
   @IsBoolean()
   actif?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(20)
+  moyennePassage?: number;
 }
 
 export class SaveFraisDto {

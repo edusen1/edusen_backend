@@ -23,7 +23,6 @@ const CLASSE_INCLUDE = {
     },
   },
   anneeAcademique: { select: { id: true, libelle: true, estCourante: true } },
-  salle: { select: { id: true, nom: true } },
   professeurResponsable: { select: PROF_SELECT },
   stagiaires: {
     include: { stagiaire: { select: PROF_SELECT } },
@@ -53,7 +52,7 @@ export class ClasseService {
       resolvedAnneeId = courante?.id;
     }
 
-    const where: Record<string, unknown> = { tenantId };
+    const where: Record<string, unknown> = { tenantId, actif: true };
     if (resolvedAnneeId) where.anneeAcademiqueId = resolvedAnneeId;
     if (niveauId) where.niveauId = niveauId;
     if (cycleId) {
@@ -101,8 +100,8 @@ export class ClasseService {
         niveauId: dto.niveauId,
         anneeAcademiqueId: dto.anneeAcademiqueId,
         professeurResponsableId: dto.professeurResponsableId ?? null,
-        salleId: dto.salleId ?? null,
         effectifMax: dto.effectifMax ?? null,
+        actif: true,
       },
       include: CLASSE_INCLUDE,
     });
@@ -151,7 +150,6 @@ export class ClasseService {
         ...(dto.professeurResponsableId !== undefined
           ? { professeurResponsableId: dto.professeurResponsableId }
           : {}),
-        ...(dto.salleId !== undefined ? { salleId: dto.salleId } : {}),
         ...(dto.effectifMax !== undefined ? { effectifMax: dto.effectifMax } : {}),
       },
       include: CLASSE_INCLUDE,
@@ -174,6 +172,105 @@ export class ClasseService {
     }
 
     await this.prisma.classe.delete({ where: { id } });
+  }
+
+  // ----------------------------------------------------------------
+  // Duplication annuelle
+  // ----------------------------------------------------------------
+
+  async duplicateClassesForYear(tenantId: string, targetAnneeId: string, sourceAnneeId?: string) {
+    await this.assertTenantExists(tenantId);
+
+    const targetAnnee = await this.prisma.anneeAcademique.findFirst({
+      where: { id: targetAnneeId, tenantId },
+      select: { id: true, libelle: true, dateDebut: true },
+    });
+    if (!targetAnnee) throw new NotFoundException('Année cible introuvable');
+
+    const alreadyDuplicated = await this.prisma.anneeAcademique.findFirst({
+      where: { id: targetAnneeId, tenantId, classesDupliquees: true },
+      select: { libelle: true },
+    });
+    if (alreadyDuplicated) {
+      await this.prisma.classe.updateMany({
+        where: { tenantId, anneeAcademiqueId: { not: targetAnneeId } },
+        data: { actif: false },
+      });
+      await this.prisma.classe.updateMany({
+        where: { tenantId, anneeAcademiqueId: targetAnneeId },
+        data: { actif: true },
+      });
+      return { created: 0, skipped: 0, sourceAnnee: '', targetAnnee: alreadyDuplicated.libelle, alreadyDuplicated: true };
+    }
+
+    const sourceAnnee = sourceAnneeId
+      ? await this.prisma.anneeAcademique.findFirst({
+          where: { id: sourceAnneeId, tenantId },
+          select: { id: true, libelle: true },
+        })
+      : await this.prisma.anneeAcademique.findFirst({
+          where: { tenantId, id: { not: targetAnneeId }, dateDebut: { lt: targetAnnee.dateDebut } },
+          orderBy: { dateDebut: 'desc' },
+          select: { id: true, libelle: true },
+        });
+
+    if (!sourceAnnee) throw new NotFoundException('Année source introuvable');
+
+    const sourceClasses = await this.prisma.classe.findMany({
+      where: { tenantId, anneeAcademiqueId: sourceAnnee.id },
+      select: {
+        nom: true,
+        niveauId: true,
+        effectifMax: true,
+        professeurResponsableId: true,
+      },
+      orderBy: { nom: 'asc' },
+    });
+
+    let created = 0;
+    let skipped = 0;
+
+    for (const classe of sourceClasses) {
+      const existing = await this.prisma.classe.findFirst({
+        where: { tenantId, nom: classe.nom, anneeAcademiqueId: targetAnnee.id },
+        select: { id: true },
+      });
+
+      if (existing) {
+        skipped++;
+        continue;
+      }
+
+      await this.prisma.classe.create({
+        data: {
+          tenantId,
+          nom: classe.nom,
+          niveauId: classe.niveauId,
+          anneeAcademiqueId: targetAnnee.id,
+          effectifMax: classe.effectifMax,
+          professeurResponsableId: classe.professeurResponsableId,
+          actif: true,
+        },
+      });
+      created++;
+    }
+
+    await this.prisma.classe.updateMany({
+      where: { tenantId, anneeAcademiqueId: sourceAnnee.id },
+      data: { actif: false },
+    });
+    await this.prisma.anneeAcademique.update({
+      where: { id: targetAnnee.id },
+      data: { classesDupliquees: true },
+    });
+
+    return {
+      created,
+      skipped,
+      sourceAnnee: sourceAnnee.libelle,
+      targetAnnee: targetAnnee.libelle,
+      alreadyDuplicated: false,
+    };
   }
 
   // ----------------------------------------------------------------
@@ -258,7 +355,6 @@ export class ClasseService {
               : null,
           }
         : null,
-      salle: classe.salle ? { id: classe.salle.id, nom: classe.salle.nom } : null,
       professeurResponsable: classe.professeurResponsable
         ? {
             id: classe.professeurResponsable.id,
@@ -276,6 +372,7 @@ export class ClasseService {
         photoUrl: s.stagiaire.photoUrl,
       })),
       nbEleves: classe._count?.eleves ?? 0,
+      actif: classe.actif,
       isUnifiedSection,
       createdAt: classe.createdAt,
     };

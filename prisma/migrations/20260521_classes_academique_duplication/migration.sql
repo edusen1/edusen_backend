@@ -1,0 +1,2 @@
+ALTER TABLE "AnneeAcademique" ADD COLUMN "classesDupliquees" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Classe" ADD COLUMN "actif" BOOLEAN NOT NULL DEFAULT true;

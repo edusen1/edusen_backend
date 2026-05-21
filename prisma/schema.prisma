@@ -397,6 +397,7 @@ model Niveau {
   code      String   @db.VarChar(20)
   libelle   String
   ordre     Int
+  moyennePassage Float    @default(10)
   actif     Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -415,6 +416,7 @@ model AnneeAcademique {
   dateFin     DateTime? @db.Date
   estCourante Boolean   @default(false)
   actif       Boolean  @default(true)
+  classesDupliquees Boolean @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -468,6 +470,7 @@ model Classe {
   salleId           String?          @db.Uuid
   salle             Salle?           @relation(fields: [salleId], references: [id])
   effectifMax       Int?
+  actif             Boolean          @default(true)
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 

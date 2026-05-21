@@ -304,6 +304,7 @@ export class AdminController {
       sectionId: String(body.sectionId ?? ''),
       nom: String(body.nom ?? body.libelle ?? ''),
       ordre: body.ordre !== undefined ? Number(body.ordre) : undefined,
+      moyennePassage: body.moyennePassage !== undefined ? Number(body.moyennePassage) : undefined,
     });
   }
 
@@ -319,6 +320,7 @@ export class AdminController {
     return this.academiqueConfig.updateNiveau(tid!, id, {
       nom: body.nom !== undefined || body.libelle !== undefined ? String(body.nom ?? body.libelle) : undefined,
       ordre: body.ordre !== undefined ? Number(body.ordre) : undefined,
+      moyennePassage: body.moyennePassage !== undefined ? Number(body.moyennePassage) : undefined,
       actif: body.actif !== undefined ? Boolean(body.actif) : undefined,
     });
   }
