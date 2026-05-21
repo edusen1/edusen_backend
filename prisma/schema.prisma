@@ -175,6 +175,9 @@ model Tenant {
   updatedAt      DateTime  @updatedAt
   deletedAt      DateTime?
 
+  ecoleConfig         EcoleConfig?
+  fraisNiveaux        FraisNiveauConfig[]
+  whatsappSession     WhatsappSession?
   users               User[]
   cycles              Cycle[]
   niveaux             Niveau[]
@@ -207,6 +210,74 @@ model Tenant {
   auditLogs           AuditLog[]
   calendrier          CalendrierScolaire[]
   surveillantCycles   SurveillantCycle[]
+}
+
+// ==================== FRAIS NIVEAU CONFIG ====================
+
+model FraisNiveauConfig {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  section     String   @db.VarChar(100)
+  niveau      String   @db.VarChar(100)
+  inscription Float    @default(0)
+  mensualite  Float    @default(0)
+  nbMois      Int      @default(9)
+  moisDebut   Int?
+  moisFin     Int?
+  actif       Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, section, niveau])
+  @@index([tenantId])
+}
+
+// ==================== ECOLE CONFIG ====================
+
+model EcoleConfig {
+  id                String   @id @default(uuid()) @db.Uuid
+  tenantId          String   @unique @db.Uuid
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  nom               String   @db.VarChar(200)
+  slogan            String?  @db.VarChar(300)
+  adresse           String   @db.VarChar(300)
+  ville             String   @db.VarChar(100)
+  pays              String   @default("SN") @db.VarChar(5)
+  telephone         String   @db.VarChar(25)
+  email             String   @db.VarChar(254)
+  siteWeb           String?  @db.VarChar(500)
+  numeroAgrement    String?  @db.VarChar(100)
+  typeEtablissement String   @default("PRIVE") @db.VarChar(20)
+  logoUrl           String?
+  logoS3Key         String?
+  // Apparence
+  themeColor        String   @default("blue") @db.VarChar(20)
+  sidebarMode       String   @default("light") @db.VarChar(10)
+  displayMode       String   @default("light") @db.VarChar(10)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// ==================== WHATSAPP SESSION ====================
+
+model WhatsappSession {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String    @unique @db.Uuid
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sessionData     Bytes?
+  connected       Boolean   @default(false)
+  phoneNumber     String?   @db.VarChar(25)
+  displayName     String?   @db.VarChar(200)
+  connectedAt     DateTime?
+  featureOtp      Boolean   @default(false)
+  featurePayment  Boolean   @default(false)
+  featureAbsence  Boolean   @default(false)
+  featureBulletin Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("whatsapp_sessions")
 }
 
 // ==================== PLATFORM USERS ====================
@@ -337,9 +408,9 @@ model AnneeAcademique {
   tenantId    String   @db.Uuid
   tenant      Tenant   @relation(fields: [tenantId], references: [id])
   libelle     String
-  dateDebut   DateTime @db.Date
-  dateFin     DateTime @db.Date
-  estCourante Boolean  @default(false)
+  dateDebut   DateTime  @db.Date
+  dateFin     DateTime? @db.Date
+  estCourante Boolean   @default(false)
   actif       Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

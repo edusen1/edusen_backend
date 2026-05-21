@@ -73,7 +73,12 @@ export class V1Controller {
   }
 
   @Post('annees-academiques/:id/activer')
-  activerAnnee(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string) {
+  activerAnneePost(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string) {
+    return this.crud.activateAnnee(tenantId, id);
+  }
+
+  @Patch('annees-academiques/:id/activer')
+  activerAnneePatch(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string) {
     return this.crud.activateAnnee(tenantId, id);
   }
 

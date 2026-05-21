@@ -10,6 +10,48 @@ const TENANT_SLUG = 'ecole-noura-dakar';
 const SCHOOL_YEAR = '2025-2026';
 const CURRENT_YEAR_START = new Date('2025-10-01');
 const CURRENT_YEAR_END = new Date('2026-07-31');
+const DEFAULT_STRUCTURE = [
+  {
+    code: 'MATERNELLE',
+    nom: 'Maternelle',
+    niveaux: [
+      { code: 'PS', nom: 'Petite Section', ordre: 1 },
+      { code: 'MS', nom: 'Moyenne Section', ordre: 2 },
+      { code: 'GS', nom: 'Grande Section', ordre: 3 },
+    ],
+  },
+  {
+    code: 'PRIMAIRE',
+    nom: 'Primaire',
+    niveaux: [
+      { code: 'CI', nom: 'CI', ordre: 10 },
+      { code: 'CP', nom: 'CP', ordre: 11 },
+      { code: 'CE1', nom: 'CE1', ordre: 12 },
+      { code: 'CE2', nom: 'CE2', ordre: 13 },
+      { code: 'CM1', nom: 'CM1', ordre: 14 },
+      { code: 'CM2', nom: 'CM2', ordre: 15 },
+    ],
+  },
+  {
+    code: 'COLLEGE',
+    nom: 'Collège',
+    niveaux: [
+      { code: '6E', nom: '6ème', ordre: 20 },
+      { code: '5E', nom: '5ème', ordre: 21 },
+      { code: '4E', nom: '4ème', ordre: 22 },
+      { code: '3E', nom: '3ème', ordre: 23 },
+    ],
+  },
+  {
+    code: 'LYCEE',
+    nom: 'Lycée',
+    niveaux: [
+      { code: '2NDE', nom: 'Seconde', ordre: 30 },
+      { code: '1ERE', nom: 'Première', ordre: 31 },
+      { code: 'TLE', nom: 'Terminale', ordre: 32 },
+    ],
+  },
+];
 
 function slugify(value) {
   return value
@@ -40,6 +82,61 @@ async function upsertById(modelName, where, createData, updateData) {
   }
 
   return prisma[modelName].create({ data: createData });
+}
+
+async function seedDefaultAcademicStructure(tenantId) {
+  const result = { cycles: new Map(), niveaux: new Map() };
+
+  for (const section of DEFAULT_STRUCTURE) {
+    const cycle = await upsertById(
+      'cycle',
+      { tenantId, code: section.code },
+      { tenantId, code: section.code, libelle: section.nom, actif: true },
+      { libelle: section.nom, actif: true },
+    );
+    result.cycles.set(section.code, cycle);
+
+    for (const niveau of section.niveaux) {
+      const niveauRecord = await upsertById(
+        'niveau',
+        { tenantId, code: niveau.code },
+        {
+          tenantId,
+          cycleId: cycle.id,
+          code: niveau.code,
+          libelle: niveau.nom,
+          ordre: niveau.ordre,
+          actif: true,
+        },
+        {
+          cycleId: cycle.id,
+          libelle: niveau.nom,
+          ordre: niveau.ordre,
+          actif: true,
+        },
+      );
+      result.niveaux.set(niveau.code, niveauRecord);
+
+      await upsertById(
+        'fraisNiveauConfig',
+        { tenantId, section: section.nom, niveau: niveau.nom },
+        {
+          tenantId,
+          section: section.nom,
+          niveau: niveau.nom,
+          inscription: 0,
+          mensualite: 0,
+          nbMois: 9,
+          moisDebut: 10,
+          moisFin: 6,
+          actif: true,
+        },
+        {},
+      );
+    }
+  }
+
+  return result;
 }
 
 async function syncEleveParent(eleveId, parentId, tenantId) {
@@ -154,6 +251,8 @@ async function main() {
       actif: true,
     },
   );
+
+  await seedDefaultAcademicStructure(tenant.id);
 
   const cycle = await upsertById(
     'cycle',

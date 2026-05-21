@@ -1,0 +1,380 @@
+import {
+  Injectable,
+  Logger,
+  OnApplicationShutdown,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { join } from 'path';
+import { mkdirSync } from 'fs';
+import { PrismaService } from '@/config/prisma.service';
+import { PrismaRemoteAuthTenantStore } from './prisma-remote-auth-tenant.store';
+
+// whatsapp-web.js est importé dynamiquement pour éviter les erreurs si non installé
+// Installer : npm install whatsapp-web.js qrcode @types/qrcode
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { Client, RemoteAuth } = require('whatsapp-web.js');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const QRCode = require('qrcode');
+
+export interface WhatsappStatusResponse {
+  connected: boolean;
+  phoneNumber?: string;
+  displayName?: string;
+  connectedAt?: string;
+  features?: WhatsappFeaturesResponse;
+}
+
+export interface WhatsappFeaturesResponse {
+  otp: boolean;
+  payment: boolean;
+  absence: boolean;
+  bulletin: boolean;
+}
+
+export interface WhatsappQrResponse {
+  qrCode: string;
+  expiresInSeconds: number;
+}
+
+interface TenantWaState {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  client: any | null;
+  ready: boolean;
+  latestQr: string | null;
+  initializing: boolean;
+  reconnectTimer: NodeJS.Timeout | null;
+  phoneNumber: string | null;
+  displayName: string | null;
+  connectedAt: Date | null;
+  qrWaiters: Array<(qr: string | null) => void>;
+}
+
+@Injectable()
+export class WhatsappService implements OnApplicationShutdown {
+  private readonly logger = new Logger(WhatsappService.name);
+  private readonly states = new Map<string, TenantWaState>();
+
+  constructor(
+    private readonly config: ConfigService,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  async onApplicationShutdown(): Promise<void> {
+    for (const [tenantId, state] of this.states.entries()) {
+      if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
+      if (state.client) {
+        try {
+          await state.client.destroy();
+        } catch {
+          // ignore
+        }
+      }
+      this.logger.log(`Client WhatsApp détruit (tenant=${tenantId})`);
+    }
+    this.states.clear();
+  }
+
+  // ----------------------------------------------------------------
+  // Public API
+  // ----------------------------------------------------------------
+
+  async getStatus(tenantId: string): Promise<WhatsappStatusResponse> {
+    await this.assertTenantExists(tenantId);
+    const state = this.states.get(tenantId);
+    const record = await this.prisma.whatsappSession.findUnique({ where: { tenantId } });
+
+    const connected = state?.ready ?? record?.connected ?? false;
+    const features = record
+      ? {
+          otp: record.featureOtp,
+          payment: record.featurePayment,
+          absence: record.featureAbsence,
+          bulletin: record.featureBulletin,
+        }
+      : undefined;
+
+    return {
+      connected,
+      phoneNumber: state?.phoneNumber ?? record?.phoneNumber ?? undefined,
+      displayName: state?.displayName ?? record?.displayName ?? undefined,
+      connectedAt: state?.connectedAt?.toISOString() ?? record?.connectedAt?.toISOString() ?? undefined,
+      features,
+    };
+  }
+
+  async getQrCode(tenantId: string): Promise<WhatsappQrResponse> {
+    await this.assertTenantExists(tenantId);
+
+    const state = this.getOrCreateState(tenantId);
+    if (state.ready) {
+      throw new ServiceUnavailableException('WhatsApp déjà connecté — déconnectez avant de rescanner');
+    }
+
+    this.startClientIfNeeded(tenantId);
+
+    // Attendre le QR (max 35s)
+    const rawQr = await this.waitForQr(tenantId, 35_000);
+    if (!rawQr) {
+      throw new ServiceUnavailableException('QR code indisponible — réessayez dans quelques secondes');
+    }
+
+    const dataUrl: string = await QRCode.toDataURL(rawQr, { width: 300, margin: 1 });
+    return { qrCode: dataUrl, expiresInSeconds: 45 };
+  }
+
+  async logout(tenantId: string): Promise<void> {
+    await this.assertTenantExists(tenantId);
+    const state = this.states.get(tenantId);
+    if (state) {
+      if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
+      if (state.client) {
+        try {
+          await state.client.logout();
+        } catch {
+          try { await state.client.destroy(); } catch { /* ignore */ }
+        }
+      }
+      this.states.delete(tenantId);
+    }
+    // Effacer la session en base
+    await this.prisma.whatsappSession.updateMany({
+      where: { tenantId },
+      data: { sessionData: null, connected: false, phoneNumber: null, displayName: null, connectedAt: null },
+    });
+    this.logger.log(`WhatsApp déconnecté (tenant=${tenantId})`);
+  }
+
+  async getFeatures(tenantId: string): Promise<WhatsappFeaturesResponse> {
+    await this.assertTenantExists(tenantId);
+    const record = await this.prisma.whatsappSession.findUnique({ where: { tenantId } });
+    return {
+      otp: record?.featureOtp ?? false,
+      payment: record?.featurePayment ?? false,
+      absence: record?.featureAbsence ?? false,
+      bulletin: record?.featureBulletin ?? false,
+    };
+  }
+
+  async updateFeatures(tenantId: string, features: WhatsappFeaturesResponse): Promise<WhatsappFeaturesResponse> {
+    await this.assertTenantExists(tenantId);
+    const record = await this.prisma.whatsappSession.upsert({
+      where: { tenantId },
+      create: {
+        tenantId,
+        featureOtp: features.otp,
+        featurePayment: features.payment,
+        featureAbsence: features.absence,
+        featureBulletin: features.bulletin,
+      },
+      update: {
+        featureOtp: features.otp,
+        featurePayment: features.payment,
+        featureAbsence: features.absence,
+        featureBulletin: features.bulletin,
+      },
+    });
+    return {
+      otp: record.featureOtp,
+      payment: record.featurePayment,
+      absence: record.featureAbsence,
+      bulletin: record.featureBulletin,
+    };
+  }
+
+  async sendMessage(tenantId: string, phone: string, message: string): Promise<void> {
+    const state = this.states.get(tenantId);
+    if (!state?.ready || !state.client) {
+      throw new ServiceUnavailableException('WhatsApp non connecté pour ce tenant');
+    }
+    const chatId = this.normalizePhone(phone);
+    await state.client.sendMessage(chatId, message);
+    this.logger.log(`Message envoyé à ${chatId} (tenant=${tenantId})`);
+  }
+
+  isReady(tenantId: string): boolean {
+    return this.states.get(tenantId)?.ready ?? false;
+  }
+
+  // ----------------------------------------------------------------
+  // Private — gestion du client per-tenant
+  // ----------------------------------------------------------------
+
+  private getOrCreateState(tenantId: string): TenantWaState {
+    if (!this.states.has(tenantId)) {
+      this.states.set(tenantId, {
+        client: null,
+        ready: false,
+        latestQr: null,
+        initializing: false,
+        reconnectTimer: null,
+        phoneNumber: null,
+        displayName: null,
+        connectedAt: null,
+        qrWaiters: [],
+      });
+    }
+    return this.states.get(tenantId)!;
+  }
+
+  private startClientIfNeeded(tenantId: string): void {
+    const state = this.getOrCreateState(tenantId);
+    if (state.ready || state.initializing) return;
+    this.initClient(tenantId);
+  }
+
+  private initClient(tenantId: string): void {
+    const state = this.getOrCreateState(tenantId);
+    if (state.initializing) return;
+    state.initializing = true;
+
+    if (state.client) {
+      void state.client.destroy().catch(() => null);
+      state.client = null;
+    }
+
+    const executablePath =
+      process.env.PUPPETEER_EXECUTABLE_PATH ??
+      this.config.get<string>('PUPPETEER_EXECUTABLE_PATH');
+
+    const basePath = this.config.get<string>('WHATSAPP_AUTH_DATA_PATH', join(process.cwd(), '.wwebjs_auth'));
+    const dataPath = join(basePath, tenantId);
+    mkdirSync(dataPath, { recursive: true });
+
+    const store = new PrismaRemoteAuthTenantStore(this.prisma, tenantId, dataPath);
+    const clientId = `school-${tenantId}`;
+
+    const client = new Client({
+      authStrategy: new RemoteAuth({
+        clientId,
+        dataPath,
+        store,
+        backupSyncIntervalMs: 60_000,
+      }),
+      puppeteer: {
+        headless: true,
+        ...(executablePath ? { executablePath } : {}),
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--single-process',
+          '--no-zygote',
+        ],
+      },
+    });
+
+    state.client = client;
+
+    client.on('qr', (qr: string) => {
+      state.latestQr = qr;
+      state.ready = false;
+      // Résoudre les waiters
+      const waiters = state.qrWaiters.splice(0);
+      for (const resolve of waiters) resolve(qr);
+      this.logger.log(`QR généré (tenant=${tenantId})`);
+    });
+
+    client.on('ready', () => {
+      state.ready = true;
+      state.latestQr = null;
+      const waiters = state.qrWaiters.splice(0);
+      for (const resolve of waiters) resolve(null);
+      this.logger.log(`WhatsApp prêt (tenant=${tenantId})`);
+
+      // Récupérer les infos du téléphone connecté
+      void client.getInfo().then((info: { wid?: { user?: string }; pushname?: string }) => {
+        state.phoneNumber = info?.wid?.user ?? null;
+        state.displayName = info?.pushname ?? null;
+        state.connectedAt = new Date();
+        // Persister en base
+        void this.prisma.whatsappSession.upsert({
+          where: { tenantId },
+          create: { tenantId, connected: true, phoneNumber: state.phoneNumber, displayName: state.displayName, connectedAt: state.connectedAt },
+          update: { connected: true, phoneNumber: state.phoneNumber, displayName: state.displayName, connectedAt: state.connectedAt },
+        }).catch(() => null);
+      }).catch(() => null);
+    });
+
+    client.on('authenticated', () => {
+      state.latestQr = null;
+      this.logger.log(`WhatsApp authentifié (tenant=${tenantId})`);
+    });
+
+    client.on('remote_session_saved', () => {
+      this.logger.log(`Session sauvegardée en base (tenant=${tenantId})`);
+    });
+
+    client.on('auth_failure', (msg: string) => {
+      state.ready = false;
+      this.logger.error(`Auth failure (tenant=${tenantId}): ${msg}`);
+      this.scheduleReconnect(tenantId);
+    });
+
+    client.on('disconnected', (reason: string) => {
+      state.ready = false;
+      state.phoneNumber = null;
+      state.displayName = null;
+      this.logger.warn(`Déconnecté (tenant=${tenantId}): ${reason}`);
+      void this.prisma.whatsappSession.updateMany({
+        where: { tenantId },
+        data: { connected: false },
+      }).catch(() => null);
+      this.scheduleReconnect(tenantId);
+    });
+
+    client.initialize().catch((err: Error) => {
+      this.logger.error(`Erreur init (tenant=${tenantId}): ${err.message}`);
+      state.initializing = false;
+      this.scheduleReconnect(tenantId);
+    }).then(() => {
+      state.initializing = false;
+    });
+  }
+
+  private scheduleReconnect(tenantId: string): void {
+    const state = this.states.get(tenantId);
+    if (!state || state.reconnectTimer) return;
+    state.initializing = false;
+    state.reconnectTimer = setTimeout(() => {
+      const s = this.states.get(tenantId);
+      if (s) s.reconnectTimer = null;
+      this.initClient(tenantId);
+    }, 10_000);
+  }
+
+  private waitForQr(tenantId: string, timeoutMs: number): Promise<string | null> {
+    const state = this.getOrCreateState(tenantId);
+    if (state.latestQr) return Promise.resolve(state.latestQr);
+    if (state.ready) return Promise.resolve(null);
+
+    return new Promise<string | null>((resolve) => {
+      const timer = setTimeout(() => {
+        const s = this.states.get(tenantId);
+        if (s) {
+          const idx = s.qrWaiters.indexOf(resolve);
+          if (idx !== -1) s.qrWaiters.splice(idx, 1);
+        }
+        resolve(null);
+      }, timeoutMs);
+
+      state.qrWaiters.push((qr) => {
+        clearTimeout(timer);
+        resolve(qr);
+      });
+    });
+  }
+
+  private normalizePhone(phone: string): string {
+    let digits = phone.replace(/\D/g, '');
+    if (digits.startsWith('0') && digits.length > 9) digits = digits.slice(1);
+    return `${digits}@c.us`;
+  }
+
+  private async assertTenantExists(tenantId: string): Promise<void> {
+    const exists = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true } });
+    if (!exists) throw new NotFoundException('Tenant introuvable');
+  }
+}

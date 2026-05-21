@@ -1,0 +1,15 @@
+import { IsIn } from 'class-validator';
+
+const THEME_COLORS = ['white', 'black', 'purple', 'orange', 'cyan', 'green', 'blue'] as const;
+const MODES = ['light', 'dark'] as const;
+
+export class UpdateApparenceDto {
+  @IsIn(THEME_COLORS, { message: `Couleur non supportée. Valeurs : ${THEME_COLORS.join(', ')}` })
+  themeColor!: (typeof THEME_COLORS)[number];
+
+  @IsIn(MODES, { message: 'Mode sidebar invalide. Valeurs : light, dark' })
+  sidebarMode!: (typeof MODES)[number];
+
+  @IsIn(MODES, { message: "Mode d'affichage invalide. Valeurs : light, dark" })
+  displayMode!: (typeof MODES)[number];
+}

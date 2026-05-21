@@ -10,6 +10,7 @@ import { AuthController } from '@/modules/auth.controller';
 import { PlatformController } from '@/modules/platform.controller';
 import { V1Controller } from '@/modules/v1.controller';
 import { AdminController } from '@/modules/admin.controller';
+import { ConfigurationController } from '@/modules/configuration.controller';
 import { TeacherController } from '@/modules/teacher.controller';
 import { StudentController } from '@/modules/student.controller';
 import { ParentController } from '@/modules/parent.controller';
@@ -23,6 +24,9 @@ import { LegacyCrudService } from '@/modules/legacy-crud.service';
 import { MailService } from '@/infrastructure/mail/mail.service';
 import { RedisService } from '@/infrastructure/redis/redis.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
+import { EcoleConfigService } from '@/modules/configuration/ecole-config.service';
+import { AcademiqueConfigService } from '@/modules/configuration/academique-config.service';
+import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 
 @Module({
   imports: [
@@ -38,6 +42,7 @@ import { StorageService } from '@/infrastructure/storage/storage.service';
     PlatformController,
     V1Controller,
     AdminController,
+    ConfigurationController,
     TeacherController,
     StudentController,
     ParentController,
@@ -53,6 +58,9 @@ import { StorageService } from '@/infrastructure/storage/storage.service';
     LegacyCrudService,
     MailService,
     StorageService,
+    EcoleConfigService,
+    AcademiqueConfigService,
+    WhatsappService,
     { provide: APP_GUARD, useClass: AppAuthGuard },
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
