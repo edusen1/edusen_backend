@@ -1,7 +1,18 @@
 #!/usr/bin/env node
 
+const fs = require('fs');
+const path = require('path');
 const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcrypt');
+
+const envPath = path.resolve(__dirname, '..', '.env');
+if (fs.existsSync(envPath)) {
+  for (const line of fs.readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+    if (!match || process.env[match[1]] !== undefined) continue;
+    process.env[match[1]] = match[2].replace(/^['"]|['"]$/g, '');
+  }
+}
 
 const prisma = new PrismaClient();
 
@@ -151,6 +162,46 @@ async function syncEleveParent(eleveId, parentId, tenantId) {
     data: {
       eleveId,
       parentId,
+    },
+  });
+}
+
+async function upsertNote(tenantId, eleveId, matiereId, trimestre, typeEvaluation, commentaire, note) {
+  const where = { tenantId, eleveId, matiereId, trimestre, anneeScolaire: SCHOOL_YEAR, typeEvaluation, commentaire };
+  const existing = await prisma.note.findFirst({ where });
+  const data = {
+    tenantId,
+    eleveId,
+    matiereId,
+    trimestre,
+    anneeScolaire: SCHOOL_YEAR,
+    typeEvaluation,
+    commentaire,
+    note,
+    noteSur: 20,
+    dateEvaluation: new Date(`2026-${trimestre.endsWith('1') ? '01' : trimestre.endsWith('2') ? '03' : '06'}-15`),
+  };
+
+  if (existing) {
+    return prisma.note.update({ where: { id: existing.id }, data });
+  }
+
+  return prisma.note.create({ data });
+}
+
+async function ensureActiveClasseStagiaire(tenantId, classeId, stagiaireId) {
+  const active = await prisma.classeStagiaire.findFirst({
+    where: { classeId, stagiaireId, actif: true, dateFin: null },
+  });
+  if (active) return active;
+
+  return prisma.classeStagiaire.create({
+    data: {
+      tenantId,
+      classeId,
+      stagiaireId,
+      dateDebut: new Date(),
+      actif: true,
     },
   });
 }
@@ -415,6 +466,47 @@ async function main() {
     },
   );
 
+  const seededClassDefinitions = [
+    { nom: 'Petite Section A', niveauCode: 'PS', effectifMax: 30 },
+    { nom: 'Moyenne Section A', niveauCode: 'MS', effectifMax: 30 },
+    { nom: 'Grande Section A', niveauCode: 'GS', effectifMax: 30 },
+    { nom: 'CE1 A', niveauCode: 'CE1', effectifMax: 35 },
+    { nom: 'CE2 A', niveauCode: 'CE2', effectifMax: 35 },
+    { nom: 'CM1 A', niveauCode: 'CM1', effectifMax: 35 },
+    { nom: 'CM2 A', niveauCode: 'CM2', effectifMax: 35 },
+    { nom: '6ème A', niveauCode: '6E', effectifMax: 45 },
+    { nom: '5ème A', niveauCode: '5E', effectifMax: 45 },
+    { nom: '4ème A', niveauCode: '4E', effectifMax: 45 },
+    { nom: '3ème A', niveauCode: '3E', effectifMax: 45 },
+    { nom: 'Seconde A', niveauCode: '2NDE', effectifMax: 45 },
+    { nom: 'Première A', niveauCode: '1ERE', effectifMax: 45 },
+    { nom: 'Terminale A', niveauCode: 'TLE', effectifMax: 45 },
+  ];
+
+  const seededClasses = [classeCIA, classeCPA];
+  for (const definition of seededClassDefinitions) {
+    const niveau = await prisma.niveau.findFirst({ where: { tenantId: tenant.id, code: definition.niveauCode } });
+    if (!niveau) continue;
+    seededClasses.push(await upsertById(
+      'classe',
+      { tenantId: tenant.id, nom: definition.nom, anneeAcademiqueId: schoolYear.id },
+      {
+        tenantId: tenant.id,
+        nom: definition.nom,
+        niveauId: niveau.id,
+        anneeAcademiqueId: schoolYear.id,
+        effectifMax: definition.effectifMax,
+        actif: true,
+      },
+      {
+        niveauId: niveau.id,
+        anneeAcademiqueId: schoolYear.id,
+        effectifMax: definition.effectifMax,
+        actif: true,
+      },
+    ));
+  }
+
   const matiereFrancais = await upsertById(
     'matiere',
     { tenantId: tenant.id, code: 'FR' },
@@ -516,6 +608,28 @@ async function main() {
   const eleveAwa = recordsByEmail.get('awa.diallo@demo.noura.sn');
   const parentMamadou = recordsByEmail.get('mamadou.ndiaye@demo.noura.sn');
   const parentAminata = recordsByEmail.get('aminata.ba@demo.noura.sn');
+
+  if (teacherOusmane) {
+    await prisma.classe.update({
+      where: { id: classeCIA.id },
+      data: { professeurResponsableId: teacherOusmane.id },
+    });
+  }
+
+  if (teacherAdja) {
+    await prisma.classe.update({
+      where: { id: classeCPA.id },
+      data: { professeurResponsableId: teacherAdja.id },
+    });
+  }
+
+  if (teacherAdja) {
+    await ensureActiveClasseStagiaire(tenant.id, classeCIA.id, teacherAdja.id);
+  }
+
+  if (teacherOusmane) {
+    await ensureActiveClasseStagiaire(tenant.id, classeCPA.id, teacherOusmane.id);
+  }
 
   const personnelUsers = [
     { user: recordsByEmail.get('khady.ba@demo.noura.sn'), numeroMatricule: 'PERS-ADM-001', typeContrat: 'CDI', dateEmbauche: new Date('2022-09-01'), salaire: 450000 },
@@ -677,6 +791,24 @@ async function main() {
     );
   }
 
+  const noteSeeds = [
+    { student: eleveAmadou, base: { [matiereMaths.id]: 14, [matiereFrancais.id]: 13 } },
+    { student: eleveAwa, base: { [matiereMaths.id]: 16, [matiereFrancais.id]: 15 } },
+  ];
+  const periods = ['SEMESTRE_1', 'SEMESTRE_2', 'SEMESTRE_3'];
+  for (const seed of noteSeeds) {
+    if (!seed.student) continue;
+    for (let periodIndex = 0; periodIndex < periods.length; periodIndex += 1) {
+      const period = periods[periodIndex];
+      for (const matiere of [matiereMaths, matiereFrancais]) {
+        const base = seed.base[matiere.id] + periodIndex;
+        await upsertNote(tenant.id, seed.student.id, matiere.id, period, 'DEVOIR', 'Devoir 1', Math.min(20, base));
+        await upsertNote(tenant.id, seed.student.id, matiere.id, period, 'DEVOIR', 'Devoir 2', Math.min(20, base + 1));
+        await upsertNote(tenant.id, seed.student.id, matiere.id, period, 'COMPOSITION', 'Composition', Math.min(20, base + 2));
+      }
+    }
+  }
+
   if (eleveAmadou && parentMamadou) {
     await syncEleveParent(eleveAmadou.id, parentMamadou.id, tenant.id);
   }
@@ -709,7 +841,7 @@ async function main() {
   console.log('');
   console.log('Academic data');
   console.log(`- Cycle: ${cycle.code} / ${cycle.libelle}`);
-  console.log(`- Classes: ${classeCIA.nom}, ${classeCPA.nom}`);
+  console.log(`- Classes: ${seededClasses.map((classe) => classe.nom).join(', ')}`);
   console.log(`- Matieres: ${matiereFrancais.libelle}, ${matiereMaths.libelle}, ${matiereLecture.libelle}`);
   console.log(`- Courses: ${coursMaths.id}, ${coursFrancais.id}`);
 }

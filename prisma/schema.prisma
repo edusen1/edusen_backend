@@ -498,9 +498,11 @@ model ClasseStagiaire {
   classe      Classe   @relation(fields: [classeId], references: [id], onDelete: Cascade)
   stagiaireId String   @db.Uuid
   stagiaire   User     @relation("UserStagiaires", fields: [stagiaireId], references: [id], onDelete: Cascade)
+  dateDebut   DateTime @default(now()) @db.Date
+  dateFin     DateTime? @db.Date
+  actif       Boolean  @default(true)
   createdAt   DateTime @default(now())
 
-  @@unique([classeId, stagiaireId])
   @@map("classe_stagiaires")
 }
 

@@ -25,8 +25,9 @@ const CLASSE_INCLUDE = {
   anneeAcademique: { select: { id: true, libelle: true, estCourante: true } },
   professeurResponsable: { select: PROF_SELECT },
   stagiaires: {
+    where: { actif: true, dateFin: null },
     include: { stagiaire: { select: PROF_SELECT } },
-    orderBy: { createdAt: 'asc' as const },
+    orderBy: { dateDebut: 'desc' as const },
   },
   _count: { select: { eleves: true } },
 };
@@ -121,6 +122,230 @@ export class ClasseService {
     });
     if (!classe) throw new NotFoundException('Classe introuvable');
     return this.toResponse(classe);
+  }
+
+  async getClasseEleves(tenantId: string, classeId: string) {
+    const classe = await this.prisma.classe.findFirst({
+      where: { id: classeId, tenantId },
+      select: { id: true, anneeAcademiqueId: true },
+    });
+    if (!classe) throw new NotFoundException('Classe introuvable');
+
+    const inscriptions = await this.prisma.inscription.findMany({
+      where: {
+        tenantId,
+        classeId,
+        ...(classe.anneeAcademiqueId ? { anneeAcademiqueId: classe.anneeAcademiqueId } : {}),
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const eleves = await this.prisma.user.findMany({
+      where: { tenantId, id: { in: inscriptions.map((inscription) => inscription.eleveId) }, role: 'ELEVE' },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        telephone: true,
+        matricule: true,
+        photoUrl: true,
+        genre: true,
+      },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+    });
+    const eleveById = new Map(eleves.map((eleve) => [eleve.id, eleve]));
+
+    return inscriptions.map((inscription) => {
+      const eleve = eleveById.get(inscription.eleveId);
+      return ({
+      inscriptionId: inscription.id,
+      statut: inscription.statut,
+      eleve: eleve
+        ? {
+            id: eleve.id,
+            nom: `${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim(),
+            firstName: eleve.firstName,
+            lastName: eleve.lastName,
+            email: eleve.email,
+            telephone: eleve.telephone,
+            matricule: eleve.matricule,
+            photoUrl: eleve.photoUrl,
+            genre: eleve.genre,
+          }
+        : null,
+      });
+    });
+  }
+
+  async getEleveNotesForClasse(tenantId: string, classeId: string, eleveId: string) {
+    const classe = await this.prisma.classe.findFirst({
+      where: { id: classeId, tenantId },
+      include: {
+        niveau: { include: { cycle: true } },
+        anneeAcademique: true,
+      },
+    });
+    if (!classe) throw new NotFoundException('Classe introuvable');
+
+    const inscription = await this.prisma.inscription.findFirst({
+      where: {
+        tenantId,
+        classeId,
+        eleveId,
+        ...(classe.anneeAcademiqueId ? { anneeAcademiqueId: classe.anneeAcademiqueId } : {}),
+      },
+    });
+    if (!inscription) throw new NotFoundException('Élève introuvable dans cette classe');
+
+    const eleve = await this.prisma.user.findFirst({
+      where: { id: eleveId, tenantId, role: 'ELEVE' },
+      select: { id: true, firstName: true, lastName: true, email: true, matricule: true, photoUrl: true },
+    });
+    if (!eleve) throw new NotFoundException('Élève introuvable');
+
+    const cycleCode = classe.niveau?.cycle?.code?.toUpperCase() ?? '';
+    const periods = ['MATERNELLE', 'PRIMAIRE', 'CRECHE'].includes(cycleCode)
+      ? ['SEMESTRE_1', 'SEMESTRE_2', 'SEMESTRE_3']
+      : ['SEMESTRE_1', 'SEMESTRE_2'];
+    const anneeScolaire = classe.anneeAcademique?.libelle ?? '';
+
+    const [cours, matiereClasses, notes] = await Promise.all([
+      this.prisma.cours.findMany({
+        where: { tenantId, classeId, ...(classe.anneeAcademiqueId ? { anneeAcademiqueId: classe.anneeAcademiqueId } : {}) },
+        include: {
+          matiere: true,
+        },
+        orderBy: { matiere: { libelle: 'asc' } },
+      }),
+      this.prisma.matiereClasse.findMany({
+        where: { tenantId, classeId, ...(classe.anneeAcademiqueId ? { anneeAcademiqueId: classe.anneeAcademiqueId } : {}) },
+        include: {
+          matiere: true,
+          enseignant: { select: PROF_SELECT },
+        },
+        orderBy: { matiere: { libelle: 'asc' } },
+      }),
+      this.prisma.note.findMany({
+        where: { tenantId, eleveId, anneeScolaire },
+        include: { matiere: true },
+        orderBy: [{ trimestre: 'asc' }, { matiere: { libelle: 'asc' } }, { dateEvaluation: 'asc' }],
+      }),
+    ]);
+
+    const subjectsById = new Map<string, any>();
+    for (const row of cours as any[]) {
+      subjectsById.set(row.matiereId, {
+        matiereId: row.matiereId,
+        libelle: row.matiere.libelle,
+        code: row.matiere.code,
+        coefficient: row.coefficient ?? row.matiere.coefficient ?? 1,
+        enseignant: null,
+      });
+    }
+    for (const row of matiereClasses) {
+      if (!subjectsById.has(row.matiereId)) {
+        subjectsById.set(row.matiereId, {
+          matiereId: row.matiereId,
+          libelle: row.matiere.libelle,
+          code: row.matiere.code,
+          coefficient: row.matiere.coefficient ?? 1,
+          enseignant: row.enseignant,
+        });
+      }
+    }
+    for (const note of notes) {
+      if (!subjectsById.has(note.matiereId)) {
+        subjectsById.set(note.matiereId, {
+          matiereId: note.matiereId,
+          libelle: note.matiere.libelle,
+          code: note.matiere.code,
+          coefficient: note.matiere.coefficient ?? 1,
+          enseignant: null,
+        });
+      }
+    }
+
+    const normalize = (note: any) => Number((((note.note ?? 0) / (note.noteSur || 20)) * 20).toFixed(2));
+    const average = (values: number[]) => values.length
+      ? Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2))
+      : null;
+    const weightedAverage = (rows: { moyenne: number | null; coefficient: number }[]) => {
+      const valid = rows.filter((row) => row.moyenne !== null);
+      const totalCoeff = valid.reduce((sum, row) => sum + row.coefficient, 0);
+      if (!valid.length || totalCoeff <= 0) return null;
+      return Number((valid.reduce((sum, row) => sum + Number(row.moyenne) * row.coefficient, 0) / totalCoeff).toFixed(2));
+    };
+
+    const periodes = periods.map((periode) => {
+      const subjects = [...subjectsById.values()].map((subject) => {
+        const subjectNotes = notes.filter((note) => note.trimestre === periode && note.matiereId === subject.matiereId);
+        const devoirs = subjectNotes.filter((note) => note.typeEvaluation !== 'COMPOSITION').map(normalize);
+        const compositions = subjectNotes.filter((note) => note.typeEvaluation === 'COMPOSITION').map(normalize);
+        const moyenneDevoirs = average(devoirs);
+        const composition = average(compositions);
+        const moyenne = moyenneDevoirs !== null && composition !== null
+          ? Number(((moyenneDevoirs + composition) / 2).toFixed(2))
+          : average(subjectNotes.map(normalize));
+
+        return {
+          matiereId: subject.matiereId,
+          libelle: subject.libelle,
+          code: subject.code,
+          coefficient: subject.coefficient,
+          enseignant: subject.enseignant
+            ? `${subject.enseignant.firstName ?? ''} ${subject.enseignant.lastName ?? ''}`.trim()
+            : null,
+          devoirs: subjectNotes
+            .filter((note) => note.typeEvaluation !== 'COMPOSITION')
+            .map((note) => ({
+              id: note.id,
+              type: note.typeEvaluation,
+              note: note.note,
+              noteSur: note.noteSur,
+              dateEvaluation: note.dateEvaluation?.toISOString() ?? null,
+            })),
+          composition: subjectNotes
+            .filter((note) => note.typeEvaluation === 'COMPOSITION')
+            .map((note) => ({
+              id: note.id,
+              note: note.note,
+              noteSur: note.noteSur,
+              dateEvaluation: note.dateEvaluation?.toISOString() ?? null,
+            })),
+          moyenneDevoirs,
+          moyenne,
+        };
+      });
+
+      return {
+        code: periode,
+        label: periode.replace('SEMESTRE_', 'Semestre '),
+        matieres: subjects,
+        moyenne: weightedAverage(subjects),
+      };
+    });
+
+    const periodAverages = periodes.map((periode) => periode.moyenne).filter((value): value is number => value !== null);
+    const moyenneAnnuelle = average(periodAverages);
+
+    return {
+      eleve: {
+        id: eleve.id,
+        nom: `${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim(),
+        email: eleve.email,
+        matricule: eleve.matricule,
+        photoUrl: eleve.photoUrl,
+      },
+      classe: {
+        id: classe.id,
+        nom: classe.nom,
+        annee: classe.anneeAcademique?.libelle ?? null,
+        cycle: classe.niveau?.cycle?.libelle ?? null,
+      },
+      periodes,
+      moyenneAnnuelle,
+    };
   }
 
   // ----------------------------------------------------------------
@@ -287,26 +512,27 @@ export class ClasseService {
     });
     if (!stagiaire) throw new NotFoundException('Enseignant introuvable');
 
-    const existing = await this.prisma.classeStagiaire.findUnique({
-      where: { classeId_stagiaireId: { classeId, stagiaireId } },
+    const existing = await this.prisma.classeStagiaire.findFirst({
+      where: { classeId, stagiaireId, actif: true, dateFin: null },
     });
     if (existing) throw new ConflictException('Ce stagiaire est déjà rattaché à cette classe');
 
     await this.prisma.classeStagiaire.create({
-      data: { tenantId, classeId, stagiaireId },
+      data: { tenantId, classeId, stagiaireId, dateDebut: new Date(), actif: true },
     });
 
     return this.getClasse(tenantId, classeId);
   }
 
   async removeStagiaire(tenantId: string, classeId: string, stagiaireId: string) {
-    const entry = await this.prisma.classeStagiaire.findUnique({
-      where: { classeId_stagiaireId: { classeId, stagiaireId } },
+    const entry = await this.prisma.classeStagiaire.findFirst({
+      where: { classeId, stagiaireId, actif: true, dateFin: null },
     });
     if (!entry) throw new NotFoundException('Stagiaire non rattaché à cette classe');
 
-    await this.prisma.classeStagiaire.delete({
-      where: { classeId_stagiaireId: { classeId, stagiaireId } },
+    await this.prisma.classeStagiaire.update({
+      where: { id: entry.id },
+      data: { actif: false, dateFin: new Date() },
     });
 
     return this.getClasse(tenantId, classeId);
@@ -383,11 +609,15 @@ export class ClasseService {
           }
         : null,
       stagiaires: (classe.stagiaires ?? []).map((s: any) => ({
+        contratId: s.id,
         id: s.stagiaire.id,
         nom: `${s.stagiaire.firstName} ${s.stagiaire.lastName}`,
         email: s.stagiaire.email,
         specialite: s.stagiaire.specialite,
         photoUrl: s.stagiaire.photoUrl,
+        dateDebut: s.dateDebut?.toISOString?.() ?? null,
+        dateFin: s.dateFin?.toISOString?.() ?? null,
+        actif: s.actif,
       })),
       nbEleves: classe._count?.eleves ?? 0,
       actif: classe.actif,

@@ -65,6 +65,20 @@ export class AdminController {
     return this.classeService.getEnseignants(tenantId!);
   }
 
+  @Get('classes/:id/eleves')
+  getClasseEleves(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string) {
+    return this.classeService.getClasseEleves(tenantId!, id);
+  }
+
+  @Get('classes/:id/eleves/:eleveId/notes')
+  getClasseEleveNotes(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Param('eleveId') eleveId: string,
+  ) {
+    return this.classeService.getEleveNotesForClasse(tenantId!, id, eleveId);
+  }
+
   @Get('classes/:id')
   getClasse(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string) {
     return this.classeService.getClasse(tenantId!, id);
