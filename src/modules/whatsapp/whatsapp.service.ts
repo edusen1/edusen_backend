@@ -27,6 +27,9 @@ function loadWWebDeps(): void {
 
 export interface WhatsappStatusResponse {
   connected: boolean;
+  initializing?: boolean;
+  hasSession?: boolean;
+  lastError?: string;
   phoneNumber?: string;
   displayName?: string;
   connectedAt?: string;
@@ -58,6 +61,7 @@ interface TenantWaState {
   phoneNumber: string | null;
   displayName: string | null;
   connectedAt: Date | null;
+  lastError: string | null;
   qrWaiters: Array<(qr: string | null) => void>;
 }
 
@@ -107,6 +111,9 @@ export class WhatsappService implements OnApplicationShutdown {
 
     return {
       connected,
+      initializing: state?.initializing ?? false,
+      hasSession: !!record?.sessionData,
+      lastError: state?.lastError ?? undefined,
       phoneNumber: state?.phoneNumber ?? record?.phoneNumber ?? undefined,
       displayName: state?.displayName ?? record?.displayName ?? undefined,
       connectedAt: state?.connectedAt?.toISOString() ?? record?.connectedAt?.toISOString() ?? undefined,
@@ -224,6 +231,7 @@ export class WhatsappService implements OnApplicationShutdown {
         phoneNumber: null,
         displayName: null,
         connectedAt: null,
+        lastError: null,
         qrWaiters: [],
       });
     }
@@ -259,6 +267,14 @@ export class WhatsappService implements OnApplicationShutdown {
     const clientId = `school-${tenantId}`;
 
     const client = new WWebClient({
+      authTimeoutMs: 90_000,
+      qrMaxRetries: 6,
+      takeoverOnConflict: true,
+      takeoverTimeoutMs: 5_000,
+      userAgent: false,
+      deviceName: 'NouraSchool',
+      browserName: 'Chrome',
+      webVersionCache: { type: 'none' },
       authStrategy: new WWebRemoteAuth({
         clientId,
         dataPath,
@@ -273,8 +289,8 @@ export class WhatsappService implements OnApplicationShutdown {
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
           '--disable-gpu',
-          '--single-process',
-          '--no-zygote',
+          '--disable-extensions',
+          '--disable-background-networking',
         ],
       },
     });
@@ -285,6 +301,7 @@ export class WhatsappService implements OnApplicationShutdown {
       state.latestQr = qr;
       state.qrGeneratedAt = Date.now();
       state.ready = false;
+      state.lastError = null;
       // Résoudre les waiters
       const waiters = state.qrWaiters.splice(0);
       for (const resolve of waiters) resolve(qr);
@@ -295,6 +312,7 @@ export class WhatsappService implements OnApplicationShutdown {
       state.ready = true;
       state.latestQr = null;
       state.qrGeneratedAt = null;
+      state.lastError = null;
       const waiters = state.qrWaiters.splice(0);
       for (const resolve of waiters) resolve(null);
       this.logger.log(`WhatsApp prêt (tenant=${tenantId})`);
@@ -316,7 +334,16 @@ export class WhatsappService implements OnApplicationShutdown {
     client.on('authenticated', () => {
       state.latestQr = null;
       state.qrGeneratedAt = null;
+      state.lastError = null;
       this.logger.log(`WhatsApp authentifié (tenant=${tenantId})`);
+    });
+
+    client.on('loading_screen', (percent: number, message: string) => {
+      this.logger.log(`Chargement WhatsApp ${percent}% ${message ? `- ${message}` : ''} (tenant=${tenantId})`);
+    });
+
+    client.on('change_state', (waState: string) => {
+      this.logger.log(`État WhatsApp=${waState} (tenant=${tenantId})`);
     });
 
     client.on('remote_session_saved', () => {
@@ -327,7 +354,8 @@ export class WhatsappService implements OnApplicationShutdown {
       state.ready = false;
       state.latestQr = null;
       state.qrGeneratedAt = null;
-      this.logger.error(`Auth failure (tenant=${tenantId}): ${msg}`);
+      state.lastError = msg || 'Échec authentification WhatsApp';
+      this.logger.error(`Auth failure (tenant=${tenantId}): ${state.lastError}`);
       void this.prisma.whatsappSession.updateMany({
         where: { tenantId },
         data: { sessionData: null, connected: false, phoneNumber: null, displayName: null, connectedAt: null },
@@ -341,6 +369,7 @@ export class WhatsappService implements OnApplicationShutdown {
       state.qrGeneratedAt = null;
       state.phoneNumber = null;
       state.displayName = null;
+      state.lastError = reason ? `Déconnecté: ${reason}` : null;
       this.logger.warn(`Déconnecté (tenant=${tenantId}): ${reason}`);
       void this.prisma.whatsappSession.updateMany({
         where: { tenantId },
@@ -350,6 +379,7 @@ export class WhatsappService implements OnApplicationShutdown {
     });
 
     client.initialize().catch((err: Error) => {
+      state.lastError = err.message;
       this.logger.error(`Erreur init (tenant=${tenantId}): ${err.message}`);
       state.initializing = false;
       this.scheduleReconnect(tenantId);
