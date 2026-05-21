@@ -337,20 +337,14 @@ export class AcademiqueConfigService {
     if (existing) throw new ConflictException('Une année avec ce libellé existe déjà');
 
     if (active) {
-      const current = await this.prisma.anneeAcademique.findFirst({
-        where: { tenantId, estCourante: true },
-        select: { id: true },
-      });
       await this.prisma.anneeAcademique.updateMany({
         where: { tenantId, estCourante: true },
         data: { estCourante: false, actif: false, dateFin: new Date() },
       });
-      if (current) {
-        await this.prisma.classe.updateMany({
-          where: { tenantId, anneeAcademiqueId: current.id },
-          data: { actif: false },
-        });
-      }
+      await this.prisma.classe.updateMany({
+        where: { tenantId },
+        data: { actif: false },
+      });
     }
 
     const created = await this.prisma.anneeAcademique.create({
@@ -366,6 +360,7 @@ export class AcademiqueConfigService {
 
     if (active) {
       await this.duplicateClassesOnceForYear(tenantId, created.id);
+      await this.syncClassActivityForActiveYear(tenantId, created.id);
     }
 
     return {
@@ -383,30 +378,16 @@ export class AcademiqueConfigService {
     const annee = await this.prisma.anneeAcademique.findFirst({ where: { id, tenantId } });
     if (!annee) throw new NotFoundException('Année académique introuvable');
 
-    const current = await this.prisma.anneeAcademique.findFirst({
-      where: { tenantId, estCourante: true, id: { not: id } },
-      select: { id: true },
-    });
-
     await this.prisma.anneeAcademique.updateMany({
       where: { tenantId, id: { not: id }, estCourante: true },
       data: { estCourante: false, actif: false, dateFin: new Date() },
     });
-    if (current) {
-      await this.prisma.classe.updateMany({
-        where: { tenantId, anneeAcademiqueId: current.id },
-        data: { actif: false },
-      });
-    }
     const updated = await this.prisma.anneeAcademique.update({
       where: { id },
       data: { estCourante: true, actif: true, dateFin: null },
     });
     await this.duplicateClassesOnceForYear(tenantId, id);
-    await this.prisma.classe.updateMany({
-      where: { tenantId, anneeAcademiqueId: id },
-      data: { actif: true },
-    });
+    await this.syncClassActivityForActiveYear(tenantId, id);
 
     return {
       id: updated.id,
@@ -519,6 +500,17 @@ export class AcademiqueConfigService {
     await this.prisma.anneeAcademique.update({
       where: { id: targetAnnee.id },
       data: { classesDupliquees: true },
+    });
+  }
+
+  private async syncClassActivityForActiveYear(tenantId: string, activeAnneeId: string): Promise<void> {
+    await this.prisma.classe.updateMany({
+      where: { tenantId, anneeAcademiqueId: { not: activeAnneeId } },
+      data: { actif: false },
+    });
+    await this.prisma.classe.updateMany({
+      where: { tenantId, anneeAcademiqueId: activeAnneeId },
+      data: { actif: true },
     });
   }
 

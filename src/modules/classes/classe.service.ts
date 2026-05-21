@@ -41,6 +41,7 @@ export class ClasseService {
 
   async getClasses(tenantId: string, anneeId?: string, niveauId?: string, cycleId?: string) {
     await this.assertTenantExists(tenantId);
+    await this.syncClassActivityForCurrentYear(tenantId);
 
     // Default to current year if no anneeId provided
     let resolvedAnneeId = anneeId;
@@ -101,7 +102,7 @@ export class ClasseService {
         anneeAcademiqueId: dto.anneeAcademiqueId,
         professeurResponsableId: dto.professeurResponsableId ?? null,
         effectifMax: dto.effectifMax ?? null,
-        actif: true,
+        actif: Boolean(annee.estCourante && annee.actif),
       },
       include: CLASSE_INCLUDE,
     });
@@ -331,6 +332,23 @@ export class ClasseService {
   private async assertTenantExists(tenantId: string): Promise<void> {
     const exists = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true } });
     if (!exists) throw new NotFoundException('Tenant introuvable');
+  }
+
+  private async syncClassActivityForCurrentYear(tenantId: string): Promise<void> {
+    const current = await this.prisma.anneeAcademique.findFirst({
+      where: { tenantId, estCourante: true, actif: true },
+      select: { id: true },
+    });
+    if (!current) return;
+
+    await this.prisma.classe.updateMany({
+      where: { tenantId, anneeAcademiqueId: { not: current.id }, actif: true },
+      data: { actif: false },
+    });
+    await this.prisma.classe.updateMany({
+      where: { tenantId, anneeAcademiqueId: current.id, actif: false },
+      data: { actif: true },
+    });
   }
 
   private toResponse(classe: any) {
