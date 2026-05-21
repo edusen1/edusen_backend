@@ -681,6 +681,7 @@ export class LegacyCrudService {
         if (data.role === 'ENSEIGNANT') {
           data.matricule = await this.generateMatricule(tenantId ?? String(data.tenantId ?? ''), 'ENS');
           data.dateEmbauche ??= new Date();
+          data.mustChangePwd = true;
         }
       }
       for (const field of ['dateNaissance', 'dateInscription', 'dateEmbauche']) {
@@ -777,11 +778,10 @@ export class LegacyCrudService {
     }
 
     const message = [
-      `Bonjour ${firstName} ${lastName},`,
-      'Votre compte NouraSchool a été créé.',
-      `Identifiant : ${email}`,
-      `Mot de passe temporaire : ${tempPassword}`,
-      'Veuillez le modifier à la première connexion.',
+      'NouraSchool - Accès professeur',
+      `Login: ${email}`,
+      `Mot de passe: ${tempPassword}`,
+      'À changer à la première connexion.',
     ].join('\n');
 
     this.whatsappService.sendMessage(tenantId, telephone, message).catch(() => null);
