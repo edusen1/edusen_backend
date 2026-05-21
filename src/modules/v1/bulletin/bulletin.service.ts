@@ -60,13 +60,13 @@ export class BulletinService {
 
     const totalEleves = inscriptions.length;
     const bulletins: unknown[] = [];
+    const coefficients = await this.getCourseCoefficients(tenantId, classeId, anneeScolaire);
 
     for (const inscription of inscriptions) {
       const notes = await this.prisma.note.findMany({
         where: { tenantId, eleveId: inscription.eleveId, trimestre, anneeScolaire },
       });
 
-      const coefficients = await this.getCourseCoefficients(tenantId, classeId, anneeScolaire);
       const { moyenne } = this.calculerMoyenne(notes, coefficients);
 
       const absences = await this.prisma.absenceEleve.count({
