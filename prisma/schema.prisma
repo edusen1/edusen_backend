@@ -512,7 +512,6 @@ model Matiere {
   tenant      Tenant   @relation(fields: [tenantId], references: [id])
   code        String   @db.VarChar(20)
   libelle     String
-  coefficient Float    @default(1)
   description String?
   actif       Boolean  @default(true)
   createdAt   DateTime @default(now())

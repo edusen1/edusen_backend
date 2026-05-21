@@ -86,7 +86,7 @@ export class NoteService {
         skip,
         take: query.size ?? 20,
         orderBy: { createdAt: 'desc' },
-        include: { matiere: { select: { id: true, code: true, libelle: true, coefficient: true } } },
+        include: { matiere: { select: { id: true, code: true, libelle: true } } },
       }),
       this.prisma.note.count({ where }),
     ]);
@@ -131,7 +131,7 @@ export class NoteService {
   ): Promise<unknown[]> {
     return this.prisma.note.findMany({
       where: { tenantId, eleveId, trimestre, anneeScolaire },
-      include: { matiere: { select: { id: true, code: true, libelle: true, coefficient: true } } },
+      include: { matiere: { select: { id: true, code: true, libelle: true } } },
       orderBy: { matiere: { libelle: 'asc' } },
     });
   }
@@ -144,11 +144,12 @@ export class NoteService {
   ): Promise<{ moyenne: number; details: unknown[] }> {
     const notes = await this.prisma.note.findMany({
       where: { tenantId, eleveId, trimestre, anneeScolaire },
-      include: { matiere: { select: { coefficient: true, libelle: true, code: true } } },
+      include: { matiere: { select: { libelle: true, code: true } } },
     });
 
     if (notes.length === 0) return { moyenne: 0, details: [] };
 
+    const coefficients = await this.getCourseCoefficientsForStudent(tenantId, eleveId, anneeScolaire);
     const byMatiere = new Map<string, { sum: number; count: number; coeff: number; libelle: string }>();
     for (const n of notes) {
       const normalized = (n.note / n.noteSur) * 20;
@@ -160,7 +161,7 @@ export class NoteService {
         byMatiere.set(n.matiereId, {
           sum: normalized,
           count: 1,
-          coeff: n.matiere.coefficient,
+          coeff: coefficients.get(n.matiereId) ?? 1,
           libelle: n.matiere.libelle,
         });
       }
@@ -179,5 +180,33 @@ export class NoteService {
 
     const moyenne = totalCoeff > 0 ? Math.round((totalPoints / totalCoeff) * 100) / 100 : 0;
     return { moyenne, details };
+  }
+
+  private async getCourseCoefficientsForStudent(
+    tenantId: string,
+    eleveId: string,
+    anneeScolaire: string,
+  ): Promise<Map<string, number>> {
+    const inscription = await this.prisma.inscription.findFirst({
+      where: { tenantId, eleveId, anneeAcademique: { libelle: anneeScolaire } },
+      select: { classeId: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!inscription?.classeId) return new Map();
+
+    const cours = await this.prisma.cours.findMany({
+      where: {
+        tenantId,
+        classeId: inscription.classeId,
+        OR: [
+          { anneeAcademique: { libelle: anneeScolaire } },
+          { anneeAcademiqueId: null },
+        ],
+      },
+      select: { matiereId: true, coefficient: true },
+    });
+
+    return new Map(cours.map((row) => [row.matiereId, row.coefficient ?? 1]));
   }
 }

@@ -724,6 +724,10 @@ export class LegacyCrudService {
       await this.normalizeNoteData(tenantId ?? String(data.tenantId ?? ''), data);
     }
 
+    if (config.model === 'matiere') {
+      delete data.coefficient;
+    }
+
     if (config.model === 'bulletin') {
       await this.normalizeBulletinData(tenantId ?? String(data.tenantId ?? ''), data, userId);
     }
@@ -1164,18 +1168,46 @@ export class LegacyCrudService {
   private async computeStudentAverage(tenantId: string, eleveId: string, trimestre: string, anneeScolaire: string) {
     const notes = await this.prisma.note.findMany({
       where: { tenantId, eleveId, trimestre, anneeScolaire },
-      include: { matiere: { select: { coefficient: true } } },
     });
     if (notes.length === 0) return { moyenne: 0 };
 
+    const courseCoefficients = await this.findStudentCourseCoefficients(tenantId, eleveId, anneeScolaire);
     let total = 0;
     let coefficients = 0;
     for (const note of notes) {
-      const coefficient = note.matiere.coefficient || 1;
+      const coefficient = courseCoefficients.get(note.matiereId) ?? 1;
       total += ((note.note / note.noteSur) * 20) * coefficient;
       coefficients += coefficient;
     }
     return { moyenne: coefficients ? Math.round((total / coefficients) * 100) / 100 : 0 };
+  }
+
+  private async findStudentCourseCoefficients(
+    tenantId: string,
+    eleveId: string,
+    anneeScolaire: string,
+  ): Promise<Map<string, number>> {
+    const inscription = await this.prisma.inscription.findFirst({
+      where: { tenantId, eleveId, anneeAcademique: { libelle: anneeScolaire } },
+      select: { classeId: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!inscription?.classeId) return new Map();
+
+    const cours = await this.prisma.cours.findMany({
+      where: {
+        tenantId,
+        classeId: inscription.classeId,
+        OR: [
+          { anneeAcademique: { libelle: anneeScolaire } },
+          { anneeAcademiqueId: null },
+        ],
+      },
+      select: { matiereId: true, coefficient: true },
+    });
+
+    return new Map(cours.map((row) => [row.matiereId, row.coefficient ?? 1]));
   }
 
   private async computeClassBulletinStats(

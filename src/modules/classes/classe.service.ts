@@ -241,7 +241,7 @@ export class ClasseService {
         matiereId: row.matiereId,
         libelle: row.matiere.libelle,
         code: row.matiere.code,
-        coefficient: row.coefficient ?? row.matiere.coefficient ?? 1,
+        coefficient: row.coefficient ?? 1,
         enseignant: null,
       });
     }
@@ -251,7 +251,7 @@ export class ClasseService {
           matiereId: row.matiereId,
           libelle: row.matiere.libelle,
           code: row.matiere.code,
-          coefficient: row.matiere.coefficient ?? 1,
+          coefficient: 1,
           enseignant: row.enseignant,
         });
       }
@@ -262,7 +262,7 @@ export class ClasseService {
           matiereId: note.matiereId,
           libelle: note.matiere.libelle,
           code: note.matiere.code,
-          coefficient: note.matiere.coefficient ?? 1,
+          coefficient: 1,
           enseignant: null,
         });
       }

@@ -64,10 +64,10 @@ export class BulletinService {
     for (const inscription of inscriptions) {
       const notes = await this.prisma.note.findMany({
         where: { tenantId, eleveId: inscription.eleveId, trimestre, anneeScolaire },
-        include: { matiere: { select: { coefficient: true } } },
       });
 
-      const { moyenne } = this.calculerMoyenne(notes);
+      const coefficients = await this.getCourseCoefficients(tenantId, classeId, anneeScolaire);
+      const { moyenne } = this.calculerMoyenne(notes, coefficients);
 
       const absences = await this.prisma.absenceEleve.count({
         where: { tenantId, eleveId: inscription.eleveId },
@@ -191,16 +191,36 @@ export class BulletinService {
     await this.prisma.bulletin.delete({ where: { id } });
   }
 
-  private calculerMoyenne(notes: { note: number; noteSur: number; matiere: { coefficient: number } }[]): { moyenne: number } {
+  private calculerMoyenne(
+    notes: { note: number; noteSur: number; matiereId: string }[],
+    coefficients: Map<string, number>,
+  ): { moyenne: number } {
     if (notes.length === 0) return { moyenne: 0 };
     let totalPoints = 0;
     let totalCoeff = 0;
     for (const n of notes) {
+      const coefficient = coefficients.get(n.matiereId) ?? 1;
       const normalized = (n.note / n.noteSur) * 20;
-      totalPoints += normalized * n.matiere.coefficient;
-      totalCoeff += n.matiere.coefficient;
+      totalPoints += normalized * coefficient;
+      totalCoeff += coefficient;
     }
     return { moyenne: totalCoeff > 0 ? Math.round((totalPoints / totalCoeff) * 100) / 100 : 0 };
+  }
+
+  private async getCourseCoefficients(tenantId: string, classeId: string, anneeScolaire: string): Promise<Map<string, number>> {
+    const cours = await this.prisma.cours.findMany({
+      where: {
+        tenantId,
+        classeId,
+        OR: [
+          { anneeAcademique: { libelle: anneeScolaire } },
+          { anneeAcademiqueId: null },
+        ],
+      },
+      select: { matiereId: true, coefficient: true },
+    });
+
+    return new Map(cours.map((row) => [row.matiereId, row.coefficient ?? 1]));
   }
 
   private async updateRangs(tenantId: string, classeId: string, trimestre: string, anneeScolaire: string): Promise<void> {

@@ -5,7 +5,6 @@ import { buildPageResult, PageResult, PaginationQueryDto } from '@/shared/dto/pa
 export interface CreateMatiereDto {
   code: string;
   libelle: string;
-  coefficient?: number;
   description?: string;
   actif?: boolean;
 }
@@ -28,7 +27,7 @@ export class MatiereService {
     if (existing) throw new ConflictException('Code matière déjà utilisé');
 
     return this.prisma.matiere.create({
-      data: { tenantId, code: dto.code, libelle: dto.libelle, coefficient: dto.coefficient ?? 1, description: dto.description, actif: dto.actif ?? true },
+      data: { tenantId, code: dto.code, libelle: dto.libelle, description: dto.description, actif: dto.actif ?? true },
     });
   }
 
