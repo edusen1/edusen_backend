@@ -166,7 +166,7 @@ async function syncEleveParent(eleveId, parentId, tenantId) {
   });
 }
 
-async function upsertNote(tenantId, eleveId, matiereId, trimestre, typeEvaluation, commentaire, note) {
+async function upsertNote(tenantId, eleveId, matiereId, trimestre, typeEvaluation, commentaire, note, noteSur = 20) {
   const where = { tenantId, eleveId, matiereId, trimestre, anneeScolaire: SCHOOL_YEAR, typeEvaluation, commentaire };
   const existing = await prisma.note.findFirst({ where });
   const data = {
@@ -178,7 +178,7 @@ async function upsertNote(tenantId, eleveId, matiereId, trimestre, typeEvaluatio
     typeEvaluation,
     commentaire,
     note,
-    noteSur: 20,
+    noteSur,
     dateEvaluation: new Date(`2026-${trimestre.endsWith('1') ? '01' : trimestre.endsWith('2') ? '03' : '06'}-15`),
   };
 
@@ -792,8 +792,8 @@ async function main() {
   }
 
   const noteSeeds = [
-    { student: eleveAmadou, base: { [matiereMaths.id]: 14, [matiereFrancais.id]: 13 } },
-    { student: eleveAwa, base: { [matiereMaths.id]: 16, [matiereFrancais.id]: 15 } },
+    { student: eleveAmadou, base: { [matiereMaths.id]: 7, [matiereFrancais.id]: 6.5 } },
+    { student: eleveAwa, base: { [matiereMaths.id]: 8, [matiereFrancais.id]: 7.5 } },
   ];
   const periods = ['SEMESTRE_1', 'SEMESTRE_2', 'SEMESTRE_3'];
   for (const seed of noteSeeds) {
@@ -802,9 +802,9 @@ async function main() {
       const period = periods[periodIndex];
       for (const matiere of [matiereMaths, matiereFrancais]) {
         const base = seed.base[matiere.id] + periodIndex;
-        await upsertNote(tenant.id, seed.student.id, matiere.id, period, 'DEVOIR', 'Devoir 1', Math.min(20, base));
-        await upsertNote(tenant.id, seed.student.id, matiere.id, period, 'DEVOIR', 'Devoir 2', Math.min(20, base + 1));
-        await upsertNote(tenant.id, seed.student.id, matiere.id, period, 'COMPOSITION', 'Composition', Math.min(20, base + 2));
+        await upsertNote(tenant.id, seed.student.id, matiere.id, period, 'DEVOIR', 'Devoir 1', Math.min(10, base), 10);
+        await upsertNote(tenant.id, seed.student.id, matiere.id, period, 'DEVOIR', 'Devoir 2', Math.min(10, base + 0.5), 10);
+        await upsertNote(tenant.id, seed.student.id, matiere.id, period, 'COMPOSITION', 'Composition', Math.min(10, base + 1), 10);
       }
     }
   }

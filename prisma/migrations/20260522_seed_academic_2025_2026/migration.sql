@@ -254,26 +254,26 @@ BEGIN
     LOOP
       FOREACH periode IN ARRAY ARRAY['SEMESTRE_1', 'SEMESTRE_2', 'SEMESTRE_3'] LOOP
         FOR matiere IN
-          SELECT matiere_math_id AS id, 14.0 AS base
+          SELECT matiere_math_id AS id, 7.0 AS base
           UNION ALL
-          SELECT matiere_fr_id AS id, 13.0 AS base
+          SELECT matiere_fr_id AS id, 6.5 AS base
         LOOP
           base_note := matiere.base + CASE periode WHEN 'SEMESTRE_1' THEN 0 WHEN 'SEMESTRE_2' THEN 1 ELSE 2 END;
 
           INSERT INTO "Note" ("id", "tenantId", "eleveId", "matiereId", "typeEvaluation", "note", "noteSur", "trimestre", "anneeScolaire", "dateEvaluation", "commentaire", "createdAt", "updatedAt")
-          SELECT gen_random_uuid(), t."id", eleve."eleveId", matiere.id, 'DEVOIR', LEAST(20, base_note), 20, periode, '2025-2026', DATE '2026-01-15', 'Devoir 1', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+          SELECT gen_random_uuid(), t."id", eleve."eleveId", matiere.id, 'DEVOIR', LEAST(10, base_note), 10, periode, '2025-2026', DATE '2026-01-15', 'Devoir 1', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
           WHERE NOT EXISTS (
             SELECT 1 FROM "Note" n WHERE n."tenantId" = t."id" AND n."eleveId" = eleve."eleveId" AND n."matiereId" = matiere.id AND n."trimestre" = periode AND n."anneeScolaire" = '2025-2026' AND n."typeEvaluation" = 'DEVOIR' AND n."commentaire" = 'Devoir 1'
           );
 
           INSERT INTO "Note" ("id", "tenantId", "eleveId", "matiereId", "typeEvaluation", "note", "noteSur", "trimestre", "anneeScolaire", "dateEvaluation", "commentaire", "createdAt", "updatedAt")
-          SELECT gen_random_uuid(), t."id", eleve."eleveId", matiere.id, 'DEVOIR', LEAST(20, base_note + 1), 20, periode, '2025-2026', DATE '2026-02-15', 'Devoir 2', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+          SELECT gen_random_uuid(), t."id", eleve."eleveId", matiere.id, 'DEVOIR', LEAST(10, base_note + 0.5), 10, periode, '2025-2026', DATE '2026-02-15', 'Devoir 2', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
           WHERE NOT EXISTS (
             SELECT 1 FROM "Note" n WHERE n."tenantId" = t."id" AND n."eleveId" = eleve."eleveId" AND n."matiereId" = matiere.id AND n."trimestre" = periode AND n."anneeScolaire" = '2025-2026' AND n."typeEvaluation" = 'DEVOIR' AND n."commentaire" = 'Devoir 2'
           );
 
           INSERT INTO "Note" ("id", "tenantId", "eleveId", "matiereId", "typeEvaluation", "note", "noteSur", "trimestre", "anneeScolaire", "dateEvaluation", "commentaire", "createdAt", "updatedAt")
-          SELECT gen_random_uuid(), t."id", eleve."eleveId", matiere.id, 'COMPOSITION', LEAST(20, base_note + 2), 20, periode, '2025-2026', DATE '2026-03-15', 'Composition', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+          SELECT gen_random_uuid(), t."id", eleve."eleveId", matiere.id, 'COMPOSITION', LEAST(10, base_note + 1), 10, periode, '2025-2026', DATE '2026-03-15', 'Composition', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
           WHERE NOT EXISTS (
             SELECT 1 FROM "Note" n WHERE n."tenantId" = t."id" AND n."eleveId" = eleve."eleveId" AND n."matiereId" = matiere.id AND n."trimestre" = periode AND n."anneeScolaire" = '2025-2026' AND n."typeEvaluation" = 'COMPOSITION' AND n."commentaire" = 'Composition'
           );

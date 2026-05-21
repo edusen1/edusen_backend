@@ -209,6 +209,7 @@ export class ClasseService {
     const periods = ['MATERNELLE', 'PRIMAIRE', 'CRECHE'].includes(cycleCode)
       ? ['SEMESTRE_1', 'SEMESTRE_2', 'SEMESTRE_3']
       : ['SEMESTRE_1', 'SEMESTRE_2'];
+    const noteScale = ['MATERNELLE', 'PRIMAIRE', 'COLLEGE', 'CRECHE'].includes(cycleCode) ? 10 : 20;
     const anneeScolaire = classe.anneeAcademique?.libelle ?? '';
 
     const [cours, matiereClasses, notes] = await Promise.all([
@@ -267,7 +268,7 @@ export class ClasseService {
       }
     }
 
-    const normalize = (note: any) => Number((((note.note ?? 0) / (note.noteSur || 20)) * 20).toFixed(2));
+    const normalize = (note: any) => Number((((note.note ?? 0) / (note.noteSur || noteScale)) * noteScale).toFixed(2));
     const average = (values: number[]) => values.length
       ? Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2))
       : null;
@@ -302,16 +303,16 @@ export class ClasseService {
             .map((note) => ({
               id: note.id,
               type: note.typeEvaluation,
-              note: note.note,
-              noteSur: note.noteSur,
+              note: normalize(note),
+              noteSur: noteScale,
               dateEvaluation: note.dateEvaluation?.toISOString() ?? null,
             })),
           composition: subjectNotes
             .filter((note) => note.typeEvaluation === 'COMPOSITION')
             .map((note) => ({
               id: note.id,
-              note: note.note,
-              noteSur: note.noteSur,
+              note: normalize(note),
+              noteSur: noteScale,
               dateEvaluation: note.dateEvaluation?.toISOString() ?? null,
             })),
           moyenneDevoirs,
@@ -343,6 +344,7 @@ export class ClasseService {
         nom: classe.nom,
         annee: classe.anneeAcademique?.libelle ?? null,
         cycle: classe.niveau?.cycle?.libelle ?? null,
+        bareme: noteScale,
       },
       periodes,
       moyenneAnnuelle,
