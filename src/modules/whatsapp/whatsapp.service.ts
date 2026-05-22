@@ -50,8 +50,7 @@ export interface WhatsappQrResponse {
   expiresInSeconds: number;
 }
 
-const QR_TTL_SECONDS = 18; // WhatsApp rotate le QR toutes les ~20s — ne pas servir un QR de plus de 18s
-const QR_WHATSAPP_EXPIRY_SECONDS = 20; // Durée de vie réelle d'un QR côté WhatsApp
+const QR_TTL_SECONDS = 120;
 
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY_MS = 10_000;
