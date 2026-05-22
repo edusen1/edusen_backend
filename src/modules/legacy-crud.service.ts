@@ -305,6 +305,10 @@ export class LegacyCrudService {
       void this.sendTeacherCredentials(tenantId, created, tempPassword);
     }
 
+    if (config.model === 'user' && data.role === 'ELEVE' && tempPassword) {
+      void this.sendStudentCredentials(tenantId, created, tempPassword);
+    }
+
     if (config.model === 'personnel') {
       if (personnelSectionId && (personnelAffectationType === 'SURVEILLANT' || personnelAffectationType === 'SECRETAIRE_SURVEILLANT')) {
         await this.replaceSurveillantForCycle(tenantId ?? String(data.tenantId ?? ''), personnelSectionId, String(created.utilisateurId));
@@ -1212,6 +1216,34 @@ export class LegacyCrudService {
 
     this.whatsappService.sendMessage(tenantId, telephone, message).catch((error: unknown) => {
       this.logger.warn(`Identifiants professeur non envoyés par WhatsApp user=${String(user.id ?? '')}: ${this.formatError(error)}`);
+    });
+  }
+
+  private async sendStudentCredentials(tenantId: string | undefined, user: Payload, tempPassword: string): Promise<void> {
+    const email = String(user.email ?? '');
+    const firstName = String(user.firstName ?? '');
+    const lastName = String(user.lastName ?? '');
+    const from = tenantId ? await this.resolveSchoolSender(tenantId) : undefined;
+
+    if (email) {
+      this.mailService.sendCompteCree(email, firstName, lastName, tempPassword, from);
+    }
+
+    const telephone = String(user.telephone ?? '').trim();
+    if (!tenantId || !telephone) {
+      this.logger.warn(`Identifiants élève non envoyés par WhatsApp: tenant ou téléphone manquant user=${String(user.id ?? '')}`);
+      return;
+    }
+
+    const message = [
+      'NouraSchool - Accès élève',
+      `Login: ${email}`,
+      `Mot de passe: ${tempPassword}`,
+      'À changer à la première connexion.',
+    ].join('\n');
+
+    this.whatsappService.sendMessage(tenantId, telephone, message).catch((error: unknown) => {
+      this.logger.warn(`Identifiants élève non envoyés par WhatsApp user=${String(user.id ?? '')}: ${this.formatError(error)}`);
     });
   }
 
