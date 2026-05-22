@@ -64,7 +64,7 @@ BEGIN
       INSERT INTO "AbsenceEleve" (
         "id", "tenantId", "eleveId", "classeId", "date", "typeAbsence", "justifiee", "motif", "statut", "createdAt", "updatedAt"
       )
-      SELECT gen_random_uuid(), t."id", eleve."eleveId", eleve."classeId", DATE '2026-02-05', 'ABSENT', true, 'Absence justifiée', 'APPROUVEE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      SELECT gen_random_uuid(), t."id", eleve."eleveId", eleve."classeId", DATE '2026-02-05', 'ABSENT', true, 'Absence justifiée', 'JUSTIFIEE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
       WHERE NOT EXISTS (
         SELECT 1 FROM "AbsenceEleve" a
         WHERE a."tenantId" = t."id"
@@ -77,7 +77,7 @@ BEGIN
       INSERT INTO "AbsenceEleve" (
         "id", "tenantId", "eleveId", "classeId", "date", "typeAbsence", "justifiee", "motif", "statut", "createdAt", "updatedAt"
       )
-      SELECT gen_random_uuid(), t."id", eleve."eleveId", eleve."classeId", DATE '2026-03-12', 'RETARD', false, 'Retard en classe', 'APPROUVEE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      SELECT gen_random_uuid(), t."id", eleve."eleveId", eleve."classeId", DATE '2026-03-12', 'RETARD', false, 'Retard en classe', 'NON_JUSTIFIEE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
       WHERE NOT EXISTS (
         SELECT 1 FROM "AbsenceEleve" a
         WHERE a."tenantId" = t."id"
