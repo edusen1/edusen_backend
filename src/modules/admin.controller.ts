@@ -60,9 +60,9 @@ export class AdminController {
     return this.classeService.createClasse(tenantId!, dto);
   }
 
-  @Get('classes/enseignants')
-  getEnseignants(@Headers('x-tenant-id') tenantId: string | undefined) {
-    return this.classeService.getEnseignants(tenantId!);
+  @Get('classes/professeurs')
+  getProfesseurs(@Headers('x-tenant-id') tenantId: string | undefined) {
+    return this.classeService.getProfesseurs(tenantId!);
   }
 
   @Get('classes/:id/eleves')

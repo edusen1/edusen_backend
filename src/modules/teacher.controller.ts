@@ -9,7 +9,7 @@ type QueryParams = Record<string, string | string[] | undefined>;
 type Payload = Record<string, unknown>;
 
 @Roles('ENSEIGNANT')
-@Controller('enseignant')
+@Controller('professeur')
 export class TeacherController {
   constructor(
     private readonly domain: DomainService,

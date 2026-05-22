@@ -6,11 +6,9 @@ import { rethrowServiceError } from '@/common/utils/service-error.util';
 
 export interface CreatePersonnelDto {
   utilisateurId: string;
-  numeroMatricule?: string;
   typeContrat?: TypeContrat;
   dateEmbauche?: string;
   salaire?: number;
-  soldeConge?: number;
 }
 
 export interface CreatePointageDto {
@@ -39,11 +37,9 @@ export class PersonnelService {
         data: {
           tenantId,
           utilisateurId: dto.utilisateurId,
-          numeroMatricule: dto.numeroMatricule,
           typeContrat: dto.typeContrat,
           dateEmbauche: dto.dateEmbauche ? new Date(dto.dateEmbauche) : undefined,
           salaire: dto.salaire,
-          soldeConge: dto.soldeConge ?? 0,
         },
         include: { utilisateur: { select: { id: true, firstName: true, lastName: true, email: true, role: true } } },
       });
@@ -96,11 +92,9 @@ export class PersonnelService {
     return this.prisma.personnel.update({
       where: { id },
       data: {
-        ...(dto.numeroMatricule !== undefined ? { numeroMatricule: dto.numeroMatricule } : {}),
         ...(dto.typeContrat ? { typeContrat: dto.typeContrat } : {}),
         ...(dto.dateEmbauche ? { dateEmbauche: new Date(dto.dateEmbauche) } : {}),
         ...(dto.salaire !== undefined ? { salaire: dto.salaire } : {}),
-        ...(dto.soldeConge !== undefined ? { soldeConge: dto.soldeConge } : {}),
       },
     });
   }

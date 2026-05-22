@@ -874,7 +874,6 @@ model Personnel {
   dureeMois       Int?
   dateFinContrat  DateTime?    @db.Date
   salaire         Float?
-  soldeConge      Int          @default(0)
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 

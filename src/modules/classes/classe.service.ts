@@ -242,7 +242,7 @@ export class ClasseService {
         libelle: row.matiere.libelle,
         code: row.matiere.code,
         coefficient: row.coefficient ?? 1,
-        enseignant: null,
+        professeur: null,
       });
     }
     for (const row of matiereClasses) {
@@ -252,7 +252,7 @@ export class ClasseService {
           libelle: row.matiere.libelle,
           code: row.matiere.code,
           coefficient: 1,
-          enseignant: row.enseignant,
+          professeur: row.enseignant,
         });
       }
     }
@@ -263,7 +263,7 @@ export class ClasseService {
           libelle: note.matiere.libelle,
           code: note.matiere.code,
           coefficient: 1,
-          enseignant: null,
+          professeur: null,
         });
       }
     }
@@ -295,8 +295,8 @@ export class ClasseService {
           libelle: subject.libelle,
           code: subject.code,
           coefficient: subject.coefficient,
-          enseignant: subject.enseignant
-            ? `${subject.enseignant.firstName ?? ''} ${subject.enseignant.lastName ?? ''}`.trim()
+          professeur: subject.professeur
+            ? `${subject.professeur.firstName ?? ''} ${subject.professeur.lastName ?? ''}`.trim()
             : null,
           devoirs: subjectNotes
             .filter((note) => note.typeEvaluation !== 'COMPOSITION')
@@ -564,7 +564,7 @@ export class ClasseService {
   // Enseignants dropdown
   // ----------------------------------------------------------------
 
-  async getEnseignants(tenantId: string) {
+  async getProfesseurs(tenantId: string) {
     await this.assertTenantExists(tenantId);
     return this.prisma.user.findMany({
       where: { tenantId, role: 'ENSEIGNANT', actif: true },

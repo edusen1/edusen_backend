@@ -22,7 +22,7 @@ interface CrudConfig {
 const V1_RESOURCES: Record<string, CrudConfig> = {
   utilisateurs: { model: 'user', tenantScoped: true, paged: true },
   eleves: { model: 'user', tenantScoped: true, role: 'ELEVE', paged: true },
-  enseignants: { model: 'user', tenantScoped: true, role: 'ENSEIGNANT', paged: true },
+  professeurs: { model: 'user', tenantScoped: true, role: 'ENSEIGNANT', paged: true },
   parents: { model: 'user', tenantScoped: true, role: 'PARENT', paged: true },
   cycles: { model: 'cycle', tenantScoped: true, defaultOrderBy: { code: 'asc' } },
   niveaux: { model: 'niveau', tenantScoped: true, defaultOrderBy: { ordre: 'asc' } },
@@ -72,7 +72,7 @@ const V1_RESOURCES: Record<string, CrudConfig> = {
 const ADMIN_RESOURCES: Record<string, CrudConfig> = {
   users: V1_RESOURCES.utilisateurs,
   eleves: V1_RESOURCES.eleves,
-  enseignants: V1_RESOURCES.enseignants,
+  professeurs: V1_RESOURCES.professeurs,
   parents: V1_RESOURCES.parents,
   classes: V1_RESOURCES.classes,
   matieres: V1_RESOURCES.matieres,
@@ -467,7 +467,7 @@ export class LegacyCrudService {
   async statsEtablissement(tenantId: string | undefined) {
     const [
       eleves,
-      enseignants,
+      professeurs,
       parents,
       classes,
       salles,
@@ -476,7 +476,7 @@ export class LegacyCrudService {
       absencesEleves,
       notes,
       elevesParClasse,
-      enseignantsParSpecialite,
+      professeursParSpecialite,
     ] = await Promise.all([
       this.prisma.user.count({ where: { tenantId, role: 'ELEVE' } }),
       this.prisma.user.count({ where: { tenantId, role: 'ENSEIGNANT' } }),
@@ -500,7 +500,7 @@ export class LegacyCrudService {
     ]);
     return {
       eleves,
-      enseignants,
+      professeurs,
       parents,
       classes,
       salles,
@@ -515,7 +515,7 @@ export class LegacyCrudService {
         eleves: classe._count.eleves,
         inscriptions: classe._count.inscriptions,
       })),
-      enseignantsParSpecialite: enseignantsParSpecialite.map((item) => ({
+      professeursParSpecialite: professeursParSpecialite.map((item) => ({
         specialite: item.specialite ?? 'NON_RENSEIGNEE',
         total: item._count._all,
       })),
@@ -640,10 +640,7 @@ export class LegacyCrudService {
     const classeIds = [...new Set(inscriptions.map((i) => i.classeId))];
     const allCours = await this.prisma.cours.findMany({
       where: { tenantId, classeId: { in: classeIds } },
-      include: {
-        matiere: true,
-        enseignant: { select: { id: true, firstName: true, lastName: true } },
-      },
+      include: { matiere: true },
     });
     const coursByClasse = new Map<string, typeof allCours>();
     for (const cours of allCours) {
@@ -665,17 +662,17 @@ export class LegacyCrudService {
       const upper = cycleCode.toUpperCase();
       const periods = ['MATERNELLE', 'PRIMAIRE', 'CRECHE'].includes(upper) ? ['SEMESTRE_1', 'SEMESTRE_2', 'SEMESTRE_3'] : ['SEMESTRE_1', 'SEMESTRE_2'];
       const noteScale = ['MATERNELLE', 'PRIMAIRE', 'COLLEGE', 'CRECHE'].includes(upper) ? 10 : 20;
-      const subjects = new Map<string, { matiereId: string; libelle: string; code: string; coefficient: number; enseignant: string | null }>();
+      const subjects = new Map<string, { matiereId: string; libelle: string; code: string; coefficient: number; professeur: string | null }>();
       const coursForClasse = coursByClasse.get(classeId) ?? [];
       for (const cours of coursForClasse) {
         subjects.set(cours.matiereId, {
           matiereId: cours.matiereId, libelle: cours.matiere.libelle, code: cours.matiere.code,
           coefficient: cours.coefficient ?? 1,
-          enseignant: cours.enseignant ? `${cours.enseignant.firstName ?? ''} ${cours.enseignant.lastName ?? ''}`.trim() : null,
+          professeur: null,
         });
       }
       for (const note of yearNotes) {
-        if (!subjects.has(note.matiereId)) subjects.set(note.matiereId, { matiereId: note.matiereId, libelle: note.matiere.libelle, code: note.matiere.code, coefficient: 1, enseignant: null });
+        if (!subjects.has(note.matiereId)) subjects.set(note.matiereId, { matiereId: note.matiereId, libelle: note.matiere.libelle, code: note.matiere.code, coefficient: 1, professeur: null });
       }
       const norm = (n: any) => Number((((n.note ?? 0) / (n.noteSur || noteScale)) * noteScale).toFixed(2));
       const avg = (values: number[]) => values.length ? Number((values.reduce((s, v) => s + v, 0) / values.length).toFixed(2)) : null;
@@ -693,7 +690,7 @@ export class LegacyCrudService {
           const compAvg = avg(comps);
           const moyenne = moyenneDevoirs !== null && compAvg !== null ? Number(((moyenneDevoirs + compAvg) / 2).toFixed(2)) : avg(sn.map(norm));
           return {
-            matiereId: subject.matiereId, libelle: subject.libelle, code: subject.code, coefficient: subject.coefficient, enseignant: subject.enseignant,
+            matiereId: subject.matiereId, libelle: subject.libelle, code: subject.code, coefficient: subject.coefficient, professeur: subject.professeur,
             devoirs: sn.filter((n) => n.typeEvaluation !== 'COMPOSITION').map((n) => ({ id: n.id, type: n.typeEvaluation, note: norm(n), noteSur: noteScale, dateEvaluation: n.dateEvaluation?.toISOString() ?? null })),
             composition: sn.filter((n) => n.typeEvaluation === 'COMPOSITION').map((n) => ({ id: n.id, note: norm(n), noteSur: noteScale, dateEvaluation: n.dateEvaluation?.toISOString() ?? null })),
             moyenneDevoirs, moyenne,
@@ -1411,20 +1408,25 @@ export class LegacyCrudService {
       }
     }
 
-    if (create && !data.numeroMatricule) {
+    if (create) {
       const year = new Date().getFullYear();
       const count = await this.prisma.personnel.count({ where: { tenantId } });
       data.numeroMatricule = `PERS-${year}-${String(count + 1).padStart(4, '0')}`;
     }
 
-    if (data.dureeMois !== undefined) {
+    if (data.typeContrat === 'CDD') {
       const dureeMois = Number(data.dureeMois);
       if (!Number.isNaN(dureeMois) && dureeMois > 0) {
         const debut = data.dateEmbauche ? new Date(data.dateEmbauche as string | Date) : new Date();
         debut.setMonth(debut.getMonth() + dureeMois);
+        data.dureeMois = dureeMois;
         data.dateFinContrat = debut;
+      } else {
+        throw new BadRequestException('dureeMois est requis pour un contrat CDD');
       }
-      delete data.dureeMois;
+    } else if (data.typeContrat !== undefined) {
+      data.dureeMois = null;
+      data.dateFinContrat = null;
     }
 
     if (data.salaire !== undefined) {
