@@ -109,8 +109,15 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
-      - name: Trigger Coolify deployment
+      - name: Trigger deployment
+        env:
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          WEBHOOK_TOKEN: ${{ secrets.WEBHOOK_TOKEN }}
         run: |
-          curl --fail --request POST "${{ secrets.COOLIFY_WEBHOOK }}" \
-            --header "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}" \
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "WEBHOOK_URL not configured — skipping deploy trigger."
+            exit 0
+          fi
+          curl --fail --request POST "$WEBHOOK_URL" \
+            --header "Authorization: Bearer $WEBHOOK_TOKEN" \
             --header "Content-Type: application/json"
