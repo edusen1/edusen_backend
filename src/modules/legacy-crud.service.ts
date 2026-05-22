@@ -127,6 +127,21 @@ export class LegacyCrudService {
     } : config.model === 'matiereClasse' ? {
       matiere: true,
       enseignant: true
+    } : config.model === 'personnel' ? {
+      utilisateur: {
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          telephone: true,
+          adresse: true,
+          role: true,
+          actif: true,
+          specialite: true,
+        },
+      },
     } : undefined;
 
     if (config.paged || query.page !== undefined || query.size !== undefined) {
@@ -164,6 +179,21 @@ export class LegacyCrudService {
     } : config.model === 'matiereClasse' ? {
       matiere: true,
       enseignant: true
+    } : config.model === 'personnel' ? {
+      utilisateur: {
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          telephone: true,
+          adresse: true,
+          role: true,
+          actif: true,
+          specialite: true,
+        },
+      },
     } : undefined;
 
     const entity = await this.delegate(config.model).findFirst({
@@ -429,7 +459,42 @@ export class LegacyCrudService {
       where: { parentId },
       include: { eleve: true },
     });
-    return links.map((link) => link.eleve);
+    return links.map((link) => this.sanitizeEntity('user', link.eleve));
+  }
+
+  async adminParentChildren(tenantId: string | undefined, parentId: string) {
+    this.assertUuid(parentId, 'parentId');
+    const links = await this.prisma.eleveParent.findMany({
+      where: {
+        parentId,
+        parent: {
+          tenantId,
+          role: 'PARENT',
+        },
+        eleve: {
+          tenantId,
+          role: 'ELEVE',
+        },
+      },
+      include: {
+        eleve: {
+          include: {
+            eleveClasse: {
+              select: {
+                id: true,
+                nom: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        eleve: {
+          lastName: 'asc',
+        },
+      },
+    });
+    return links.map((link) => this.sanitizeEntity('user', link.eleve));
   }
 
   async rapportPointages(tenantId: string | undefined, query: QueryParams) {

@@ -479,6 +479,14 @@ export class AdminController {
       .then(() => ({ sent: true, messageId: `test-${Date.now()}` }));
   }
 
+  @Get('parents/:id/enfants')
+  parentChildren(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+  ) {
+    return this.crud.adminParentChildren(tenantId, id);
+  }
+
   // ----------------------------------------------------------------
   // Routes génériques (doivent rester après les routes spécifiques)
   // ----------------------------------------------------------------
