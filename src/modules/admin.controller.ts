@@ -476,7 +476,17 @@ export class AdminController {
     const phone = String(body.phone ?? '');
     return this.whatsapp
       .sendMessage(tid!, phone, 'Message de test Noura School ✅')
-      .then(() => ({ sent: true, messageId: `test-${Date.now()}` }));
+      .then(() => ({ queued: true, messageId: `test-${Date.now()}` }));
+  }
+
+  @Roles('ADMIN')
+  @Get('whatsapp/outbox')
+  getWhatsappOutbox(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = tenantId?.trim() || user?.tenantId;
+    return this.whatsapp.getOutbox(tid!);
   }
 
   @Get('parents/:id/enfants')

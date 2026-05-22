@@ -1,6 +1,7 @@
 import {
   Injectable,
   Logger,
+  OnApplicationBootstrap,
   OnApplicationShutdown,
   NotFoundException,
   ServiceUnavailableException,
@@ -30,6 +31,7 @@ export interface WhatsappStatusResponse {
   initializing?: boolean;
   hasSession?: boolean;
   lastError?: string;
+  reconnectAttempts?: number;
   phoneNumber?: string;
   displayName?: string;
   connectedAt?: string;
@@ -50,6 +52,11 @@ export interface WhatsappQrResponse {
 
 const QR_TTL_SECONDS = 120;
 
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_DELAY_MS = 10_000;
+const STARTUP_STAGGER_MS = 3_000; // délai entre chaque tenant au démarrage
+const MAX_OUTBOX_ATTEMPTS = 10;   // abandon après N tentatives d'envoi
+
 interface TenantWaState {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   client: any | null;
@@ -58,6 +65,7 @@ interface TenantWaState {
   qrGeneratedAt: number | null;
   initializing: boolean;
   reconnectTimer: NodeJS.Timeout | null;
+  reconnectAttempts: number;
   phoneNumber: string | null;
   displayName: string | null;
   connectedAt: Date | null;
@@ -66,7 +74,7 @@ interface TenantWaState {
 }
 
 @Injectable()
-export class WhatsappService implements OnApplicationShutdown {
+export class WhatsappService implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(WhatsappService.name);
   private readonly states = new Map<string, TenantWaState>();
 
@@ -74,6 +82,34 @@ export class WhatsappService implements OnApplicationShutdown {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
   ) {}
+
+  async onApplicationBootstrap(): Promise<void> {
+    const autostart = this.config.get<string>('WHATSAPP_AUTOSTART', 'true') !== 'false';
+    if (!autostart) return;
+
+    const sessions = await this.prisma.whatsappSession.findMany({
+      where: {
+        connected: true,
+        sessionData: { not: null },
+      },
+      select: { tenantId: true },
+    });
+
+    if (!sessions.length) {
+      this.logger.log('Aucune session WhatsApp à restaurer au démarrage');
+      return;
+    }
+
+    this.logger.log(`Restauration de ${sessions.length} session(s) WhatsApp au démarrage (échelonnement ${STARTUP_STAGGER_MS}ms)`);
+    for (let i = 0; i < sessions.length; i++) {
+      const tenantId = sessions[i].tenantId;
+      if (i === 0) {
+        this.startClientIfNeeded(tenantId);
+      } else {
+        setTimeout(() => this.startClientIfNeeded(tenantId), i * STARTUP_STAGGER_MS);
+      }
+    }
+  }
 
   async onApplicationShutdown(): Promise<void> {
     for (const [tenantId, state] of this.states.entries()) {
@@ -114,6 +150,7 @@ export class WhatsappService implements OnApplicationShutdown {
       initializing: state?.initializing ?? false,
       hasSession: !!record?.sessionData,
       lastError: state?.lastError ?? undefined,
+      reconnectAttempts: state?.reconnectAttempts ?? 0,
       phoneNumber: state?.phoneNumber ?? record?.phoneNumber ?? undefined,
       displayName: state?.displayName ?? record?.displayName ?? undefined,
       connectedAt: state?.connectedAt?.toISOString() ?? record?.connectedAt?.toISOString() ?? undefined,
@@ -129,7 +166,7 @@ export class WhatsappService implements OnApplicationShutdown {
       throw new ServiceUnavailableException('WhatsApp déjà connecté — déconnectez avant de rescanner');
     }
 
-    this.startClientIfNeeded(tenantId);
+    this.startClientIfNeeded(tenantId, true); // reconnexion manuelle — reset des tentatives
 
     // Attendre le QR (max 35s)
     const rawQr = await this.waitForQr(tenantId, 35_000);
@@ -202,23 +239,37 @@ export class WhatsappService implements OnApplicationShutdown {
   }
 
   async sendMessage(tenantId: string, phone: string, message: string): Promise<void> {
-    let state = this.states.get(tenantId);
-    if (!state?.ready || !state.client) {
-      const record = await this.prisma.whatsappSession.findUnique({ where: { tenantId } });
-      if (record?.sessionData || record?.connected) {
-        this.logger.log(`Session WhatsApp trouvée, démarrage du client avant envoi (tenant=${tenantId})`);
-        this.startClientIfNeeded(tenantId);
-        await this.waitForReady(tenantId, 45_000);
-        state = this.states.get(tenantId);
-      }
+    // 1. Persister en outbox d'abord — message garanti même si WhatsApp est down
+    const entry = await this.prisma.whatsappOutbox.create({
+      data: { tenantId, phone, message },
+    });
+
+    // 2. Essayer d'envoyer immédiatement si le client est prêt
+    const state = this.states.get(tenantId);
+    if (state?.ready && state.client) {
+      await this.sendAndAckOutbox(tenantId, state, entry.id, phone, message);
+      return;
     }
 
-    if (!state?.ready || !state.client) {
-      throw new ServiceUnavailableException('WhatsApp non connecté pour ce tenant');
+    // 3. Client pas prêt — tenter de le démarrer si session existante
+    const record = await this.prisma.whatsappSession.findUnique({ where: { tenantId } });
+    if (record?.sessionData || record?.connected) {
+      this.logger.log(`Session WhatsApp trouvée, démarrage pour envoi différé (tenant=${tenantId})`);
+      this.startClientIfNeeded(tenantId);
+      // Le flush sera déclenché automatiquement sur l'événement 'ready'
     }
-    const chatId = this.normalizePhone(phone);
-    await state.client.sendMessage(chatId, message);
-    this.logger.log(`Message envoyé à ${chatId} (tenant=${tenantId})`);
+
+    this.logger.log(`Message mis en file d'attente → ${phone} (tenant=${tenantId})`);
+    // Ne pas lever d'exception : le message est dans l'outbox et sera renvoyé
+  }
+
+  async getOutbox(tenantId: string): Promise<{ id: string; phone: string; message: string; attempts: number; lastError: string | null; createdAt: Date }[]> {
+    await this.assertTenantExists(tenantId);
+    return this.prisma.whatsappOutbox.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, phone: true, message: true, attempts: true, lastError: true, createdAt: true },
+    });
   }
 
   isReady(tenantId: string): boolean {
@@ -238,6 +289,7 @@ export class WhatsappService implements OnApplicationShutdown {
         qrGeneratedAt: null,
         initializing: false,
         reconnectTimer: null,
+        reconnectAttempts: 0,
         phoneNumber: null,
         displayName: null,
         connectedAt: null,
@@ -248,8 +300,9 @@ export class WhatsappService implements OnApplicationShutdown {
     return this.states.get(tenantId)!;
   }
 
-  private startClientIfNeeded(tenantId: string): void {
+  private startClientIfNeeded(tenantId: string, resetAttempts = false): void {
     const state = this.getOrCreateState(tenantId);
+    if (resetAttempts) state.reconnectAttempts = 0;
     if (state.ready || state.initializing) return;
     this.initClient(tenantId);
   }
@@ -324,9 +377,13 @@ export class WhatsappService implements OnApplicationShutdown {
       state.latestQr = null;
       state.qrGeneratedAt = null;
       state.lastError = null;
+      state.reconnectAttempts = 0;
       const waiters = state.qrWaiters.splice(0);
       for (const resolve of waiters) resolve(null);
       this.logger.log(`WhatsApp prêt (tenant=${tenantId})`);
+
+      // Flush outbox — envoyer tous les messages en attente
+      void this.flushOutbox(tenantId);
 
       // Récupérer les infos du téléphone connecté
       void Promise.resolve(client.info ?? client.getInfo?.()).then((info: { wid?: { user?: string; _serialized?: string }; me?: { user?: string; _serialized?: string }; pushname?: string; displayName?: string }) => {
@@ -413,11 +470,21 @@ export class WhatsappService implements OnApplicationShutdown {
     const state = this.states.get(tenantId);
     if (!state || state.reconnectTimer) return;
     state.initializing = false;
+
+    if (state.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      this.logger.warn(`Tenant ${tenantId} — ${MAX_RECONNECT_ATTEMPTS} tentatives échouées, reconnexion automatique arrêtée. Reconnectez manuellement via le QR code.`);
+      return;
+    }
+
+    state.reconnectAttempts++;
+    const delay = RECONNECT_DELAY_MS * state.reconnectAttempts; // backoff linéaire
+    this.logger.log(`Tentative de reconnexion ${state.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} dans ${delay / 1000}s (tenant=${tenantId})`);
+
     state.reconnectTimer = setTimeout(() => {
       const s = this.states.get(tenantId);
       if (s) s.reconnectTimer = null;
       this.initClient(tenantId);
-    }, 10_000);
+    }, delay);
   }
 
   private waitForQr(tenantId: string, timeoutMs: number): Promise<string | null> {
@@ -462,6 +529,50 @@ export class WhatsappService implements OnApplicationShutdown {
         }
       }, 500);
     });
+  }
+
+  private async flushOutbox(tenantId: string): Promise<void> {
+    const state = this.states.get(tenantId);
+    if (!state?.ready || !state.client) return;
+
+    const pending = await this.prisma.whatsappOutbox.findMany({
+      where: { tenantId, attempts: { lt: MAX_OUTBOX_ATTEMPTS } },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (!pending.length) return;
+    this.logger.log(`Flush outbox: ${pending.length} message(s) en attente (tenant=${tenantId})`);
+
+    for (const entry of pending) {
+      // Vérifier que le client est encore connecté entre chaque envoi
+      if (!state.ready || !state.client) {
+        this.logger.warn(`Flush interrompu — WhatsApp déconnecté (tenant=${tenantId})`);
+        break;
+      }
+      await this.sendAndAckOutbox(tenantId, state, entry.id, entry.phone, entry.message);
+    }
+  }
+
+  private async sendAndAckOutbox(
+    tenantId: string,
+    state: TenantWaState,
+    outboxId: string,
+    phone: string,
+    message: string,
+  ): Promise<void> {
+    const chatId = this.normalizePhone(phone);
+    try {
+      await state.client.sendMessage(chatId, message);
+      await this.prisma.whatsappOutbox.delete({ where: { id: outboxId } }).catch(() => null);
+      this.logger.log(`Message envoyé + supprimé de l'outbox → ${chatId} (tenant=${tenantId})`);
+    } catch (err) {
+      const error = this.formatError(err);
+      await this.prisma.whatsappOutbox.update({
+        where: { id: outboxId },
+        data: { attempts: { increment: 1 }, lastAttemptAt: new Date(), lastError: error },
+      }).catch(() => null);
+      this.logger.warn(`Échec envoi outbox → ${chatId} (tenant=${tenantId}): ${error}`);
+    }
   }
 
   private normalizePhone(phone: string): string {

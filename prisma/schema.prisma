@@ -178,6 +178,7 @@ model Tenant {
   ecoleConfig         EcoleConfig?
   fraisNiveaux        FraisNiveauConfig[]
   whatsappSession     WhatsappSession?
+  whatsappOutbox      WhatsappOutbox[]
   users               User[]
   cycles              Cycle[]
   niveaux             Niveau[]
@@ -280,6 +281,23 @@ model WhatsappSession {
   updatedAt       DateTime  @updatedAt
 
   @@map("whatsapp_sessions")
+}
+
+// ==================== WHATSAPP OUTBOX ====================
+
+model WhatsappOutbox {
+  id            String    @id @default(uuid()) @db.Uuid
+  tenantId      String    @db.Uuid
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phone         String    @db.VarChar(30)
+  message       String
+  attempts      Int       @default(0)
+  lastAttemptAt DateTime?
+  lastError     String?
+  createdAt     DateTime  @default(now())
+
+  @@index([tenantId, createdAt])
+  @@map("whatsapp_outbox")
 }
 
 // ==================== PLATFORM USERS ====================
