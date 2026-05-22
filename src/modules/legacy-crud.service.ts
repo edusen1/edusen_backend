@@ -305,11 +305,7 @@ export class LegacyCrudService {
 
     if (config.model === 'personnel') {
       if (personnelSectionId && (personnelAffectationType === 'SURVEILLANT' || personnelAffectationType === 'SECRETAIRE_SURVEILLANT')) {
-        await this.prisma.surveillantCycle.upsert({
-          where: { surveillantId_cycleId: { surveillantId: String(created.utilisateurId), cycleId: personnelSectionId } },
-          create: { tenantId: tenantId ?? String(data.tenantId ?? ''), surveillantId: String(created.utilisateurId), cycleId: personnelSectionId },
-          update: {},
-        });
+        await this.replaceSurveillantForCycle(tenantId ?? String(data.tenantId ?? ''), personnelSectionId, String(created.utilisateurId));
       }
 
       if (tempPassword) {
@@ -329,6 +325,8 @@ export class LegacyCrudService {
     const data = await this.prepareData(config, tenantId, body, false);
     delete data.__tempPasswordForNotification;
     delete data.__personnelNiveauId;
+    const personnelUpdateSectionId = typeof data.__personnelSectionId === 'string' ? data.__personnelSectionId : null;
+    const personnelUpdateAffectationType = typeof data.__personnelAffectationType === 'string' ? data.__personnelAffectationType : null;
     delete data.__personnelSectionId;
     delete data.__personnelAffectationType;
     delete data.__personnelAffectationOrdre;
@@ -362,6 +360,11 @@ export class LegacyCrudService {
 
     if (config.model === 'classe') {
       return this.findOne(config, tenantId, id);
+    }
+
+    if (config.model === 'personnel' && personnelUpdateSectionId && (personnelUpdateAffectationType === 'SURVEILLANT' || personnelUpdateAffectationType === 'SECRETAIRE_SURVEILLANT')) {
+      const utilisateurId = String((updated as { utilisateurId: string }).utilisateurId);
+      await this.replaceSurveillantForCycle(tenantId ?? '', personnelUpdateSectionId, utilisateurId);
     }
 
     return this.sanitizeEntity(config.model, updated);
@@ -1366,6 +1369,19 @@ export class LegacyCrudService {
     delete data.specialite;
     delete data.cycleId;
     delete data.matieres;
+  }
+
+  private async replaceSurveillantForCycle(tenantId: string, cycleId: string, newSurveillantId: string): Promise<void> {
+    const existing = await this.prisma.surveillantCycle.findFirst({ where: { cycleId } });
+    if (existing && existing.surveillantId !== newSurveillantId) {
+      await this.prisma.user.update({ where: { id: existing.surveillantId }, data: { actif: false } });
+      await this.prisma.surveillantCycle.deleteMany({ where: { cycleId } });
+    }
+    await this.prisma.surveillantCycle.upsert({
+      where: { surveillantId_cycleId: { surveillantId: newSurveillantId, cycleId } },
+      create: { tenantId, surveillantId: newSurveillantId, cycleId },
+      update: {},
+    });
   }
 
   private normalizePersonnelRole(value: unknown): 'ENSEIGNANT' | 'SURVEILLANT' | 'CAISSIER' | 'RH' {
