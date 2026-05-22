@@ -12,8 +12,10 @@ ENV PUPPETEER_SKIP_DOWNLOAD=true \
 
 COPY package*.json ./
 COPY prisma ./prisma/
+COPY patches ./patches/
 
 # Always include devDependencies for the build, regardless of external NODE_ENV.
+# postinstall applique automatiquement les patches (patch-package)
 RUN npm ci --include=dev
 
 COPY . .

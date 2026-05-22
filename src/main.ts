@@ -9,6 +9,27 @@ import { AppModule } from '@/app.module';
 
 const logger = new Logger('Bootstrap');
 
+// Empêcher le process de crasher sur des rejections non gérées
+// (notamment les erreurs internes de whatsapp-web.js / Puppeteer)
+process.on('unhandledRejection', (reason: unknown) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  logger.error(`[UnhandledRejection] ${msg}`);
+  // On logge mais on NE crash PAS le process
+});
+
+process.on('uncaughtException', (error: Error) => {
+  const isWwebError =
+    error.stack?.includes('whatsapp-web.js') ||
+    error.stack?.includes('puppeteer') ||
+    error.message.includes('Execution context');
+  if (isWwebError) {
+    logger.error(`[UncaughtException/WhatsApp] ${error.message} — process maintenu`);
+  } else {
+    logger.error(`[UncaughtException] ${error.stack ?? error.message}`);
+    process.exit(1); // Crash uniquement sur des erreurs non-WhatsApp
+  }
+});
+
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,

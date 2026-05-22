@@ -73,10 +73,13 @@ interface TenantWaState {
   qrWaiters: Array<(qr: string | null) => void>;
 }
 
+const OUTBOX_FLUSH_INTERVAL_MS = 2 * 60 * 1000; // flush périodique toutes les 2 minutes
+
 @Injectable()
 export class WhatsappService implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(WhatsappService.name);
   private readonly states = new Map<string, TenantWaState>();
+  private outboxFlushTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly config: ConfigService,
@@ -109,9 +112,18 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
         setTimeout(() => this.startClientIfNeeded(tenantId), i * STARTUP_STAGGER_MS);
       }
     }
+
+    // Flush périodique de l'outbox — rattrape les messages si le `ready` a été manqué
+    this.outboxFlushTimer = setInterval(() => {
+      void this.flushAllOutboxes();
+    }, OUTBOX_FLUSH_INTERVAL_MS);
   }
 
   async onApplicationShutdown(): Promise<void> {
+    if (this.outboxFlushTimer) {
+      clearInterval(this.outboxFlushTimer);
+      this.outboxFlushTimer = null;
+    }
     for (const [tenantId, state] of this.states.entries()) {
       if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
       if (state.client) {
@@ -458,7 +470,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     client.initialize().catch((err: unknown) => {
       const message = this.formatError(err);
       state.lastError = message;
-      this.logger.error(`Erreur init (tenant=${tenantId}): ${message}`);
+      this.logger.error(`❌ Erreur init WhatsApp (tenant=${tenantId}): ${message}`);
       state.initializing = false;
       this.scheduleReconnect(tenantId);
     }).then(() => {
@@ -529,6 +541,14 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
         }
       }, 500);
     });
+  }
+
+  private async flushAllOutboxes(): Promise<void> {
+    for (const [tenantId, state] of this.states.entries()) {
+      if (state.ready && state.client) {
+        await this.flushOutbox(tenantId);
+      }
+    }
   }
 
   private async flushOutbox(tenantId: string): Promise<void> {
