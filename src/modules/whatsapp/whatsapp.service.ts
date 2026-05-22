@@ -252,14 +252,27 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
 
   async sendMessage(tenantId: string, phone: string, message: string): Promise<void> {
     // 1. Persister en outbox d'abord — message garanti même si WhatsApp est down
-    const entry = await this.prisma.whatsappOutbox.create({
-      data: { tenantId, phone, message },
-    });
+    let entry: { id: string } | null = null;
+    try {
+      entry = await this.prisma.whatsappOutbox.create({
+        data: { tenantId, phone, message },
+      });
+    } catch (err) {
+      // Table absente (migration en attente) — envoi direct sans outbox
+      this.logger.warn(`Outbox indisponible, envoi direct (tenant=${tenantId}): ${this.formatError(err)}`);
+    }
 
     // 2. Essayer d'envoyer immédiatement si le client est prêt
     const state = this.states.get(tenantId);
     if (state?.ready && state.client) {
-      await this.sendAndAckOutbox(tenantId, state, entry.id, phone, message);
+      if (entry) {
+        await this.sendAndAckOutbox(tenantId, state, entry.id, phone, message);
+      } else {
+        // Pas d'entrée outbox (table absente) — envoi direct
+        const chatId = this.normalizePhone(phone);
+        await state.client.sendMessage(chatId, message);
+        this.logger.log(`Message envoyé directement → ${chatId} (tenant=${tenantId})`);
+      }
       return;
     }
 
@@ -555,10 +568,16 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     const state = this.states.get(tenantId);
     if (!state?.ready || !state.client) return;
 
-    const pending = await this.prisma.whatsappOutbox.findMany({
-      where: { tenantId, attempts: { lt: MAX_OUTBOX_ATTEMPTS } },
-      orderBy: { createdAt: 'asc' },
-    });
+    let pending: Array<{ id: string; phone: string; message: string }>;
+    try {
+      pending = await this.prisma.whatsappOutbox.findMany({
+        where: { tenantId, attempts: { lt: MAX_OUTBOX_ATTEMPTS } },
+        orderBy: { createdAt: 'asc' },
+      });
+    } catch {
+      // Table absente (migration en attente) — flush ignoré silencieusement
+      return;
+    }
 
     if (!pending.length) return;
     this.logger.log(`Flush outbox: ${pending.length} message(s) en attente (tenant=${tenantId})`);

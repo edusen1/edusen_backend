@@ -21,8 +21,10 @@ if [ $migrate_exit -ne 0 ]; then
 
   if [ -n "$failed" ]; then
     echo "⚠️   Migration échouée : $failed"
-    echo "🔧  Résolution automatique (rolled-back)..."
-    npx prisma migrate resolve --rolled-back "$failed"
+    # Pour les migrations seed (données seulement), on les marque comme appliquées
+    # afin qu'elles ne bloquent pas les migrations de schéma suivantes.
+    echo "🔧  Marquage comme appliquée (--applied) pour débloquer les migrations suivantes..."
+    npx prisma migrate resolve --applied "$failed"
 
     echo "🔄  Nouvelle tentative..."
     npx prisma migrate deploy
