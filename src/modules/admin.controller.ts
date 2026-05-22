@@ -487,6 +487,14 @@ export class AdminController {
     return this.crud.adminParentChildren(tenantId, id);
   }
 
+  @Get('eleves/:id/parcours')
+  eleveParcours(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+  ) {
+    return this.crud.adminEleveParcours(tenantId, id);
+  }
+
   // ----------------------------------------------------------------
   // Routes génériques (doivent rester après les routes spécifiques)
   // ----------------------------------------------------------------

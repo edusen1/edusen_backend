@@ -142,6 +142,20 @@ export class LegacyCrudService {
           specialite: true,
         },
       },
+      niveauAffectations: {
+        include: {
+          niveau: {
+            select: {
+              id: true,
+              code: true,
+              libelle: true,
+              ordre: true,
+              cycle: { select: { id: true, code: true, libelle: true } },
+            },
+          },
+        },
+        orderBy: { ordre: 'asc' },
+      },
     } : undefined;
 
     if (config.paged || query.page !== undefined || query.size !== undefined) {
@@ -194,6 +208,20 @@ export class LegacyCrudService {
           specialite: true,
         },
       },
+      niveauAffectations: {
+        include: {
+          niveau: {
+            select: {
+              id: true,
+              code: true,
+              libelle: true,
+              ordre: true,
+              cycle: { select: { id: true, code: true, libelle: true } },
+            },
+          },
+        },
+        orderBy: { ordre: 'asc' },
+      },
     } : undefined;
 
     const entity = await this.delegate(config.model).findFirst({
@@ -216,7 +244,13 @@ export class LegacyCrudService {
     const tempPassword = typeof data.__tempPasswordForNotification === 'string'
       ? data.__tempPasswordForNotification
       : null;
+    const personnelNiveauId = typeof data.__personnelNiveauId === 'string' ? data.__personnelNiveauId : null;
+    const personnelAffectationType = typeof data.__personnelAffectationType === 'string' ? data.__personnelAffectationType : null;
+    const personnelAffectationOrdre = typeof data.__personnelAffectationOrdre === 'number' ? data.__personnelAffectationOrdre : 1;
     delete data.__tempPasswordForNotification;
+    delete data.__personnelNiveauId;
+    delete data.__personnelAffectationType;
+    delete data.__personnelAffectationOrdre;
     const created = await this.delegate(config.model).create({ data });
 
     if (config.model === 'user' && data.role === 'ELEVE' && parentIds.length > 0) {
@@ -255,6 +289,22 @@ export class LegacyCrudService {
 
     if (config.model === 'user' && data.role === 'ENSEIGNANT' && tempPassword) {
       void this.sendTeacherCredentials(tenantId, created, tempPassword);
+    }
+
+    if (config.model === 'personnel') {
+      if (personnelNiveauId && personnelAffectationType) {
+        await this.createPersonnelNiveauAffectation(
+          tenantId ?? String(data.tenantId ?? ''),
+          String(created.id),
+          personnelNiveauId,
+          personnelAffectationType,
+          personnelAffectationOrdre,
+        );
+      }
+
+      if (tempPassword) {
+        void this.sendPersonnelCredentials(tenantId, String(created.utilisateurId), tempPassword);
+      }
     }
 
     return this.sanitizeEntity(config.model, created);
@@ -495,6 +545,152 @@ export class LegacyCrudService {
       },
     });
     return links.map((link) => this.sanitizeEntity('user', link.eleve));
+  }
+
+  async adminEleveParcours(tenantId: string | undefined, eleveId: string) {
+    this.assertUuid(eleveId, 'eleveId');
+    const eleve = await this.prisma.user.findFirst({
+      where: { id: eleveId, tenantId, role: 'ELEVE' },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        matricule: true,
+        actif: true,
+      },
+    });
+    if (!eleve) throw new NotFoundException('Eleve introuvable');
+
+    const [inscriptions, bulletins, absences, notesStats] = await Promise.all([
+      this.prisma.inscription.findMany({
+        where: { tenantId, eleveId },
+        include: {
+          anneeAcademique: { select: { id: true, libelle: true, dateDebut: true, dateFin: true } },
+          classe: {
+            select: {
+              id: true,
+              nom: true,
+              niveau: {
+                select: {
+                  id: true,
+                  code: true,
+                  libelle: true,
+                  cycle: { select: { id: true, code: true, libelle: true } },
+                },
+              },
+            },
+          },
+        },
+        orderBy: [{ anneeAcademique: { dateDebut: 'asc' } }, { createdAt: 'asc' }],
+      }),
+      this.prisma.bulletin.findMany({
+        where: { tenantId, eleveId },
+        include: {
+          classe: { select: { id: true, nom: true } },
+        },
+        orderBy: [{ anneeScolaire: 'asc' }, { trimestre: 'asc' }],
+      }),
+      this.prisma.absenceEleve.findMany({
+        where: { tenantId, eleveId },
+        select: { classeId: true, typeAbsence: true, justifiee: true, statut: true },
+      }),
+      this.prisma.note.aggregate({
+        where: { tenantId, eleveId },
+        _avg: { note: true },
+        _count: true,
+      }),
+    ]);
+
+    const bulletinsByKey = new Map<string, typeof bulletins>();
+    for (const bulletin of bulletins) {
+      const key = `${bulletin.classeId}:${bulletin.anneeScolaire}`;
+      const rows = bulletinsByKey.get(key) ?? [];
+      rows.push(bulletin);
+      bulletinsByKey.set(key, rows);
+    }
+
+    const absencesByClasse = new Map<string, { absences: number; retards: number; justifiees: number }>();
+    for (const absence of absences) {
+      const stats = absencesByClasse.get(absence.classeId) ?? { absences: 0, retards: 0, justifiees: 0 };
+      if (absence.typeAbsence === 'RETARD') stats.retards += 1;
+      else stats.absences += 1;
+      if (absence.justifiee) stats.justifiees += 1;
+      absencesByClasse.set(absence.classeId, stats);
+    }
+
+    const parcours = inscriptions.map((inscription) => {
+      const annee = inscription.anneeAcademique.libelle;
+      const classeBulletins = bulletinsByKey.get(`${inscription.classeId}:${annee}`) ?? [];
+      const moyennes = classeBulletins
+        .map((bulletin) => bulletin.moyenne)
+        .filter((value): value is number => typeof value === 'number');
+      const moyenneClasse = moyennes.length
+        ? Math.round((moyennes.reduce((sum, value) => sum + value, 0) / moyennes.length) * 100) / 100
+        : null;
+      return {
+        inscriptionId: inscription.id,
+        anneeScolaire: annee,
+        statut: inscription.statut,
+        classe: inscription.classe,
+        absences: absencesByClasse.get(inscription.classeId) ?? { absences: 0, retards: 0, justifiees: 0 },
+        moyenneClasse,
+        bulletins: classeBulletins.map((bulletin) => ({
+          id: bulletin.id,
+          trimestre: bulletin.trimestre,
+          anneeScolaire: bulletin.anneeScolaire,
+          moyenne: bulletin.moyenne,
+          moyenneClasse: bulletin.moyenneClasse,
+          rang: bulletin.rang,
+          totalEleves: bulletin.totalEleves,
+          appreciation: bulletin.appreciation,
+          nombreAbsences: bulletin.nombreAbsences,
+          nombreRetards: bulletin.nombreRetards,
+          statut: bulletin.statut,
+          fichierPdfUrl: bulletin.fichierPdfUrl,
+        })),
+      };
+    });
+
+    const validBulletins = bulletins.filter((bulletin) => typeof bulletin.moyenne === 'number');
+    const firstMoyenne = validBulletins[0]?.moyenne ?? null;
+    const lastMoyenne = validBulletins[validBulletins.length - 1]?.moyenne ?? null;
+    const delta = firstMoyenne !== null && lastMoyenne !== null
+      ? Math.round((lastMoyenne - firstMoyenne) * 100) / 100
+      : null;
+    const totalAbsences = absences.filter((absence) => absence.typeAbsence !== 'RETARD').length;
+    const totalRetards = absences.filter((absence) => absence.typeAbsence === 'RETARD').length;
+    const appreciationText = bulletins.map((bulletin) => bulletin.appreciation ?? '').join(' ').toLowerCase();
+    const negativeBehavior = ['mauvais', 'insuffisant', 'indiscipline', 'retard', 'absent'].some((word) =>
+      appreciationText.includes(word),
+    );
+    const bonComportement = totalAbsences <= 3 && totalRetards <= 3 && !negativeBehavior;
+
+    return {
+      eleve,
+      parcours,
+      statistiques: {
+        nombreClasses: parcours.length,
+        nombreBulletins: bulletins.length,
+        moyenneGenerale: validBulletins.length
+          ? Math.round((validBulletins.reduce((sum, bulletin) => sum + (bulletin.moyenne ?? 0), 0) / validBulletins.length) * 100) / 100
+          : null,
+        moyenneNotes: notesStats._avg.note ? Math.round(notesStats._avg.note * 100) / 100 : null,
+        nombreNotes: notesStats._count,
+        totalAbsences,
+        totalRetards,
+        evolution:
+          delta === null ? 'DONNEES_INSUFFISANTES' :
+          delta > 0.5 ? 'PROGRES' :
+          delta < -0.5 ? 'REGRESSION' :
+          'STABLE',
+        evolutionDelta: delta,
+        comportement: bonComportement ? 'BON_COMPORTEMENT' : 'A_SURVEILLER',
+        commentaireComportement: bonComportement
+          ? 'Eleve de bon comportement selon les absences, retards et appréciations disponibles.'
+          : 'Comportement à surveiller selon les absences, retards ou appréciations disponibles.',
+      },
+    };
   }
 
   async rapportPointages(tenantId: string | undefined, query: QueryParams) {
@@ -865,6 +1061,32 @@ export class LegacyCrudService {
     this.whatsappService.sendMessage(tenantId, telephone, message).catch(() => null);
   }
 
+  private async sendPersonnelCredentials(
+    tenantId: string | undefined,
+    utilisateurId: string,
+    tempPassword: string,
+  ): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { id: utilisateurId } });
+    if (!user) return;
+
+    const from = tenantId ? await this.resolveSchoolSender(tenantId) : undefined;
+    this.mailService.sendCompteCree(user.email, user.firstName, user.lastName, tempPassword, from);
+
+    const telephone = String(user.telephone ?? '').trim();
+    if (!tenantId || !telephone || !this.whatsappService.isReady(tenantId)) {
+      return;
+    }
+
+    const message = [
+      'NouraSchool - Accès personnel',
+      `Login: ${user.email}`,
+      `Mot de passe: ${tempPassword}`,
+      'À changer à la première connexion.',
+    ].join('\n');
+
+    this.whatsappService.sendMessage(tenantId, telephone, message).catch(() => null);
+  }
+
   private sanitizeEntity(model: string, entity: Payload): Payload {
     if (!entity || model !== 'user') return entity;
     const { passwordHash: _passwordHash, ...safeEntity } = entity;
@@ -1039,6 +1261,19 @@ export class LegacyCrudService {
   }
 
   private async normalizePersonnelData(tenantId: string, data: Payload): Promise<void> {
+    const fonction = String(data.specialite ?? data.fonction ?? data.type ?? '').trim();
+    const affectationType = String(data.affectationType ?? '').trim().toUpperCase();
+    const niveauId = data.niveauId ? this.assertUuid(data.niveauId, 'niveauId') : undefined;
+
+    if (['SURVEILLANT', 'SECRETAIRE_SURVEILLANT'].includes(affectationType)) {
+      if (!niveauId) throw new BadRequestException('niveauId est requis pour ce personnel');
+      const niveau = await this.prisma.niveau.findFirst({ where: { id: niveauId, tenantId } });
+      if (!niveau) throw new BadRequestException('Niveau introuvable');
+      data.__personnelNiveauId = niveauId;
+      data.__personnelAffectationType = affectationType;
+      data.__personnelAffectationOrdre = affectationType === 'SURVEILLANT' ? 1 : this.toPositiveInt(data.ordreHierarchique, 1);
+    }
+
     if ((!data.utilisateurId || !this.isUuidLike(String(data.utilisateurId))) && data.email) {
       const firstName = String(data.prenom ?? data.firstName ?? '').trim();
       const lastName = String(data.nom ?? data.lastName ?? '').trim();
@@ -1072,6 +1307,9 @@ export class LegacyCrudService {
           },
         });
         data.utilisateurId = createdUser.id;
+        if (this.shouldNotifyPersonnelCredentials(fonction)) {
+          data.__tempPasswordForNotification = generatedPassword;
+        }
       }
     }
 
@@ -1093,6 +1331,10 @@ export class LegacyCrudService {
     delete data.telephone;
     delete data.adresse;
     delete data.type;
+    delete data.fonction;
+    delete data.niveauId;
+    delete data.affectationType;
+    delete data.ordreHierarchique;
     delete data.specialite;
     delete data.cycleId;
     delete data.matieres;
@@ -1104,6 +1346,59 @@ export class LegacyCrudService {
     if (role === 'SURVEILLANT') return 'SURVEILLANT';
     if (role === 'CAISSIER') return 'CAISSIER';
     return 'RH';
+  }
+
+  private shouldNotifyPersonnelCredentials(value: string): boolean {
+    const normalized = value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z]+/g, '_');
+    return [
+      'SURVEILLANT',
+      'SECRETAIRE',
+      'SECRETAIRE_SURVEILLANT',
+      'BIBLIOTHECAIRE',
+      'COMPTABLE',
+    ].some((key) => normalized.includes(key));
+  }
+
+  private toPositiveInt(value: unknown, fallback: number): number {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1) return fallback;
+    return parsed;
+  }
+
+  private async createPersonnelNiveauAffectation(
+    tenantId: string,
+    personnelId: string,
+    niveauId: string,
+    type: string,
+    ordre: number,
+  ): Promise<void> {
+    if (type === 'SURVEILLANT') {
+      const existing = await this.prisma.personnelNiveauAffectation.findFirst({
+        where: { tenantId, niveauId, type: 'SURVEILLANT' },
+        include: { personnel: { include: { utilisateur: true } } },
+      });
+      if (existing) {
+        const user = existing.personnel.utilisateur;
+        throw new BadRequestException(`Ce niveau a déjà un surveillant: ${user.firstName} ${user.lastName}`);
+      }
+    }
+
+    if (type === 'SECRETAIRE_SURVEILLANT') {
+      const existingOrder = await this.prisma.personnelNiveauAffectation.findFirst({
+        where: { tenantId, niveauId, type, ordre },
+      });
+      if (existingOrder) {
+        throw new BadRequestException('Cet ordre hiérarchique est déjà utilisé pour ce niveau');
+      }
+    }
+
+    await this.prisma.personnelNiveauAffectation.create({
+      data: { tenantId, personnelId, niveauId, type, ordre },
+    });
   }
 
   private isUuidLike(value: string): boolean {

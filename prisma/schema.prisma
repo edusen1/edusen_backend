@@ -203,6 +203,7 @@ model Tenant {
   liensBulletin       LienBulletinParent[]
   liensPaiement       LienPaiementParent[]
   personnels          Personnel[]
+  personnelNiveauAffectations PersonnelNiveauAffectation[]
   pointages           Pointage[]
   absencesPersonnel   AbsencePersonnel[]
   notifications       Notification[]
@@ -404,6 +405,7 @@ model Niveau {
   updatedAt DateTime @updatedAt
 
   classes Classe[]
+  personnelAffectations PersonnelNiveauAffectation[]
 
   @@unique([tenantId, code])
 }
@@ -876,6 +878,25 @@ model Personnel {
 
   pointages         Pointage[]
   absencesPersonnel AbsencePersonnel[]
+  niveauAffectations PersonnelNiveauAffectation[]
+}
+
+model PersonnelNiveauAffectation {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @db.Uuid
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  personnelId String    @db.Uuid
+  personnel   Personnel @relation(fields: [personnelId], references: [id], onDelete: Cascade)
+  niveauId    String    @db.Uuid
+  niveau      Niveau    @relation(fields: [niveauId], references: [id])
+  type        String    @db.VarChar(40)
+  ordre       Int       @default(1)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([personnelId, niveauId, type])
+  @@unique([niveauId, type, ordre])
+  @@index([tenantId, niveauId, type])
 }
 
 model Pointage {
