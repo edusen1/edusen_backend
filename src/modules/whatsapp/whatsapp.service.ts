@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { join } from 'path';
-import { mkdirSync } from 'fs';
+import { mkdirSync, rmSync } from 'fs';
 import { PrismaService } from '@/config/prisma.service';
 import { PrismaRemoteAuthTenantStore } from './prisma-remote-auth-tenant.store';
 
@@ -50,7 +50,8 @@ export interface WhatsappQrResponse {
   expiresInSeconds: number;
 }
 
-const QR_TTL_SECONDS = 120;
+const QR_TTL_SECONDS = 18; // WhatsApp rotate le QR toutes les ~20s — ne pas servir un QR de plus de 18s
+const QR_WHATSAPP_EXPIRY_SECONDS = 20; // Durée de vie réelle d'un QR côté WhatsApp
 
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY_MS = 10_000;
@@ -178,6 +179,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       throw new ServiceUnavailableException('WhatsApp déjà connecté — déconnectez avant de rescanner');
     }
 
+    await this.resetTenantSessionForQr(tenantId);
     this.startClientIfNeeded(tenantId, true); // reconnexion manuelle — reset des tentatives
 
     // Attendre le QR (max 35s)
@@ -254,7 +256,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     // 1. Persister en outbox d'abord — message garanti même si WhatsApp est down
     let entry: { id: string } | null = null;
     try {
-      entry = await this.prisma.whatsappOutbox.create({
+      entry = await this.outbox.create({
         data: { tenantId, phone, message },
       });
     } catch (err) {
@@ -290,7 +292,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
 
   async getOutbox(tenantId: string): Promise<{ id: string; phone: string; message: string; attempts: number; lastError: string | null; createdAt: Date }[]> {
     await this.assertTenantExists(tenantId);
-    return this.prisma.whatsappOutbox.findMany({
+    return this.outbox.findMany({
       where: { tenantId },
       orderBy: { createdAt: 'asc' },
       select: { id: true, phone: true, message: true, attempts: true, lastError: true, createdAt: true },
@@ -325,6 +327,15 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     return this.states.get(tenantId)!;
   }
 
+  private get outbox(): {
+    create(args: unknown): Promise<{ id: string }>;
+    findMany(args: unknown): Promise<Array<{ id: string; phone: string; message: string; attempts: number; lastError: string | null; createdAt: Date }>>;
+    delete(args: unknown): Promise<unknown>;
+    update(args: unknown): Promise<unknown>;
+  } {
+    return (this.prisma as unknown as { whatsappOutbox: WhatsappService['outbox'] }).whatsappOutbox;
+  }
+
   private startClientIfNeeded(tenantId: string, resetAttempts = false): void {
     const state = this.getOrCreateState(tenantId);
     if (resetAttempts) state.reconnectAttempts = 0;
@@ -346,8 +357,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       process.env.PUPPETEER_EXECUTABLE_PATH ??
       this.config.get<string>('PUPPETEER_EXECUTABLE_PATH');
 
-    const basePath = this.config.get<string>('WHATSAPP_AUTH_DATA_PATH', join(process.cwd(), '.wwebjs_auth'));
-    const dataPath = join(basePath, tenantId);
+    const dataPath = this.getTenantDataPath(tenantId);
     mkdirSync(dataPath, { recursive: true });
 
     loadWWebDeps();
@@ -512,6 +522,44 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     }, delay);
   }
 
+  private async resetTenantSessionForQr(tenantId: string): Promise<void> {
+    const state = this.states.get(tenantId);
+    if (state?.reconnectTimer) {
+      clearTimeout(state.reconnectTimer);
+      state.reconnectTimer = null;
+    }
+    if (state?.client) {
+      try {
+        await state.client.destroy();
+      } catch {
+        // ignore
+      }
+    }
+    if (state) {
+      const waiters = state.qrWaiters.splice(0);
+      for (const resolve of waiters) resolve(null);
+    }
+    this.states.delete(tenantId);
+
+    await this.prisma.whatsappSession.updateMany({
+      where: { tenantId },
+      data: { sessionData: null, connected: false, phoneNumber: null, displayName: null, connectedAt: null },
+    });
+
+    try {
+      rmSync(this.getTenantDataPath(tenantId), { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+
+    this.logger.log(`Session WhatsApp réinitialisée avant génération QR (tenant=${tenantId})`);
+  }
+
+  private getTenantDataPath(tenantId: string): string {
+    const basePath = this.config.get<string>('WHATSAPP_AUTH_DATA_PATH', join(process.cwd(), '.wwebjs_auth'));
+    return join(basePath, tenantId);
+  }
+
   private waitForQr(tenantId: string, timeoutMs: number): Promise<string | null> {
     const state = this.getOrCreateState(tenantId);
     if (state.latestQr && state.qrGeneratedAt && Date.now() - state.qrGeneratedAt < QR_TTL_SECONDS * 1000) {
@@ -570,7 +618,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
 
     let pending: Array<{ id: string; phone: string; message: string }>;
     try {
-      pending = await this.prisma.whatsappOutbox.findMany({
+      pending = await this.outbox.findMany({
         where: { tenantId, attempts: { lt: MAX_OUTBOX_ATTEMPTS } },
         orderBy: { createdAt: 'asc' },
       });
@@ -602,11 +650,11 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     const chatId = this.normalizePhone(phone);
     try {
       await state.client.sendMessage(chatId, message);
-      await this.prisma.whatsappOutbox.delete({ where: { id: outboxId } }).catch(() => null);
+      await this.outbox.delete({ where: { id: outboxId } }).catch(() => null);
       this.logger.log(`Message envoyé + supprimé de l'outbox → ${chatId} (tenant=${tenantId})`);
     } catch (err) {
       const error = this.formatError(err);
-      await this.prisma.whatsappOutbox.update({
+      await this.outbox.update({
         where: { id: outboxId },
         data: { attempts: { increment: 1 }, lastAttemptAt: new Date(), lastError: error },
       }).catch(() => null);
