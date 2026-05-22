@@ -51,6 +51,8 @@ export interface WhatsappQrResponse {
 }
 
 const QR_TTL_SECONDS = 120;
+const QR_TTL_MS = QR_TTL_SECONDS * 1000;
+const QR_MAX_RETRIES_REACHED = 'Max qrcode retries reached';
 
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY_MS = 10_000;
@@ -71,6 +73,7 @@ interface TenantWaState {
   connectedAt: Date | null;
   lastError: string | null;
   qrWaiters: Array<(qr: string | null) => void>;
+  qrRequestExpiresAt: number | null;
 }
 
 const OUTBOX_FLUSH_INTERVAL_MS = 2 * 60 * 1000; // flush périodique toutes les 2 minutes
@@ -178,7 +181,16 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       throw new ServiceUnavailableException('WhatsApp déjà connecté — déconnectez avant de rescanner');
     }
 
+    if (state.latestQr && state.qrGeneratedAt && Date.now() - state.qrGeneratedAt < QR_TTL_MS) {
+      loadWWebDeps();
+      const ageMs = Date.now() - state.qrGeneratedAt;
+      const dataUrl: string = await QRCodeLib.toDataURL(state.latestQr, { width: 300, margin: 1 });
+      return { qrCode: dataUrl, expiresInSeconds: Math.max(1, Math.ceil((QR_TTL_MS - ageMs) / 1000)) };
+    }
+
     await this.resetTenantSessionForQr(tenantId);
+    const qrState = this.getOrCreateState(tenantId);
+    qrState.qrRequestExpiresAt = Date.now() + QR_TTL_MS;
     this.startClientIfNeeded(tenantId, true); // reconnexion manuelle — reset des tentatives
 
     // Attendre le QR (max 35s)
@@ -321,6 +333,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
         connectedAt: null,
         lastError: null,
         qrWaiters: [],
+        qrRequestExpiresAt: null,
       });
     }
     return this.states.get(tenantId)!;
@@ -365,7 +378,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
 
     const client = new WWebClient({
       authTimeoutMs: 90_000,
-      qrMaxRetries: 6,
+      qrMaxRetries: 1,
       takeoverOnConflict: true,
       takeoverTimeoutMs: 5_000,
       userAgent:
@@ -396,8 +409,17 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     state.client = client;
 
     client.on('qr', (qr: string) => {
+      const now = Date.now();
+      if (!state.qrRequestExpiresAt || now > state.qrRequestExpiresAt) {
+        this.logger.warn(`QR ignoré hors demande manuelle (tenant=${tenantId})`);
+        return;
+      }
+      if (state.latestQr && state.qrGeneratedAt && now - state.qrGeneratedAt < QR_TTL_MS) {
+        this.logger.warn(`QR renouvelé ignoré: QR déjà affiché (tenant=${tenantId})`);
+        return;
+      }
       state.latestQr = qr;
-      state.qrGeneratedAt = Date.now();
+      state.qrGeneratedAt = now;
       state.ready = false;
       state.lastError = null;
       // Résoudre les waiters
@@ -410,6 +432,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       state.ready = true;
       state.latestQr = null;
       state.qrGeneratedAt = null;
+      state.qrRequestExpiresAt = null;
       state.lastError = null;
       state.reconnectAttempts = 0;
       const waiters = state.qrWaiters.splice(0);
@@ -445,6 +468,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     client.on('authenticated', () => {
       state.latestQr = null;
       state.qrGeneratedAt = null;
+      state.qrRequestExpiresAt = null;
       state.lastError = null;
       this.logger.log(`WhatsApp authentifié (tenant=${tenantId})`);
     });
@@ -465,6 +489,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       state.ready = false;
       state.latestQr = null;
       state.qrGeneratedAt = null;
+      state.qrRequestExpiresAt = null;
       state.lastError = msg || 'Échec authentification WhatsApp';
       this.logger.error(`Auth failure (tenant=${tenantId}): ${state.lastError}`);
       void this.prisma.whatsappSession.updateMany({
@@ -476,16 +501,26 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
 
     client.on('disconnected', (reason: string) => {
       state.ready = false;
-      state.latestQr = null;
-      state.qrGeneratedAt = null;
+      const isQrRetryLimit = String(reason || '').includes(QR_MAX_RETRIES_REACHED);
+      if (!isQrRetryLimit) {
+        state.latestQr = null;
+        state.qrGeneratedAt = null;
+        state.qrRequestExpiresAt = null;
+      }
       state.phoneNumber = null;
       state.displayName = null;
-      state.lastError = reason ? `Déconnecté: ${reason}` : null;
+      state.lastError = isQrRetryLimit
+        ? 'QR expiré. Cliquez sur Générer le QR code pour en créer un nouveau.'
+        : reason ? `Déconnecté: ${reason}` : null;
       this.logger.warn(`Déconnecté (tenant=${tenantId}): ${reason}`);
       void this.prisma.whatsappSession.updateMany({
         where: { tenantId },
         data: { connected: false },
       }).catch(() => null);
+      if (isQrRetryLimit) {
+        state.initializing = false;
+        return;
+      }
       this.scheduleReconnect(tenantId);
     });
 
@@ -561,7 +596,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
 
   private waitForQr(tenantId: string, timeoutMs: number): Promise<string | null> {
     const state = this.getOrCreateState(tenantId);
-    if (state.latestQr && state.qrGeneratedAt && Date.now() - state.qrGeneratedAt < QR_TTL_SECONDS * 1000) {
+    if (state.latestQr && state.qrGeneratedAt && Date.now() - state.qrGeneratedAt < QR_TTL_MS) {
       return Promise.resolve(state.latestQr);
     }
     state.latestQr = null;
