@@ -35,7 +35,7 @@ async function upsertById(modelName, where, createData, updateData) {
   }
   return prisma[modelName].create({ data: createData });
 }
-
+//a
 async function main() {
   const tenant = await prisma.tenant.findFirst({ where: { slug: TENANT_SLUG } });
   if (!tenant) throw new Error(`Tenant "${TENANT_SLUG}" introuvable`);
