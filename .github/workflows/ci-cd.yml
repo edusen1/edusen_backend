@@ -112,12 +112,10 @@ jobs:
       - name: Trigger deployment
         env:
           WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
-          WEBHOOK_TOKEN: ${{ secrets.WEBHOOK_TOKEN }}
         run: |
           if [ -z "$WEBHOOK_URL" ]; then
             echo "WEBHOOK_URL not configured — skipping deploy trigger."
             exit 0
           fi
           curl --fail --request POST "$WEBHOOK_URL" \
-            --header "Authorization: Bearer $WEBHOOK_TOKEN" \
             --header "Content-Type: application/json"
