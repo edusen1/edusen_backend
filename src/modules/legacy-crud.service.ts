@@ -580,7 +580,7 @@ export class LegacyCrudService {
     });
     if (!eleve) throw new NotFoundException('Eleve introuvable');
 
-    const [inscriptions, bulletins, absences, notesStats] = await Promise.all([
+    const [inscriptions, bulletins, absences, allNotes] = await Promise.all([
       this.prisma.inscription.findMany({
         where: { tenantId, eleveId },
         include: {
@@ -613,10 +613,10 @@ export class LegacyCrudService {
         where: { tenantId, eleveId },
         select: { classeId: true, typeAbsence: true, justifiee: true, statut: true },
       }),
-      this.prisma.note.aggregate({
+      this.prisma.note.findMany({
         where: { tenantId, eleveId },
-        _avg: { note: true },
-        _count: true,
+        include: { matiere: true },
+        orderBy: [{ anneeScolaire: 'asc' }, { trimestre: 'asc' }, { matiere: { libelle: 'asc' } }, { dateEvaluation: 'asc' }],
       }),
     ]);
 
@@ -637,6 +637,73 @@ export class LegacyCrudService {
       absencesByClasse.set(absence.classeId, stats);
     }
 
+    const classeIds = [...new Set(inscriptions.map((i) => i.classeId))];
+    const allCours = await this.prisma.cours.findMany({
+      where: { tenantId, classeId: { in: classeIds } },
+      include: {
+        matiere: true,
+        enseignant: { select: { id: true, firstName: true, lastName: true } },
+      },
+    });
+    const coursByClasse = new Map<string, typeof allCours>();
+    for (const cours of allCours) {
+      const list = coursByClasse.get(cours.classeId) ?? [];
+      list.push(cours);
+      coursByClasse.set(cours.classeId, list);
+    }
+
+    const notesByAnnee = new Map<string, typeof allNotes>();
+    for (const note of allNotes) {
+      const list = notesByAnnee.get(note.anneeScolaire) ?? [];
+      list.push(note);
+      notesByAnnee.set(note.anneeScolaire, list);
+    }
+    const PERIOD_LABELS: Record<string, string> = { SEMESTRE_1: '1er Semestre', SEMESTRE_2: '2ème Semestre', SEMESTRE_3: '3ème Semestre' };
+    const buildPeriodes = (annee: string, cycleCode: string, classeId: string) => {
+      const yearNotes = notesByAnnee.get(annee) ?? [];
+      if (!yearNotes.length) return [];
+      const upper = cycleCode.toUpperCase();
+      const periods = ['MATERNELLE', 'PRIMAIRE', 'CRECHE'].includes(upper) ? ['SEMESTRE_1', 'SEMESTRE_2', 'SEMESTRE_3'] : ['SEMESTRE_1', 'SEMESTRE_2'];
+      const noteScale = ['MATERNELLE', 'PRIMAIRE', 'COLLEGE', 'CRECHE'].includes(upper) ? 10 : 20;
+      const subjects = new Map<string, { matiereId: string; libelle: string; code: string; coefficient: number; enseignant: string | null }>();
+      const coursForClasse = coursByClasse.get(classeId) ?? [];
+      for (const cours of coursForClasse) {
+        subjects.set(cours.matiereId, {
+          matiereId: cours.matiereId, libelle: cours.matiere.libelle, code: cours.matiere.code,
+          coefficient: cours.coefficient ?? 1,
+          enseignant: cours.enseignant ? `${cours.enseignant.firstName ?? ''} ${cours.enseignant.lastName ?? ''}`.trim() : null,
+        });
+      }
+      for (const note of yearNotes) {
+        if (!subjects.has(note.matiereId)) subjects.set(note.matiereId, { matiereId: note.matiereId, libelle: note.matiere.libelle, code: note.matiere.code, coefficient: 1, enseignant: null });
+      }
+      const norm = (n: any) => Number((((n.note ?? 0) / (n.noteSur || noteScale)) * noteScale).toFixed(2));
+      const avg = (values: number[]) => values.length ? Number((values.reduce((s, v) => s + v, 0) / values.length).toFixed(2)) : null;
+      const wAvg = (rows: { moyenne: number | null; coefficient: number }[]) => {
+        const valid = rows.filter((r) => r.moyenne !== null);
+        const tc = valid.reduce((s, r) => s + r.coefficient, 0);
+        return valid.length && tc > 0 ? Number((valid.reduce((s, r) => s + Number(r.moyenne) * r.coefficient, 0) / tc).toFixed(2)) : null;
+      };
+      const periodesData = periods.map((periode) => {
+        const matieres = [...subjects.values()].map((subject) => {
+          const sn = yearNotes.filter((n) => n.trimestre === periode && n.matiereId === subject.matiereId);
+          const devoirs = sn.filter((n) => n.typeEvaluation !== 'COMPOSITION').map(norm);
+          const comps = sn.filter((n) => n.typeEvaluation === 'COMPOSITION').map(norm);
+          const moyenneDevoirs = avg(devoirs);
+          const compAvg = avg(comps);
+          const moyenne = moyenneDevoirs !== null && compAvg !== null ? Number(((moyenneDevoirs + compAvg) / 2).toFixed(2)) : avg(sn.map(norm));
+          return {
+            matiereId: subject.matiereId, libelle: subject.libelle, code: subject.code, coefficient: subject.coefficient, enseignant: subject.enseignant,
+            devoirs: sn.filter((n) => n.typeEvaluation !== 'COMPOSITION').map((n) => ({ id: n.id, type: n.typeEvaluation, note: norm(n), noteSur: noteScale, dateEvaluation: n.dateEvaluation?.toISOString() ?? null })),
+            composition: sn.filter((n) => n.typeEvaluation === 'COMPOSITION').map((n) => ({ id: n.id, note: norm(n), noteSur: noteScale, dateEvaluation: n.dateEvaluation?.toISOString() ?? null })),
+            moyenneDevoirs, moyenne,
+          };
+        });
+        return { code: periode, label: PERIOD_LABELS[periode] ?? periode, moyenne: wAvg(matieres.map((m) => ({ moyenne: m.moyenne, coefficient: m.coefficient }))), matieres };
+      });
+      return periodesData.filter((p) => p.matieres.some((m) => m.devoirs.length > 0 || m.composition.length > 0));
+    };
+
     const parcours = inscriptions.map((inscription) => {
       const annee = inscription.anneeAcademique.libelle;
       const classeBulletins = bulletinsByKey.get(`${inscription.classeId}:${annee}`) ?? [];
@@ -653,6 +720,8 @@ export class LegacyCrudService {
         classe: inscription.classe,
         absences: absencesByClasse.get(inscription.classeId) ?? { absences: 0, retards: 0, justifiees: 0 },
         moyenneClasse,
+        periodes: buildPeriodes(annee, inscription.classe.niveau?.cycle?.code ?? '', inscription.classeId),
+        bareme: ['MATERNELLE', 'PRIMAIRE', 'COLLEGE', 'CRECHE'].includes((inscription.classe.niveau?.cycle?.code ?? '').toUpperCase()) ? 10 : 20,
         bulletins: classeBulletins.map((bulletin) => ({
           id: bulletin.id,
           trimestre: bulletin.trimestre,
@@ -693,8 +762,8 @@ export class LegacyCrudService {
         moyenneGenerale: validBulletins.length
           ? Math.round((validBulletins.reduce((sum, bulletin) => sum + (bulletin.moyenne ?? 0), 0) / validBulletins.length) * 100) / 100
           : null,
-        moyenneNotes: notesStats._avg.note ? Math.round(notesStats._avg.note * 100) / 100 : null,
-        nombreNotes: notesStats._count,
+        moyenneNotes: allNotes.length ? Math.round((allNotes.reduce((s, n) => s + (n.note ?? 0), 0) / allNotes.length) * 100) / 100 : null,
+        nombreNotes: allNotes.length,
         totalAbsences,
         totalRetards,
         evolution:

@@ -507,8 +507,15 @@ export class ClasseService {
   // ----------------------------------------------------------------
 
   async addStagiaire(tenantId: string, classeId: string, stagiaireId: string) {
-    const classe = await this.prisma.classe.findFirst({ where: { id: classeId, tenantId } });
+    const classe = await this.prisma.classe.findFirst({
+      where: { id: classeId, tenantId },
+      include: { niveau: { include: { cycle: true } } },
+    });
     if (!classe) throw new NotFoundException('Classe introuvable');
+    const cycleCode = ((classe as any).niveau?.cycle?.code ?? '').toUpperCase();
+    if (!['MATERNELLE', 'PRIMAIRE', 'CRECHE'].includes(cycleCode)) {
+      throw new ConflictException('Les stagiaires ne sont disponibles que pour les classes Crèche / Maternelle / Primaire');
+    }
 
     const stagiaire = await this.prisma.user.findFirst({
       where: { id: stagiaireId, tenantId, role: 'ENSEIGNANT' },
