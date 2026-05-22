@@ -120,9 +120,21 @@ jobs:
           fi
           if [ -n "$COOLIFY_TOKEN" ]; then
             echo "Triggering Coolify deployment with bearer token..."
-            curl --fail --request POST "$COOLIFY_WEBHOOK" \
+            status=$(curl --silent --show-error --output /tmp/coolify-response.txt --write-out "%{http_code}" \
+              --request POST "$COOLIFY_WEBHOOK" \
               --header "Authorization: Bearer $COOLIFY_TOKEN" \
-              --header "Content-Type: application/json"
+              --header "Content-Type: application/json")
+            if [ "$status" = "403" ]; then
+              echo "Coolify returned 403 with bearer token; retrying as signed webhook URL..."
+              status=$(curl --silent --show-error --output /tmp/coolify-response.txt --write-out "%{http_code}" \
+                --request POST "$COOLIFY_WEBHOOK" \
+                --header "Content-Type: application/json")
+            fi
+            cat /tmp/coolify-response.txt || true
+            if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+              echo "Coolify deployment trigger failed with HTTP $status"
+              exit 1
+            fi
           else
             echo "Triggering Coolify deployment with webhook URL..."
             curl --fail --request POST "$COOLIFY_WEBHOOK" \
