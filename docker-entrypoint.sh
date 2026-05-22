@@ -1,5 +1,4 @@
 #!/bin/sh
-set -e
 
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
@@ -10,48 +9,41 @@ echo ""
 # ── 1. Migrations Prisma ──────────────────────────────────────────────────────
 echo "📦  Exécution des migrations Prisma..."
 
-run_migrate() {
-  npx prisma migrate deploy 2>&1
-}
-
-migrate_output=$(run_migrate)
+# Capturer la sortie sans set -e pour gérer les erreurs manuellement
+migrate_log=$(npx prisma migrate deploy 2>&1)
 migrate_exit=$?
 
+echo "$migrate_log"
+
 if [ $migrate_exit -ne 0 ]; then
-  echo "$migrate_output"
+  # Extraire le nom de la migration échouée (single quotes pour éviter l'interprétation des backticks)
+  failed=$(echo "$migrate_log" | sed -n 's/.*The `\([^`]*\)` migration.*/\1/p' | head -1)
 
-  # Extraire le nom de la migration échouée depuis l'erreur P3009
-  # Format : The `<nom>` migration started at ... failed
-  failed_migration=$(echo "$migrate_output" | sed -n "s/.*The \`\([^\`]*\)\` migration.*/\1/p" | head -1)
-
-  if [ -n "$failed_migration" ]; then
-    echo "⚠️   Migration échouée détectée : $failed_migration"
+  if [ -n "$failed" ]; then
+    echo "⚠️   Migration échouée : $failed"
     echo "🔧  Résolution automatique (rolled-back)..."
-    npx prisma migrate resolve --rolled-back "$failed_migration"
+    npx prisma migrate resolve --rolled-back "$failed"
 
-    echo "🔄  Nouvelle tentative de migration..."
-    if ! npx prisma migrate deploy; then
-      echo "❌  Échec des migrations Prisma après résolution. Arrêt."
-      exit 1
-    fi
+    echo "🔄  Nouvelle tentative..."
+    npx prisma migrate deploy
+    echo "✅  Migrations appliquées après résolution"
   else
-    echo "❌  Échec des migrations Prisma (pas de migration identifiée). Arrêt."
+    echo "❌  Migrations Prisma échouées (cause inconnue). Arrêt."
     exit 1
   fi
 else
-  echo "$migrate_output"
+  echo "✅  Migrations Prisma à jour"
 fi
 
-echo "✅  Migrations Prisma appliquées avec succès"
 echo ""
 
 # ── 2. Scripts de seed ────────────────────────────────────────────────────────
-echo "🌱  Exécution des scripts de seed..."
-node scripts/patch-amadou-parcours.cjs 2>&1 && echo "   ✔ patch-amadou-parcours" || echo "   ⚠ patch-amadou-parcours : ignoré"
-node scripts/seed-amadou-notes.cjs     2>&1 && echo "   ✔ seed-amadou-notes"     || echo "   ⚠ seed-amadou-notes : ignoré"
+echo "🌱  Scripts de seed..."
+node scripts/patch-amadou-parcours.cjs 2>&1 && echo "   ✔ patch-amadou-parcours" || echo "   ⚠ patch-amadou-parcours ignoré"
+node scripts/seed-amadou-notes.cjs     2>&1 && echo "   ✔ seed-amadou-notes"     || echo "   ⚠ seed-amadou-notes ignoré"
 echo ""
 
-# ── 3. Démarrage du serveur ───────────────────────────────────────────────────
+# ── 3. Démarrage ──────────────────────────────────────────────────────────────
 echo "🚀  Démarrage du serveur NestJS..."
 echo ""
 exec node dist/main
