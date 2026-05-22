@@ -755,8 +755,10 @@ async function main() {
     { role: 'ENSEIGNANT', prenom: 'Adja', nom: 'Sarr', telephone: '+221781000042', email: 'adja.sarr@demo.noura.sn', username: 'adja.sarr', specialite: 'Francais', dateEmbauche: new Date('2024-10-01') },
     { role: 'ELEVE', prenom: 'Amadou', nom: 'Kane', telephone: '+221781000051', email: 'amadou.kane@demo.noura.sn', username: 'amadou.kane', matricule: 'ELV-2025-0001', dateNaissance: new Date('2014-02-18'), genre: 'M', numeroUrgence: '+221771111111', dateInscription: new Date('2025-10-05'), classeId: classeCIA.id },
     { role: 'ELEVE', prenom: 'Awa', nom: 'Diallo', telephone: '+221781000052', email: 'awa.diallo@demo.noura.sn', username: 'awa.diallo', matricule: 'ELV-2025-0002', dateNaissance: new Date('2014-06-09'), genre: 'F', numeroUrgence: '+221772222222', dateInscription: new Date('2025-10-05'), classeId: classeCIA.id },
+    { role: 'ELEVE', prenom: 'amadou', nom: 'Ba', telephone: '+221781000053', email: 'baamadou@gmail.com', username: 'amadou.ba', matricule: null, dateNaissance: new Date('2014-05-20'), genre: 'M', numeroUrgence: '+221773333333', dateInscription: new Date('2025-10-05'), classeId: classeCIA.id },
     { role: 'PARENT', prenom: 'Mamadou', nom: 'Ndiaye', telephone: '+221781000061', email: 'mamadou.ndiaye@demo.noura.sn', username: 'mamadou.ndiaye', profession: 'Commercant', lieuTravail: 'Sandaga', telephoneTravail: '+221338888888', lienParente: 'PERE' },
     { role: 'PARENT', prenom: 'Aminata', nom: 'Ba', telephone: '+221781000062', email: 'aminata.ba@demo.noura.sn', username: 'aminata.ba', profession: 'Assistante de direction', lieuTravail: 'Plateau', telephoneTravail: '+221338777777', lienParente: 'MERE' },
+    { role: 'PARENT', prenom: 'Ibrahima', nom: 'Ba', telephone: '+221781000064', email: 'ibrahima.ba@demo.noura.sn', username: 'ibrahima.ba', profession: 'Fonctionnaire', lieuTravail: 'Dakar', telephoneTravail: '+221338600000', lienParente: 'PERE' },
     { role: 'RH', prenom: 'Boubacar', nom: 'Sy', telephone: '+221781000071', email: 'boubacar.sy@demo.noura.sn', username: 'boubacar.sy' },
     { role: 'RH', prenom: 'Khadim', nom: 'Thiam', telephone: '+221781000072', email: 'khadim.thiam@demo.noura.sn', username: 'khadim.thiam' },
   ];
@@ -779,8 +781,10 @@ async function main() {
   const surveillantPape = recordsByEmail.get('pape.gaye@demo.noura.sn');
   const eleveAmadou = recordsByEmail.get('amadou.kane@demo.noura.sn');
   const eleveAwa = recordsByEmail.get('awa.diallo@demo.noura.sn');
+  const eleveAmadouBa = recordsByEmail.get('baamadou@gmail.com');
   const parentMamadou = recordsByEmail.get('mamadou.ndiaye@demo.noura.sn');
   const parentAminata = recordsByEmail.get('aminata.ba@demo.noura.sn');
+  const parentIbrahimaBa = recordsByEmail.get('ibrahima.ba@demo.noura.sn');
 
   if (teacherOusmane) {
     await prisma.classe.update({
@@ -990,6 +994,99 @@ async function main() {
     await syncEleveParent(eleveAwa.id, parentAminata.id, tenant.id);
   }
 
+  // Seed: amadou Ba — historical parcours + current inscription + notes + parent link
+  if (eleveAmadouBa) {
+    // Historical school years + classes (parcours complet CI → CP → CE1 → CE2 → CM1 → CM2 → 6ème)
+    const historicalYears = [
+      { libelle: '2019-2020', debut: new Date('2019-10-01'), fin: new Date('2020-07-31'), niveauCode: 'PS', classeNom: 'Petite Section A' },
+      { libelle: '2020-2021', debut: new Date('2020-10-01'), fin: new Date('2021-07-31'), niveauCode: 'MS', classeNom: 'Moyenne Section A' },
+      { libelle: '2021-2022', debut: new Date('2021-10-01'), fin: new Date('2022-07-31'), niveauCode: 'GS', classeNom: 'Grande Section A' },
+      { libelle: '2022-2023', debut: new Date('2022-10-01'), fin: new Date('2023-07-31'), niveauCode: 'CI', classeNom: 'CI A (2022-2023)' },
+      { libelle: '2023-2024', debut: new Date('2023-10-01'), fin: new Date('2024-07-31'), niveauCode: 'CP', classeNom: 'CP A (2023-2024)' },
+      { libelle: '2024-2025', debut: new Date('2024-10-01'), fin: new Date('2025-07-31'), niveauCode: 'CE1', classeNom: 'CE1 A (2024-2025)' },
+    ];
+
+    for (let i = 0; i < historicalYears.length; i += 1) {
+      const yr = historicalYears[i];
+      const pastYear = await upsertById(
+        'anneeAcademique',
+        { tenantId: tenant.id, libelle: yr.libelle },
+        { tenantId: tenant.id, libelle: yr.libelle, dateDebut: yr.debut, dateFin: yr.fin, estCourante: false, actif: false },
+        { dateDebut: yr.debut, dateFin: yr.fin, estCourante: false, actif: false },
+      );
+
+      const niveauPast = await prisma.niveau.findFirst({ where: { tenantId: tenant.id, code: yr.niveauCode } });
+      if (!niveauPast) continue;
+
+      const classePast = await upsertById(
+        'classe',
+        { tenantId: tenant.id, nom: yr.classeNom, anneeAcademiqueId: pastYear.id },
+        { tenantId: tenant.id, nom: yr.classeNom, niveauId: niveauPast.id, anneeAcademiqueId: pastYear.id, effectifMax: 30, actif: false },
+        { niveauId: niveauPast.id, effectifMax: 30, actif: false },
+      );
+
+      await upsertById(
+        'inscription',
+        { numeroInscription: `INS-${yr.libelle}-AMADOU` },
+        {
+          tenantId: tenant.id,
+          numeroInscription: `INS-${yr.libelle}-AMADOU`,
+          eleveId: eleveAmadouBa.id,
+          classeId: classePast.id,
+          anneeAcademiqueId: pastYear.id,
+          statut: 'TERMINE',
+          creePar: adminKhady.id,
+        },
+        {
+          tenantId: tenant.id,
+          eleveId: eleveAmadouBa.id,
+          classeId: classePast.id,
+          anneeAcademiqueId: pastYear.id,
+          statut: 'TERMINE',
+          creePar: adminKhady.id,
+        },
+      );
+    }
+
+    // Current year inscription in CI A (2025-2026)
+    await upsertById(
+      'inscription',
+      { numeroInscription: `INS-${SCHOOL_YEAR}-0003` },
+      {
+        tenantId: tenant.id,
+        numeroInscription: `INS-${SCHOOL_YEAR}-0003`,
+        eleveId: eleveAmadouBa.id,
+        classeId: classeCIA.id,
+        anneeAcademiqueId: schoolYear.id,
+        statut: 'ACTIF',
+        creePar: adminKhady.id,
+      },
+      {
+        tenantId: tenant.id,
+        eleveId: eleveAmadouBa.id,
+        classeId: classeCIA.id,
+        anneeAcademiqueId: schoolYear.id,
+        statut: 'ACTIF',
+        creePar: adminKhady.id,
+      },
+    );
+
+    // 18 notes (current year) averaging 15.5/20
+    // Maths: 15, 16, 16 per trimestre; Français: 15, 15, 16 per trimestre → 279/18 = 15.5
+    for (const period of ['SEMESTRE_1', 'SEMESTRE_2', 'SEMESTRE_3']) {
+      await upsertNote(tenant.id, eleveAmadouBa.id, matiereMaths.id, period, 'DEVOIR', 'Devoir 1', 15, 20);
+      await upsertNote(tenant.id, eleveAmadouBa.id, matiereMaths.id, period, 'DEVOIR', 'Devoir 2', 16, 20);
+      await upsertNote(tenant.id, eleveAmadouBa.id, matiereMaths.id, period, 'COMPOSITION', 'Composition', 16, 20);
+      await upsertNote(tenant.id, eleveAmadouBa.id, matiereFrancais.id, period, 'DEVOIR', 'Devoir 1', 15, 20);
+      await upsertNote(tenant.id, eleveAmadouBa.id, matiereFrancais.id, period, 'DEVOIR', 'Devoir 2', 15, 20);
+      await upsertNote(tenant.id, eleveAmadouBa.id, matiereFrancais.id, period, 'COMPOSITION', 'Composition', 16, 20);
+    }
+  }
+
+  if (eleveAmadouBa && parentIbrahimaBa) {
+    await syncEleveParent(eleveAmadouBa.id, parentIbrahimaBa.id, tenant.id);
+  }
+
   const calendrierEvents = await seedCalendrierScolaire(tenant.id);
 
   console.log(`Tenant: ${tenant.nom} (${tenant.slug})`);
@@ -1020,6 +1117,9 @@ async function main() {
   console.log(`- Matieres: ${matiereFrancais.libelle}, ${matiereMaths.libelle}, ${matiereLecture.libelle}`);
   console.log(`- Courses: ${coursMaths.id}, ${coursFrancais.id}`);
   console.log(`- Calendrier scolaire: ${calendrierEvents.length} événements`);
+  if (eleveAmadouBa) {
+    console.log(`- Eleve amadou Ba: ID=${eleveAmadouBa.id} | email=baamadou@gmail.com | classe=CI A | 18 notes (moy=15.5)`);
+  };
 }
 
 main()

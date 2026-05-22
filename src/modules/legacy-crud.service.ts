@@ -140,6 +140,11 @@ export class LegacyCrudService {
           role: true,
           actif: true,
           specialite: true,
+          surveillantCycles: {
+            select: {
+              cycle: { select: { id: true, code: true, libelle: true } },
+            },
+          },
         },
       },
       niveauAffectations: {
@@ -206,6 +211,11 @@ export class LegacyCrudService {
           role: true,
           actif: true,
           specialite: true,
+          surveillantCycles: {
+            select: {
+              cycle: { select: { id: true, code: true, libelle: true } },
+            },
+          },
         },
       },
       niveauAffectations: {
@@ -245,10 +255,12 @@ export class LegacyCrudService {
       ? data.__tempPasswordForNotification
       : null;
     const personnelNiveauId = typeof data.__personnelNiveauId === 'string' ? data.__personnelNiveauId : null;
+    const personnelSectionId = typeof data.__personnelSectionId === 'string' ? data.__personnelSectionId : null;
     const personnelAffectationType = typeof data.__personnelAffectationType === 'string' ? data.__personnelAffectationType : null;
     const personnelAffectationOrdre = typeof data.__personnelAffectationOrdre === 'number' ? data.__personnelAffectationOrdre : 1;
     delete data.__tempPasswordForNotification;
     delete data.__personnelNiveauId;
+    delete data.__personnelSectionId;
     delete data.__personnelAffectationType;
     delete data.__personnelAffectationOrdre;
     const created = await this.delegate(config.model).create({ data });
@@ -292,14 +304,12 @@ export class LegacyCrudService {
     }
 
     if (config.model === 'personnel') {
-      if (personnelNiveauId && personnelAffectationType) {
-        await this.createPersonnelNiveauAffectation(
-          tenantId ?? String(data.tenantId ?? ''),
-          String(created.id),
-          personnelNiveauId,
-          personnelAffectationType,
-          personnelAffectationOrdre,
-        );
+      if (personnelSectionId && (personnelAffectationType === 'SURVEILLANT' || personnelAffectationType === 'SECRETAIRE_SURVEILLANT')) {
+        await this.prisma.surveillantCycle.upsert({
+          where: { surveillantId_cycleId: { surveillantId: String(created.utilisateurId), cycleId: personnelSectionId } },
+          create: { tenantId: tenantId ?? String(data.tenantId ?? ''), surveillantId: String(created.utilisateurId), cycleId: personnelSectionId },
+          update: {},
+        });
       }
 
       if (tempPassword) {
@@ -317,6 +327,11 @@ export class LegacyCrudService {
       : undefined;
 
     const data = await this.prepareData(config, tenantId, body, false);
+    delete data.__tempPasswordForNotification;
+    delete data.__personnelNiveauId;
+    delete data.__personnelSectionId;
+    delete data.__personnelAffectationType;
+    delete data.__personnelAffectationOrdre;
     const updated = await this.delegate(config.model).update({ where: { id }, data });
 
     if (config.model === 'inscription') {
@@ -1028,7 +1043,7 @@ export class LegacyCrudService {
     }
 
     if (config.model === 'personnel') {
-      await this.normalizePersonnelData(tenantId ?? String(data.tenantId ?? ''), data);
+      await this.normalizePersonnelData(tenantId ?? String(data.tenantId ?? ''), data, create);
     }
 
     this.validateModelUuids(config.model, data);
@@ -1260,18 +1275,18 @@ export class LegacyCrudService {
     delete data.type;
   }
 
-  private async normalizePersonnelData(tenantId: string, data: Payload): Promise<void> {
+  private async normalizePersonnelData(tenantId: string, data: Payload, create = false): Promise<void> {
     const fonction = String(data.specialite ?? data.fonction ?? data.type ?? '').trim();
     const affectationType = String(data.affectationType ?? '').trim().toUpperCase();
     const niveauId = data.niveauId ? this.assertUuid(data.niveauId, 'niveauId') : undefined;
+    const sectionId = data.sectionId ? this.assertUuid(data.sectionId, 'sectionId') : undefined;
 
-    if (['SURVEILLANT', 'SECRETAIRE_SURVEILLANT'].includes(affectationType)) {
-      if (!niveauId) throw new BadRequestException('niveauId est requis pour ce personnel');
-      const niveau = await this.prisma.niveau.findFirst({ where: { id: niveauId, tenantId } });
-      if (!niveau) throw new BadRequestException('Niveau introuvable');
-      data.__personnelNiveauId = niveauId;
+    if (affectationType === 'SURVEILLANT' || affectationType === 'SECRETAIRE_SURVEILLANT') {
+      if (!sectionId) throw new BadRequestException('sectionId est requis pour ce personnel');
+      const section = await this.prisma.cycle.findFirst({ where: { id: sectionId, tenantId } });
+      if (!section) throw new BadRequestException('Section introuvable');
+      data.__personnelSectionId = sectionId;
       data.__personnelAffectationType = affectationType;
-      data.__personnelAffectationOrdre = affectationType === 'SURVEILLANT' ? 1 : this.toPositiveInt(data.ordreHierarchique, 1);
     }
 
     if ((!data.utilisateurId || !this.isUuidLike(String(data.utilisateurId))) && data.email) {
@@ -1313,16 +1328,28 @@ export class LegacyCrudService {
       }
     }
 
+    if (create && !data.numeroMatricule) {
+      const year = new Date().getFullYear();
+      const count = await this.prisma.personnel.count({ where: { tenantId } });
+      data.numeroMatricule = `PERS-${year}-${String(count + 1).padStart(4, '0')}`;
+    }
+
+    if (data.dureeMois !== undefined) {
+      const dureeMois = Number(data.dureeMois);
+      if (!Number.isNaN(dureeMois) && dureeMois > 0) {
+        const debut = data.dateEmbauche ? new Date(data.dateEmbauche as string | Date) : new Date();
+        debut.setMonth(debut.getMonth() + dureeMois);
+        data.dateFinContrat = debut;
+      }
+      delete data.dureeMois;
+    }
+
     if (data.salaire !== undefined) {
       const salaire = Number(data.salaire);
       data.salaire = Number.isNaN(salaire) ? undefined : salaire;
     }
 
-    if (data.soldeConge !== undefined) {
-      const soldeConge = Number(data.soldeConge);
-      data.soldeConge = Number.isNaN(soldeConge) ? 0 : soldeConge;
-    }
-
+    delete data.soldeConge;
     delete data.prenom;
     delete data.nom;
     delete data.firstName;
@@ -1333,6 +1360,7 @@ export class LegacyCrudService {
     delete data.type;
     delete data.fonction;
     delete data.niveauId;
+    delete data.sectionId;
     delete data.affectationType;
     delete data.ordreHierarchique;
     delete data.specialite;

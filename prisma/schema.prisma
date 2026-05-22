@@ -871,6 +871,8 @@ model Personnel {
   numeroMatricule String?      @db.VarChar(50)
   typeContrat     TypeContrat?
   dateEmbauche    DateTime?    @db.Date
+  dureeMois       Int?
+  dateFinContrat  DateTime?    @db.Date
   salaire         Float?
   soldeConge      Int          @default(0)
   createdAt       DateTime     @default(now())
