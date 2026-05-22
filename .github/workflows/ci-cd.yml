@@ -111,18 +111,20 @@ jobs:
     steps:
       - name: Trigger deployment
         env:
-          COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
-          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK || secrets.WEBHOOK_URL }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN || secrets.WEBHOOK_TOKEN }}
         run: |
           if [ -z "$COOLIFY_WEBHOOK" ]; then
-            echo "COOLIFY_WEBHOOK not configured — skipping deploy trigger."
-            exit 0
+            echo "COOLIFY_WEBHOOK is not configured. Add COOLIFY_WEBHOOK in GitHub Actions secrets."
+            exit 1
           fi
           if [ -n "$COOLIFY_TOKEN" ]; then
+            echo "Triggering Coolify deployment with bearer token..."
             curl --fail --request POST "$COOLIFY_WEBHOOK" \
               --header "Authorization: Bearer $COOLIFY_TOKEN" \
               --header "Content-Type: application/json"
           else
+            echo "Triggering Coolify deployment with webhook URL..."
             curl --fail --request POST "$COOLIFY_WEBHOOK" \
               --header "Content-Type: application/json"
           fi
