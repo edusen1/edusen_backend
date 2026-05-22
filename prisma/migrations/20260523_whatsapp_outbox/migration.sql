@@ -17,4 +17,4 @@ CREATE INDEX "whatsapp_outbox_tenantId_createdAt_idx" ON "whatsapp_outbox"("tena
 
 -- AddForeignKey
 ALTER TABLE "whatsapp_outbox" ADD CONSTRAINT "whatsapp_outbox_tenantId_fkey"
-    FOREIGN KEY ("tenantId") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+    FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
