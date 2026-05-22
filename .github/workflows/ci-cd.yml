@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE_NAME: nouraschool-backend
+  IMAGE_NAME: nouraschool-backend-nestjs
 
 jobs:
 
@@ -111,20 +111,18 @@ jobs:
     steps:
       - name: Trigger deployment
         env:
-          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
-          WEBHOOK_TOKEN: ${{ secrets.WEBHOOK_TOKEN }}
+          COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
         run: |
-          if [ -z "$WEBHOOK_URL" ]; then
-            echo "WEBHOOK_URL not configured — skipping deploy trigger."
+          if [ -z "$COOLIFY_WEBHOOK" ]; then
+            echo "COOLIFY_WEBHOOK not configured — skipping deploy trigger."
             exit 0
           fi
-          if [ -n "$WEBHOOK_TOKEN" ]; then
-            # Format A : API Coolify avec token dans header
-            curl --fail --request POST "$WEBHOOK_URL" \
-              --header "Authorization: Bearer $WEBHOOK_TOKEN" \
+          if [ -n "$COOLIFY_TOKEN" ]; then
+            curl --fail --request POST "$COOLIFY_WEBHOOK" \
+              --header "Authorization: Bearer $COOLIFY_TOKEN" \
               --header "Content-Type: application/json"
           else
-            # Format B : Webhook URL auto-authentifiée
-            curl --fail --request POST "$WEBHOOK_URL" \
+            curl --fail --request POST "$COOLIFY_WEBHOOK" \
               --header "Content-Type: application/json"
           fi
