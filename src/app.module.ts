@@ -28,6 +28,7 @@ import { EcoleConfigService } from '@/modules/configuration/ecole-config.service
 import { AcademiqueConfigService } from '@/modules/configuration/academique-config.service';
 import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 import { ClasseService } from '@/modules/classes/classe.service';
+import { HealthController } from '@/modules/health.controller';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { ClasseService } from '@/modules/classes/classe.service';
     }),
   ],
   controllers: [
+    HealthController,
     AuthController,
     PlatformController,
     V1Controller,
