@@ -1,4 +1,4 @@
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -6,6 +6,8 @@ import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import { AppModule } from '@/app.module';
+
+const logger = new Logger('Bootstrap');
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -50,7 +52,20 @@ async function bootstrap(): Promise<void> {
   SwaggerModule.setup('docs', app, document);
 
   const port = Number(process.env.PORT ?? 3000);
+  const env  = process.env.NODE_ENV ?? 'development';
   await app.listen(port, '0.0.0.0');
+
+  const url = `http://0.0.0.0:${port}`;
+  logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  logger.log('🎓  NouraSchool Backend — démarrage réussi');
+  logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  logger.log(`🌍  Environnement : ${env}`);
+  logger.log(`🚀  API en écoute : ${url}/api`);
+  logger.log(`📖  Swagger docs  : ${url}/docs`);
+  logger.log(`❤️   Health check  : ${url}/api/health`);
+  logger.log(`🗄️   Base de données PostgreSQL connectée`);
+  logger.log(`⚡  Moteur HTTP   : Fastify`);
+  logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 }
 
 void bootstrap();

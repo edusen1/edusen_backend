@@ -1,22 +1,57 @@
 #!/bin/sh
 set -e
 
-echo "[entrypoint] Running Prisma migrations..."
-if ! npx prisma migrate deploy 2>&1 | tee /tmp/prisma-migrate.log; then
-  if grep -q "20260522_seed_parent_child_summaries" /tmp/prisma-migrate.log; then
-    echo "[entrypoint] Resolving failed seed migration 20260522_seed_parent_child_summaries as rolled back..."
-    npx prisma migrate resolve --rolled-back 20260522_seed_parent_child_summaries
-    echo "[entrypoint] Retrying Prisma migrations..."
-    npx prisma migrate deploy
+echo ""
+echo "╔══════════════════════════════════════════════════════╗"
+echo "║        🎓  NouraSchool Backend — Démarrage           ║"
+echo "╚══════════════════════════════════════════════════════╝"
+echo ""
+
+# ── 1. Migrations Prisma ──────────────────────────────────────────────────────
+echo "📦  Exécution des migrations Prisma..."
+
+run_migrate() {
+  npx prisma migrate deploy 2>&1
+}
+
+migrate_output=$(run_migrate)
+migrate_exit=$?
+
+if [ $migrate_exit -ne 0 ]; then
+  echo "$migrate_output"
+
+  # Extraire le nom de la migration échouée depuis l'erreur P3009
+  # Format : The `<nom>` migration started at ... failed
+  failed_migration=$(echo "$migrate_output" | sed -n "s/.*The \`\([^\`]*\)\` migration.*/\1/p" | head -1)
+
+  if [ -n "$failed_migration" ]; then
+    echo "⚠️   Migration échouée détectée : $failed_migration"
+    echo "🔧  Résolution automatique (rolled-back)..."
+    npx prisma migrate resolve --rolled-back "$failed_migration"
+
+    echo "🔄  Nouvelle tentative de migration..."
+    if ! npx prisma migrate deploy; then
+      echo "❌  Échec des migrations Prisma après résolution. Arrêt."
+      exit 1
+    fi
   else
-    echo "[entrypoint] Prisma migrations failed."
+    echo "❌  Échec des migrations Prisma (pas de migration identifiée). Arrêt."
     exit 1
   fi
+else
+  echo "$migrate_output"
 fi
 
-echo "[entrypoint] Running seed scripts..."
-node scripts/patch-amadou-parcours.cjs || echo "[entrypoint] patch-amadou-parcours: done (errors ignored)"
-node scripts/seed-amadou-notes.cjs || echo "[entrypoint] seed-amadou-notes: done (errors ignored)"
+echo "✅  Migrations Prisma appliquées avec succès"
+echo ""
 
-echo "[entrypoint] Starting NestJS server..."
+# ── 2. Scripts de seed ────────────────────────────────────────────────────────
+echo "🌱  Exécution des scripts de seed..."
+node scripts/patch-amadou-parcours.cjs 2>&1 && echo "   ✔ patch-amadou-parcours" || echo "   ⚠ patch-amadou-parcours : ignoré"
+node scripts/seed-amadou-notes.cjs     2>&1 && echo "   ✔ seed-amadou-notes"     || echo "   ⚠ seed-amadou-notes : ignoré"
+echo ""
+
+# ── 3. Démarrage du serveur ───────────────────────────────────────────────────
+echo "🚀  Démarrage du serveur NestJS..."
+echo ""
 exec node dist/main
