@@ -202,7 +202,17 @@ export class WhatsappService implements OnApplicationShutdown {
   }
 
   async sendMessage(tenantId: string, phone: string, message: string): Promise<void> {
-    const state = this.states.get(tenantId);
+    let state = this.states.get(tenantId);
+    if (!state?.ready || !state.client) {
+      const record = await this.prisma.whatsappSession.findUnique({ where: { tenantId } });
+      if (record?.sessionData || record?.connected) {
+        this.logger.log(`Session WhatsApp trouvée, démarrage du client avant envoi (tenant=${tenantId})`);
+        this.startClientIfNeeded(tenantId);
+        await this.waitForReady(tenantId, 45_000);
+        state = this.states.get(tenantId);
+      }
+    }
+
     if (!state?.ready || !state.client) {
       throw new ServiceUnavailableException('WhatsApp non connecté pour ce tenant');
     }
@@ -436,9 +446,31 @@ export class WhatsappService implements OnApplicationShutdown {
     });
   }
 
+  private waitForReady(tenantId: string, timeoutMs: number): Promise<boolean> {
+    const startedAt = Date.now();
+    return new Promise((resolve) => {
+      const interval = setInterval(() => {
+        const state = this.states.get(tenantId);
+        if (state?.ready) {
+          clearInterval(interval);
+          resolve(true);
+          return;
+        }
+        if (Date.now() - startedAt >= timeoutMs) {
+          clearInterval(interval);
+          resolve(false);
+        }
+      }, 500);
+    });
+  }
+
   private normalizePhone(phone: string): string {
     let digits = phone.replace(/\D/g, '');
     if (digits.startsWith('0') && digits.length > 9) digits = digits.slice(1);
+    if (digits.length === 9 && digits.startsWith('7')) {
+      const countryCode = this.config.get<string>('WHATSAPP_DEFAULT_COUNTRY_CODE', '221');
+      digits = `${countryCode}${digits}`;
+    }
     return `${digits}@c.us`;
   }
 

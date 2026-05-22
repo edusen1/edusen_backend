@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '@/config/prisma.service';
@@ -90,6 +90,8 @@ const ADMIN_RESOURCES: Record<string, CrudConfig> = {
 
 @Injectable()
 export class LegacyCrudService {
+  private readonly logger = new Logger(LegacyCrudService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
@@ -527,7 +529,72 @@ export class LegacyCrudService {
       where: { parentId },
       include: { eleve: true },
     });
-    return links.map((link) => this.sanitizeEntity('user', link.eleve));
+    const children = await Promise.all(
+      links.map(async (link) => {
+        const eleve = this.sanitizeEntity('user', link.eleve) as Payload;
+        return {
+          ...eleve,
+          resumeScolaire: await this.buildEleveResumeScolaire(String(link.eleve.tenantId), String(link.eleve.id)),
+        };
+      }),
+    );
+
+    return children;
+  }
+
+  private async buildEleveResumeScolaire(tenantId: string | undefined, eleveId: string) {
+    const [bulletins, absences] = await Promise.all([
+      this.prisma.bulletin.findMany({
+        where: { tenantId, eleveId },
+        select: { moyenne: true, appreciation: true, trimestre: true, anneeScolaire: true },
+        orderBy: [{ anneeScolaire: 'asc' }, { trimestre: 'asc' }],
+      }),
+      this.prisma.absenceEleve.findMany({
+        where: { tenantId, eleveId },
+        select: { typeAbsence: true, justifiee: true },
+      }),
+    ]);
+
+    const validBulletins = bulletins.filter((bulletin) => typeof bulletin.moyenne === 'number');
+    const firstMoyenne = validBulletins[0]?.moyenne ?? null;
+    const lastMoyenne = validBulletins[validBulletins.length - 1]?.moyenne ?? null;
+    const moyenneGenerale = validBulletins.length
+      ? Math.round((validBulletins.reduce((sum, bulletin) => sum + (bulletin.moyenne ?? 0), 0) / validBulletins.length) * 100) / 100
+      : null;
+    const delta = firstMoyenne !== null && lastMoyenne !== null
+      ? Math.round((lastMoyenne - firstMoyenne) * 100) / 100
+      : null;
+    const totalAbsences = absences.filter((absence) => absence.typeAbsence !== 'RETARD').length;
+    const totalRetards = absences.filter((absence) => absence.typeAbsence === 'RETARD').length;
+    const appreciationText = bulletins.map((bulletin) => bulletin.appreciation ?? '').join(' ').toLowerCase();
+    const negativeBehavior = ['mauvais', 'insuffisant', 'indiscipline', 'retard', 'absent'].some((word) =>
+      appreciationText.includes(word),
+    );
+    const bonComportement = totalAbsences <= 3 && totalRetards <= 3 && !negativeBehavior;
+
+    return {
+      moyenneGenerale,
+      dernierBulletin: validBulletins[validBulletins.length - 1]
+        ? {
+            moyenne: validBulletins[validBulletins.length - 1].moyenne,
+            trimestre: validBulletins[validBulletins.length - 1].trimestre,
+            anneeScolaire: validBulletins[validBulletins.length - 1].anneeScolaire,
+          }
+        : null,
+      evolution:
+        delta === null ? 'DONNEES_INSUFFISANTES' :
+        delta > 0.5 ? 'PROGRES' :
+        delta < -0.5 ? 'REGRESSION' :
+        'STABLE',
+      evolutionDelta: delta,
+      comportement: bonComportement ? 'BON_COMPORTEMENT' : 'A_SURVEILLER',
+      commentaireComportement: bonComportement
+        ? 'Bon comportement selon les absences, retards et appréciations.'
+        : 'Comportement à surveiller selon les absences, retards ou appréciations.',
+      totalAbsences,
+      totalRetards,
+      nombreBulletins: bulletins.length,
+    };
   }
 
   async adminParentChildren(tenantId: string | undefined, parentId: string) {
@@ -1131,7 +1198,8 @@ export class LegacyCrudService {
     }
 
     const telephone = String(user.telephone ?? '').trim();
-    if (!tenantId || !telephone || !this.whatsappService.isReady(tenantId)) {
+    if (!tenantId || !telephone) {
+      this.logger.warn(`Identifiants professeur non envoyés par WhatsApp: tenant ou téléphone manquant user=${String(user.id ?? '')}`);
       return;
     }
 
@@ -1142,7 +1210,9 @@ export class LegacyCrudService {
       'À changer à la première connexion.',
     ].join('\n');
 
-    this.whatsappService.sendMessage(tenantId, telephone, message).catch(() => null);
+    this.whatsappService.sendMessage(tenantId, telephone, message).catch((error: unknown) => {
+      this.logger.warn(`Identifiants professeur non envoyés par WhatsApp user=${String(user.id ?? '')}: ${this.formatError(error)}`);
+    });
   }
 
   private async sendPersonnelCredentials(
@@ -1157,7 +1227,8 @@ export class LegacyCrudService {
     this.mailService.sendCompteCree(user.email, user.firstName, user.lastName, tempPassword, from);
 
     const telephone = String(user.telephone ?? '').trim();
-    if (!tenantId || !telephone || !this.whatsappService.isReady(tenantId)) {
+    if (!tenantId || !telephone) {
+      this.logger.warn(`Identifiants personnel non envoyés par WhatsApp: tenant ou téléphone manquant user=${user.id}`);
       return;
     }
 
@@ -1168,7 +1239,9 @@ export class LegacyCrudService {
       'À changer à la première connexion.',
     ].join('\n');
 
-    this.whatsappService.sendMessage(tenantId, telephone, message).catch(() => null);
+    this.whatsappService.sendMessage(tenantId, telephone, message).catch((error: unknown) => {
+      this.logger.warn(`Identifiants personnel non envoyés par WhatsApp user=${user.id}: ${this.formatError(error)}`);
+    });
   }
 
   private sanitizeEntity(model: string, entity: Payload): Payload {
@@ -1178,6 +1251,10 @@ export class LegacyCrudService {
   }
 
   private async resolveSchoolSender(tenantId: string): Promise<string | undefined> {
+    if (process.env.RESEND_ALLOW_TENANT_FROM !== 'true') {
+      return undefined;
+    }
+
     const [config, tenant] = await Promise.all([
       this.prisma.ecoleConfig.findUnique({ where: { tenantId }, select: { nom: true } }),
       this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { nom: true, slug: true } }),
@@ -1186,6 +1263,16 @@ export class LegacyCrudService {
     const schoolName = config?.nom || tenant?.nom || 'Noura School';
     const localDomain = tenant?.slug || this.schoolDomainName(schoolName);
     return `${schoolName} <contact@${localDomain}.assanediallo.com>`;
+  }
+
+  private formatError(error: unknown): string {
+    if (error instanceof Error) return error.message;
+    if (typeof error === 'string') return error;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
   }
 
   private schoolDomainName(schoolName: string): string {
