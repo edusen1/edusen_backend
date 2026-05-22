@@ -1304,6 +1304,17 @@ export class LegacyCrudService {
 
       if (existingUser) {
         data.utilisateurId = existingUser.id;
+        if (!create) {
+          const userUpdate: Record<string, unknown> = {};
+          if (firstName) userUpdate['firstName'] = firstName;
+          if (lastName) userUpdate['lastName'] = lastName;
+          if (data.telephone) userUpdate['telephone'] = String(data.telephone);
+          if (data.adresse) userUpdate['adresse'] = String(data.adresse);
+          if (data.specialite) userUpdate['specialite'] = String(data.specialite);
+          if (Object.keys(userUpdate).length > 0) {
+            await this.prisma.user.update({ where: { id: existingUser.id }, data: userUpdate });
+          }
+        }
       } else if (firstName && lastName) {
         const username = await this.generateUsername(tenantId, firstName, lastName);
         const generatedPassword = this.generateTempPassword();
