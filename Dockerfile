@@ -12,11 +12,14 @@ ENV PUPPETEER_SKIP_DOWNLOAD=true \
 
 COPY package*.json ./
 COPY prisma ./prisma/
-COPY patches ./patches/
+COPY scripts ./scripts/
 
 # Always include devDependencies for the build, regardless of external NODE_ENV.
-# postinstall applique automatiquement les patches (patch-package)
 RUN npm ci --include=dev
+
+# Patch whatsapp-web.js : wrappe inject() dans framenavigated en try/catch
+# pour éviter le crash "Execution context was destroyed" lors des navigations
+RUN node scripts/patch-wweb.cjs
 
 COPY . .
 
