@@ -96,6 +96,22 @@ export class V1Controller {
     return this.crud.transferInscription(tenantId, id, String(body.classeId));
   }
 
+  @Patch('inscriptions/:id/desactiver')
+  desactiverInscription(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+  ) {
+    return this.crud.desactiverInscription(tenantId, id);
+  }
+
+  @Patch('inscriptions/:id/reactiver')
+  reactiverInscription(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+  ) {
+    return this.crud.reactiverInscription(tenantId, id);
+  }
+
   @Post('absences-eleves/:id/approuver')
   approuverAbsenceEleve(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -190,6 +206,54 @@ export class V1Controller {
     return this.crud.getBulletinDownload(tenantId, id);
   }
 
+  @Get('inscriptions/suggestion/:eleveId')
+  inscriptionSuggestion(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('eleveId') eleveId: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.crud.getInscriptionSuggestion(this.resolveTenantId(tenantId, user), eleveId);
+  }
+
+  @Get('demandes-passage')
+  getDemandesPassage(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Query() query: QueryParams,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.crud.getDemandesPassage(this.resolveTenantId(tenantId, user), query);
+  }
+
+  @Post('demandes-passage')
+  createDemandePassage(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.crud.createDemandePassage(this.resolveTenantId(tenantId, user), body, user?.sub);
+  }
+
+  @Patch('demandes-passage/:id/approuver')
+  @Post('demandes-passage/:id/approuver')
+  approuverDemandePassage(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.crud.approuverDemandePassage(this.resolveTenantId(tenantId, user), id, user?.sub);
+  }
+
+  @Patch('demandes-passage/:id/rejeter')
+  @Post('demandes-passage/:id/rejeter')
+  rejeterDemandePassage(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.crud.rejeterDemandePassage(this.resolveTenantId(tenantId, user), id, body, user?.sub);
+  }
+
   @Get(':resource')
   findAll(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -217,7 +281,7 @@ export class V1Controller {
     @Body() body: Payload,
     @CurrentUser() user?: JwtUser,
   ) {
-    return this.crud.create(this.crud.v1Config(resource), this.resolveTenantId(tenantId, user), body, user?.sub);
+    return this.crud.create(this.crud.v1Config(resource), this.resolveTenantId(tenantId, user), body, user);
   }
 
   @Put(':resource/:id')

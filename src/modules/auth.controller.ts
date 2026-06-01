@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Headers } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Patch, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '@/common/decorators/public.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
@@ -29,11 +29,18 @@ export class AuthController {
   }
 
   @Public()
+  @Get('school/:code')
+  @ApiOperation({ summary: 'Informations publiques d\'une école par code d\'accès' })
+  getSchool(@Param('code') code: string) {
+    return this.authService.getSchoolByCode(code);
+  }
+
+@Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Connexion utilisateur ou plateforme' })
+  @ApiOperation({ summary: 'Connexion utilisateur (école via code opaque)' })
   login(@Body() dto: LoginDto) {
-    return this.authService.login({ login: dto.email ?? dto.login ?? '', password: dto.password });
+    return this.authService.login({ login: dto.telephone, password: dto.password, code: dto.code });
   }
 
   @Public()
@@ -74,6 +81,16 @@ export class AuthController {
   async logout(@CurrentUser() user: JwtUser) {
     await this.authService.logout(user.sub);
     return { message: 'Déconnecté avec succès' };
+  }
+
+  @Patch('me')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Mise à jour du profil' })
+  updateProfile(
+    @CurrentUser() user: JwtUser,
+    @Body() dto: { firstName?: string; lastName?: string; email?: string; telephone?: string | null },
+  ) {
+    return this.authService.updateProfile(user.sub, dto);
   }
 
   @Post('change-password')

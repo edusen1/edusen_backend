@@ -1,0 +1,23 @@
+version: '3.9'
+
+# Services dev : PostgreSQL + Redis uniquement
+# L'API tourne en local avec "npm run dev"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - '5433:5432'
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: nouraschool
+    volumes:
+      - pgdata_dev:/var/lib/postgresql/data
+
+  # Redis deja disponible sur le host (redis-whatsapp sur port 6379)
+  # REDIS_URL=redis://localhost:6379 dans le .env suffit
+
+volumes:
+  pgdata_dev:

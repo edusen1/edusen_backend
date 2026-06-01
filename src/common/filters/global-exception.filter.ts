@@ -43,7 +43,18 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       this.logger.warn(`[PrismaError] code=${exception.code} correlationId=${correlationId}`);
       res.status(status).send({
         code: `PRISMA_${exception.code}`,
-        message: this.mapPrismaMessage(exception.code),
+        message: this.mapPrismaMessage(exception),
+        correlationId,
+        timestamp: new Date().toISOString(),
+      });
+      return;
+    }
+
+    if (exception instanceof Prisma.PrismaClientValidationError) {
+      this.logger.warn(`[PrismaValidationError] correlationId=${correlationId} path=${req.url}`);
+      res.status(HttpStatus.BAD_REQUEST).send({
+        code: 'PRISMA_VALIDATION_ERROR',
+        message: 'Données invalides pour cette opération',
         correlationId,
         timestamp: new Date().toISOString(),
       });
@@ -69,7 +80,15 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     return HttpStatus.BAD_REQUEST;
   }
 
-  private mapPrismaMessage(code: string): string {
+  private mapPrismaMessage(exception: Prisma.PrismaClientKnownRequestError): string {
+    const code = exception.code;
+    const target = Array.isArray(exception.meta?.target) ? exception.meta.target.map(String) : [];
+    if (
+      code === 'P2002' &&
+      ['tenantId', 'eleveId', 'anneeAcademiqueId'].every((field) => target.includes(field))
+    ) {
+      return 'INSCRIPTION_DEJA_EXISTANTE: cet élève est déjà inscrit pour cette année scolaire';
+    }
     if (code === 'P2002') return 'Conflit de données: une valeur unique existe déjà';
     if (code === 'P2025') return 'Ressource introuvable';
     if (code === 'P2023') return 'Identifiant invalide: UUID attendu';

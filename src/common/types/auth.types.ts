@@ -15,7 +15,8 @@ export interface JwtUser {
   sub: string;
   role: UserRole;
   tenantId?: string;
-  email: string;
+  email?: string | null;
+  telephone?: string | null;
   isPlatform?: boolean;
   iat?: number;
   exp?: number;

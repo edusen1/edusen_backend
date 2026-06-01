@@ -58,16 +58,23 @@ export class StudentController {
   ) {
     return this.domain.studentReclamations(tenantId, user?.sub ?? "");
   }
+  @Get("reclamations/notes") reclamationNotes(
+    @Headers("x-tenant-id") tenantId: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.domain.studentReclamationNotes(tenantId, user?.sub ?? "");
+  }
   @Post("reclamations") createReclamation(
     @Headers("x-tenant-id") tenantId: string,
     @CurrentUser() user: JwtUser,
-    @Body() body: { motif: string; noteId?: string },
+    @Body() body: { motif: string; noteId?: string; pieceJointeUrl?: string },
   ) {
     return this.domain.studentCreateReclamation(
       tenantId,
       user.sub,
       body.motif,
       body.noteId,
+      body.pieceJointeUrl,
     );
   }
 }

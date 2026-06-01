@@ -16,7 +16,7 @@ export interface CreateUserDto {
   tenantId: string;
   firstName: string;
   lastName: string;
-  email: string;
+  email?: string;
   telephone?: string;
   adresse?: string;
   role: UserRole;
@@ -49,10 +49,14 @@ export class UtilisateurService {
   ) {}
 
   async create(dto: CreateUserDto): Promise<unknown> {
-    const existing = await this.prisma.user.findFirst({
-      where: { tenantId: dto.tenantId, email: dto.email.trim().toLowerCase() },
-    });
-    if (existing) throw new ConflictException('Email déjà utilisé dans ce tenant');
+    const normalizedEmail = dto.email?.trim().toLowerCase() || null;
+
+    if (normalizedEmail) {
+      const existing = await this.prisma.user.findFirst({
+        where: { tenantId: dto.tenantId, email: normalizedEmail },
+      });
+      if (existing) throw new ConflictException('Email déjà utilisé dans ce tenant');
+    }
 
     if (dto.matricule) {
       const existingMatricule = await this.prisma.user.findFirst({
@@ -64,17 +68,21 @@ export class UtilisateurService {
     const tmpPwd = this.generateTempPassword();
     const passwordHash = await bcrypt.hash(tmpPwd, 12);
 
+    const generatedUsername = dto.username
+      ?? normalizedEmail
+      ?? `${dto.firstName.toLowerCase().replace(/\s+/g, '')}.${dto.lastName.toLowerCase().replace(/\s+/g, '')}.${Date.now()}`;
+
     const user = await this.prisma.user.create({
       data: {
         tenantId: dto.tenantId,
-        email: dto.email.trim().toLowerCase(),
+        email: normalizedEmail,
         passwordHash,
         firstName: dto.firstName,
         lastName: dto.lastName,
         telephone: dto.telephone,
         adresse: dto.adresse,
         role: dto.role,
-        username: dto.username ?? dto.email.trim().toLowerCase(),
+        username: generatedUsername,
         mustChangePwd: true,
         matricule: dto.matricule,
         dateNaissance: dto.dateNaissance ? new Date(dto.dateNaissance) : undefined,
@@ -100,7 +108,9 @@ export class UtilisateurService {
       });
     }
 
-    this.mailService.sendCompteCree(user.email, user.firstName, user.lastName, tmpPwd);
+    if (user.email) {
+      this.mailService.sendCompteCree(user.email, user.firstName, user.lastName, tmpPwd);
+    }
     return this.sanitize(user);
   }
 
@@ -221,7 +231,9 @@ export class UtilisateurService {
       where: { id },
       data: { passwordHash, mustChangePwd: true },
     });
-    this.mailService.sendCompteCree(user.email, user.firstName, user.lastName, tmpPwd);
+    if (user.email) {
+      this.mailService.sendCompteCree(user.email, user.firstName, user.lastName, tmpPwd);
+    }
     return { tempPassword: tmpPwd };
   }
 

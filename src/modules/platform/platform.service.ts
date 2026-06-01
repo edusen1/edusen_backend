@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'node:crypto';
 import { PrismaService } from '@/config/prisma.service';
 import { CreateTenantDto } from '@/modules/platform/dto/create-tenant.dto';
 import { CreateUserDto } from '@/modules/platform/dto/create-user.dto';
@@ -16,6 +17,21 @@ export class PlatformService {
         ? new Date(Date.now() + dto.durationMonths * 30 * 24 * 60 * 60 * 1000)
         : undefined;
       const slug = await this.ensureUniqueTenantSlug(dto.slug ?? this.schoolCode(dto.nom));
+      const [
+        codeAccesEleve,
+        codeAccesEnseignant,
+        codeAccesCaissier,
+        codeAccesAdmin,
+        codeAccesSurveillant,
+        codeAccesRh,
+      ] = await Promise.all([
+        this.generateUniqueCode('codeAccesEleve'),
+        this.generateUniqueCode('codeAccesEnseignant'),
+        this.generateUniqueCode('codeAccesCaissier'),
+        this.generateUniqueCode('codeAccesAdmin'),
+        this.generateUniqueCode('codeAccesSurveillant'),
+        this.generateUniqueCode('codeAccesRh'),
+      ]);
       return await this.prisma.tenant.create({
         data: {
           slug,
@@ -27,7 +43,13 @@ export class PlatformService {
           plan: dto.plan ?? 'TRIAL',
           dateExpiration,
           actif: dto.actif ?? true,
-        },
+          codeAccesEleve,
+          codeAccesEnseignant,
+          codeAccesCaissier,
+          codeAccesAdmin,
+          codeAccesSurveillant,
+          codeAccesRh,
+        } as any,
       });
     } catch (error) {
       rethrowServiceError(error, 'création tenant');
@@ -114,6 +136,20 @@ export class PlatformService {
       .join('');
 
     return initials || compact.slice(0, 15) || 'ecole';
+  }
+
+  private async generateUniqueCode(field: string): Promise<string> {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    while (true) {
+      const bytes = randomBytes(10);
+      let code = '';
+      for (let i = 0; i < 10; i++) code += chars[bytes[i] % chars.length];
+      const existing = await this.prisma.tenant.findFirst({
+        where: { [field]: code } as any,
+        select: { id: true },
+      });
+      if (!existing) return code;
+    }
   }
 
   private async ensureUniqueTenantSlug(base: string, excludeTenantId?: string): Promise<string> {

@@ -145,6 +145,12 @@ enum StatutReclamation {
   REJETEE
 }
 
+enum StatutDemandePassage {
+  EN_ATTENTE
+  APPROUVEE
+  REJETEE
+}
+
 enum CanalNotification {
   EMAIL
   SMS
@@ -162,7 +168,13 @@ enum StatutNotification {
 
 model Tenant {
   id             String    @id @default(uuid()) @db.Uuid
-  slug           String    @unique @db.VarChar(100)
+  slug                String    @unique @db.VarChar(100)
+  codeAccesEleve      String    @unique @db.VarChar(16)
+  codeAccesEnseignant String    @unique @db.VarChar(16)
+  codeAccesCaissier   String    @unique @db.VarChar(16)
+  codeAccesAdmin      String    @unique @db.VarChar(16)
+  codeAccesSurveillant String   @unique @db.VarChar(16)
+  codeAccesRh         String    @unique @db.VarChar(16)
   nom            String
   emailContact   String?   @db.VarChar(254)
   telephone      String?   @db.VarChar(20)
@@ -203,6 +215,7 @@ model Tenant {
   convocations        Convocation[]
   liensBulletin       LienBulletinParent[]
   liensPaiement       LienPaiementParent[]
+  demandesPassage     DemandePassage[]
   personnels          Personnel[]
   personnelNiveauAffectations PersonnelNiveauAffectation[]
   pointages           Pointage[]
@@ -325,7 +338,7 @@ model User {
   tenantId      String    @db.Uuid
   tenant        Tenant    @relation(fields: [tenantId], references: [id])
   username      String?   @db.VarChar(100)
-  email         String    @db.VarChar(254)
+  email         String?   @db.VarChar(254)
   passwordHash  String
   firstName     String    @db.VarChar(100)
   lastName      String    @db.VarChar(100)
@@ -441,10 +454,11 @@ model AnneeAcademique {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  classes        Classe[]
-  cours          Cours[]
-  inscriptions   Inscription[]
-  matiereClasses MatiereClasse[]
+  classes         Classe[]
+  cours           Cours[]
+  inscriptions    Inscription[]
+  matiereClasses  MatiereClasse[]
+  demandesPassage DemandePassage[]
 
   @@unique([tenantId, libelle])
 }
@@ -500,15 +514,16 @@ model Classe {
   professeurResponsableId String? @db.Uuid
   professeurResponsable   User?   @relation("ClasseProfResponsable", fields: [professeurResponsableId], references: [id])
 
-  eleves         User[]            @relation("EleveClasse")
-  matiereClasses MatiereClasse[]
-  cours          Cours[]
-  emploisDuTemps EmploiDuTemps[]
-  absences       AbsenceEleve[]
-  bulletins      Bulletin[]
-  inscriptions   Inscription[]
-  appels         Appel[]
-  stagiaires     ClasseStagiaire[]
+  eleves          User[]            @relation("EleveClasse")
+  matiereClasses  MatiereClasse[]
+  cours           Cours[]
+  emploisDuTemps  EmploiDuTemps[]
+  absences        AbsenceEleve[]
+  bulletins       Bulletin[]
+  inscriptions    Inscription[]
+  appels          Appel[]
+  stagiaires      ClasseStagiaire[]
+  demandesPassage DemandePassage[]
 }
 
 model ClasseStagiaire {
@@ -606,6 +621,8 @@ model Inscription {
   updatedAt         DateTime          @updatedAt
 
   paiements Paiement[]
+
+  @@unique([tenantId, eleveId, anneeAcademiqueId], map: "inscriptions_tenant_eleve_annee_unique")
 }
 
 // ==================== GRADES ====================
@@ -726,8 +743,8 @@ model Appel {
   id         String      @id @default(uuid()) @db.Uuid
   tenantId   String      @db.Uuid
   tenant     Tenant      @relation(fields: [tenantId], references: [id])
-  coursId    String      @db.Uuid
-  cours      Cours       @relation(fields: [coursId], references: [id])
+  coursId    String?     @db.Uuid
+  cours      Cours?      @relation(fields: [coursId], references: [id])
   classeId   String?     @db.Uuid
   classe     Classe?     @relation(fields: [classeId], references: [id])
   dateCours  DateTime    @db.Date
@@ -939,6 +956,8 @@ model AbsencePersonnel {
   personnel       Personnel              @relation(fields: [personnelId], references: [id])
   dateDebut       DateTime               @db.Date
   dateFin         DateTime               @db.Date
+  heureDebut      String?                @db.VarChar(10)
+  heureFin        String?                @db.VarChar(10)
   motif           String?
   typeAbsence     TypeAbsencePersonnel?
   justificatifUrl String?
@@ -975,6 +994,7 @@ model Reclamation {
   motif     String
   statut    StatutReclamation @default(EN_ATTENTE)
   reponse   String?
+  pieceJointeUrl String?
   createdAt DateTime          @default(now())
   updatedAt DateTime          @updatedAt
 }
@@ -1045,4 +1065,27 @@ model PasswordResetToken {
   createdAt DateTime  @default(now())
 
   @@index([userId, expiresAt])
+}
+
+// ==================== DEMANDE DE PASSAGE EN CLASSE SUPERIEURE ====================
+
+model DemandePassage {
+  id                String               @id @default(uuid()) @db.Uuid
+  tenantId          String               @db.Uuid
+  tenant            Tenant               @relation(fields: [tenantId], references: [id])
+  eleveId           String               @db.Uuid
+  classeDestId      String               @db.Uuid
+  classeDest        Classe               @relation(fields: [classeDestId], references: [id])
+  anneeAcademiqueId String               @db.Uuid
+  anneeAcademique   AnneeAcademique      @relation(fields: [anneeAcademiqueId], references: [id])
+  motif             String?
+  statut            StatutDemandePassage @default(EN_ATTENTE)
+  creePar           String               @db.Uuid
+  traitePar         String?              @db.Uuid
+  motifRefus        String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@index([tenantId, statut])
+  @@index([tenantId, eleveId])
 }

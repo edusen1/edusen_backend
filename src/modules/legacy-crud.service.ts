@@ -5,6 +5,7 @@ import { PrismaService } from '@/config/prisma.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
 import { MailService } from '@/infrastructure/mail/mail.service';
 import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
+import type { JwtUser } from '@/common/types/auth.types';
 
 type QueryValue = string | string[] | undefined;
 type QueryParams = Record<string, QueryValue>;
@@ -126,6 +127,9 @@ export class LegacyCrudService {
       salle: true,
       stagiaires: { include: { stagiaire: true } },
       _count: { select: { eleves: true } }
+    } : config.model === 'inscription' ? {
+      classe: { select: { id: true, nom: true } },
+      anneeAcademique: { select: { id: true, libelle: true } },
     } : config.model === 'matiereClasse' ? {
       matiere: true,
       enseignant: true
@@ -168,10 +172,13 @@ export class LegacyCrudService {
     if (config.paged || query.page !== undefined || query.size !== undefined) {
       const page = this.toInt(query.page, 0);
       const size = this.toInt(query.size, 20);
-      const [content, totalElements] = await Promise.all([
+      let [content, totalElements] = await Promise.all([
         delegate.findMany({ where, skip: page * size, take: size, orderBy, ...(include ? { include } : {}) }),
         delegate.count({ where }),
       ]);
+      if (config.model === 'inscription') {
+        content = await this.attachInscriptionEleves(content);
+      }
       const totalPages = size > 0 ? Math.ceil(totalElements / size) : 0;
       return {
         content: content.map((item: Payload) => this.sanitizeEntity(config.model, item)),
@@ -184,7 +191,10 @@ export class LegacyCrudService {
       };
     }
 
-    const rows = await delegate.findMany({ where, orderBy, ...(include ? { include } : {}) });
+    let rows = await delegate.findMany({ where, orderBy, ...(include ? { include } : {}) });
+    if (config.model === 'inscription') {
+      rows = await this.attachInscriptionEleves(rows);
+    }
     return rows.map((item: Payload) => this.sanitizeEntity(config.model, item));
   }
 
@@ -197,6 +207,9 @@ export class LegacyCrudService {
       salle: true,
       stagiaires: { include: { stagiaire: true } },
       _count: { select: { eleves: true } }
+    } : config.model === 'inscription' ? {
+      classe: { select: { id: true, nom: true } },
+      anneeAcademique: { select: { id: true, libelle: true } },
     } : config.model === 'matiereClasse' ? {
       matiere: true,
       enseignant: true
@@ -241,10 +254,15 @@ export class LegacyCrudService {
       ...(include ? { include } : {}),
     });
     if (!entity) throw new NotFoundException('Ressource introuvable');
+    if (config.model === 'inscription') {
+      const [hydrated] = await this.attachInscriptionEleves([entity]);
+      return this.sanitizeEntity(config.model, hydrated);
+    }
     return this.sanitizeEntity(config.model, entity);
   }
 
-  async create(config: CrudConfig, tenantId: string | undefined, body: Payload, userId?: string) {
+  async create(config: CrudConfig, tenantId: string | undefined, body: Payload, userOrId?: string | JwtUser) {
+    const userId = typeof userOrId === 'string' ? userOrId : userOrId?.sub;
     const parentIds = this.extractStringArray(body.parentIds).map((parentId, index) =>
       this.assertUuid(parentId, `parentIds[${index}]`),
     );
@@ -265,6 +283,20 @@ export class LegacyCrudService {
     delete data.__personnelSectionId;
     delete data.__personnelAffectationType;
     delete data.__personnelAffectationOrdre;
+
+    if (config.model === 'inscription') {
+      await this.assertSingleInscriptionPerYear(tenantId, data);
+      await this.assertInscriptionClassAllowed(tenantId, data, typeof userOrId === 'string' ? undefined : userOrId);
+      const forceImpayes = body.ignoreImpayes === true;
+      if (!forceImpayes) {
+        await this.assertNoImpayes(tenantId, String(data.eleveId ?? ''));
+      }
+      if (!data.numeroInscription) {
+        data.numeroInscription = this.generateInscriptionNumero(tenantId ?? '');
+      }
+      if (!data.creePar && userId) data.creePar = userId;
+    }
+
     const created = await this.delegate(config.model).create({ data });
 
     if (config.model === 'user' && data.role === 'ELEVE' && parentIds.length > 0) {
@@ -276,6 +308,7 @@ export class LegacyCrudService {
 
     if (config.model === 'inscription') {
       await this.syncEleveClasse(created.eleveId, created.classeId);
+      return this.findOne(config, tenantId, created.id);
     }
 
     if (config.model === 'note') {
@@ -377,6 +410,9 @@ export class LegacyCrudService {
   }
 
   async delete(config: CrudConfig, tenantId: string | undefined, id: string) {
+    if (config.model === 'inscription') {
+      throw new BadRequestException('SUPPRESSION_INSCRIPTION_INTERDITE: désactivez l’inscription au lieu de la supprimer');
+    }
     await this.findOne(config, tenantId, id);
     await this.delegate(config.model).delete({ where: { id } });
   }
@@ -403,6 +439,36 @@ export class LegacyCrudService {
     const updated = await this.prisma.inscription.update({ where: { id }, data: { classeId, statut: 'TRANSFERE' } });
     await this.syncEleveClasse(updated.eleveId, classeId);
     return updated;
+  }
+
+  async desactiverInscription(tenantId: string | undefined, id: string) {
+    const inscription = await this.prisma.inscription.findFirst({
+      where: { id, ...this.fixedWhere(V1_RESOURCES.inscriptions, tenantId) },
+      select: { id: true, eleveId: true, classeId: true },
+    });
+    if (!inscription) throw new NotFoundException('Inscription introuvable');
+
+    const updated = await this.prisma.inscription.update({
+      where: { id },
+      data: { statut: 'TERMINE' },
+    });
+    await this.clearEleveClasseIfCurrent(inscription.eleveId, inscription.classeId);
+    return this.findOne(V1_RESOURCES.inscriptions, tenantId, updated.id);
+  }
+
+  async reactiverInscription(tenantId: string | undefined, id: string) {
+    const inscription = await this.prisma.inscription.findFirst({
+      where: { id, ...this.fixedWhere(V1_RESOURCES.inscriptions, tenantId) },
+      select: { id: true, eleveId: true, classeId: true },
+    });
+    if (!inscription) throw new NotFoundException('Inscription introuvable');
+
+    const updated = await this.prisma.inscription.update({
+      where: { id },
+      data: { statut: 'ACTIF' },
+    });
+    await this.syncEleveClasse(inscription.eleveId, inscription.classeId);
+    return this.findOne(V1_RESOURCES.inscriptions, tenantId, updated.id);
   }
 
   async approveAbsenceEleve(tenantId: string | undefined, id: string, userId?: string) {
@@ -1108,6 +1174,9 @@ export class LegacyCrudService {
           data.dateEmbauche ??= new Date();
           data.mustChangePwd = true;
         }
+        if (data.role === 'ELEVE') {
+          data.matricule = await this.generateMatricule(tenantId ?? String(data.tenantId ?? ''), 'ELV');
+        }
       }
       for (const field of ['dateNaissance', 'dateInscription', 'dateEmbauche']) {
         if (data[field]) data[field] = new Date(String(data[field]));
@@ -1134,6 +1203,14 @@ export class LegacyCrudService {
       data.numeroInscription ??= `INS-${Date.now().toString(36).toUpperCase()}`;
       data.creePar ??= userId ?? data.utilisateurId ?? '00000000-0000-0000-0000-000000000000';
       data.statut ??= 'ACTIF';
+      delete data.ignoreImpayes;
+      delete data.utilisateurId;
+      delete data.sectionId;
+      delete data.niveauId;
+      delete data.frais;
+      delete data.classeFrais;
+      delete data.suggestion;
+      delete data.demandePassage;
     }
 
     if (config.model === 'note') {
@@ -1256,7 +1333,7 @@ export class LegacyCrudService {
     if (!user) return;
 
     const from = tenantId ? await this.resolveSchoolSender(tenantId) : undefined;
-    this.mailService.sendCompteCree(user.email, user.firstName, user.lastName, tempPassword, from);
+    this.mailService.sendCompteCree(user.email ?? '', user.firstName, user.lastName, tempPassword, from);
 
     const telephone = String(user.telephone ?? '').trim();
     if (!tenantId || !telephone) {
@@ -1280,6 +1357,22 @@ export class LegacyCrudService {
     if (!entity || model !== 'user') return entity;
     const { passwordHash: _passwordHash, ...safeEntity } = entity;
     return safeEntity;
+  }
+
+  private async attachInscriptionEleves<T extends Payload>(inscriptions: T[]): Promise<T[]> {
+    const eleveIds = [...new Set(inscriptions.map((inscription) => String(inscription.eleveId ?? '')).filter(Boolean))];
+    if (eleveIds.length === 0) return inscriptions;
+
+    const eleves = await this.prisma.user.findMany({
+      where: { id: { in: eleveIds } },
+      select: { id: true, firstName: true, lastName: true, matricule: true },
+    });
+    const elevesById = new Map(eleves.map((eleve) => [eleve.id, eleve]));
+
+    return inscriptions.map((inscription) => ({
+      ...inscription,
+      eleve: elevesById.get(String(inscription.eleveId ?? '')) ?? null,
+    }));
   }
 
   private async resolveSchoolSender(tenantId: string): Promise<string | undefined> {
@@ -1950,6 +2043,14 @@ export class LegacyCrudService {
     await this.prisma.user.updateMany({ where: { id: eleveId, role: 'ELEVE' }, data: { classeId } });
   }
 
+  private async clearEleveClasseIfCurrent(eleveId?: string, classeId?: string): Promise<void> {
+    if (!eleveId || !classeId) return;
+    await this.prisma.user.updateMany({
+      where: { id: eleveId, role: 'ELEVE', classeId },
+      data: { classeId: null },
+    });
+  }
+
   private async generateUsername(tenantId: string, firstName: string, lastName: string): Promise<string> {
     const base = this.slugify(`${firstName}.${lastName}`) || `user.${Date.now().toString(36)}`;
     for (let index = 0; index < 20; index += 1) {
@@ -1963,12 +2064,257 @@ export class LegacyCrudService {
   private async generateMatricule(tenantId: string, prefix: string): Promise<string> {
     const year = new Date().getUTCFullYear();
     for (let index = 0; index < 50; index += 1) {
-      const suffix = `${Date.now().toString(36).toUpperCase()}${index ? index.toString().padStart(2, '0') : ''}`;
+      const suffix = `${Date.now().toString(36).toUpperCase()}${index ? index.toString().padStart(2, '00') : ''}`;
       const matricule = `${prefix}-${year}-${suffix}`;
       const existing = await this.prisma.user.findFirst({ where: { tenantId, matricule } });
       if (!existing) return matricule;
     }
     return `${prefix}-${year}-${randomBytes(4).toString('hex').toUpperCase()}`;
+  }
+
+  private generateInscriptionNumero(tenantId: string): string {
+    const ts = Date.now().toString(36).toUpperCase();
+    const rand = randomBytes(2).toString('hex').toUpperCase();
+    return `INS-${tenantId.slice(0, 4).toUpperCase()}-${ts}${rand}`;
+  }
+
+  private async assertNoImpayes(tenantId: string | undefined, eleveId: string): Promise<void> {
+    if (!tenantId || !eleveId) return;
+    const anneeCourante = await this.findCurrentAnnee(tenantId);
+    const impayes = await this.prisma.paiement.findMany({
+      where: {
+        tenantId,
+        eleveId,
+        statut: 'EN_ATTENTE',
+        ...(anneeCourante ? { anneeScolaire: { not: anneeCourante.libelle } } : {}),
+      },
+      select: { id: true, montant: true, typePaiement: true, anneeScolaire: true },
+    });
+    if (impayes.length > 0) {
+      const total = impayes.reduce((sum, p) => sum + p.montant, 0);
+      throw new BadRequestException(`IMPAYES_PRECEDENTS:${total}:${impayes.length}`);
+    }
+  }
+
+  private async assertSingleInscriptionPerYear(tenantId: string | undefined, data: Payload): Promise<void> {
+    if (!tenantId) return;
+    const eleveId = String(data.eleveId ?? '');
+    const classeId = String(data.classeId ?? '');
+    const anneeAcademiqueId = String(data.anneeAcademiqueId ?? '');
+    if (!eleveId || !classeId || !anneeAcademiqueId) return;
+
+    const [existing, classe] = await Promise.all([
+      this.prisma.inscription.findFirst({
+        where: { tenantId, eleveId, anneeAcademiqueId },
+        select: { id: true },
+      }),
+      this.prisma.classe.findFirst({
+        where: { tenantId, id: classeId },
+        select: { anneeAcademiqueId: true },
+      }),
+    ]);
+
+    if (existing) {
+      throw new BadRequestException('INSCRIPTION_DEJA_EXISTANTE: cet élève est déjà inscrit pour cette année scolaire');
+    }
+
+    if (!classe) {
+      throw new BadRequestException('CLASSE_INTROUVABLE');
+    }
+
+    if (classe.anneeAcademiqueId !== anneeAcademiqueId) {
+      throw new BadRequestException('CLASSE_ANNEE_INVALIDE: la classe ne correspond pas à l’année scolaire choisie');
+    }
+  }
+
+  private async assertInscriptionClassAllowed(tenantId: string | undefined, data: Record<string, any>, user?: JwtUser): Promise<void> {
+    if (!tenantId || !user) return;
+    const unrestrictedRoles = new Set(['ADMIN', 'GESTIONNAIRE', 'SUPER_ADMIN']);
+    if (unrestrictedRoles.has(user.role)) return;
+    if (user.role !== 'CAISSIER') return;
+
+    const eleveId = String(data.eleveId ?? '');
+    const classeId = String(data.classeId ?? '');
+    if (!eleveId || !classeId) return;
+
+    const suggestion = await this.getInscriptionSuggestion(tenantId, eleveId);
+    if (!suggestion.lastInscription) return;
+    if (!suggestion.peutPasser) {
+      throw new BadRequestException('DEMANDE_PASSAGE_REQUISE: moyenne insuffisante');
+    }
+
+    const allowedIds = new Set((suggestion.classesDisponibles ?? []).map((classe: { id: string }) => classe.id));
+    if (!allowedIds.has(classeId)) {
+      throw new BadRequestException('CLASSE_NON_AUTORISEE: seul le niveau suivant est autorisé pour cet élève');
+    }
+  }
+
+  async getInscriptionSuggestion(tenantId: string | undefined, eleveId: string) {
+    if (!tenantId) throw new NotFoundException('Tenant introuvable');
+    const anneeCourante = await this.findCurrentAnnee(tenantId);
+
+    const lastInscription = await this.prisma.inscription.findFirst({
+      where: { tenantId, eleveId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        classe: { include: { niveau: { include: { cycle: true } } } },
+        anneeAcademique: { select: { id: true, libelle: true } },
+      },
+    });
+
+    if (!lastInscription?.classe?.niveau) {
+      return { lastInscription: null, moyenne: null, peutPasser: false, nextNiveau: null, classesDisponibles: [], frais: null, impayesCount: 0 };
+    }
+
+    const currentNiveau = lastInscription.classe.niveau;
+
+    const bulletins = await this.prisma.bulletin.findMany({
+      where: { tenantId, eleveId, anneeScolaire: lastInscription.anneeAcademique?.libelle ?? '' },
+      select: { moyenne: true },
+    });
+    const moyennes = bulletins.map((b) => b.moyenne).filter((m): m is number => m != null);
+    const moyenne = moyennes.length > 0 ? moyennes.reduce((s, v) => s + v, 0) / moyennes.length : null;
+
+    const nextNiveau = await this.prisma.niveau.findFirst({
+      where: { tenantId, cycleId: currentNiveau.cycleId, ordre: { gt: currentNiveau.ordre }, actif: true },
+      orderBy: { ordre: 'asc' },
+      include: { cycle: { select: { id: true, libelle: true } } },
+    });
+
+    const classesDisponibles = nextNiveau && anneeCourante
+      ? await this.prisma.classe.findMany({
+          where: { tenantId, niveauId: nextNiveau.id, anneeAcademiqueId: anneeCourante.id, actif: true },
+          select: { id: true, nom: true, effectifMax: true },
+        })
+      : [];
+
+    const frais = nextNiveau
+      ? await this.prisma.fraisNiveauConfig.findFirst({
+          where: { tenantId, section: currentNiveau.cycle.libelle, niveau: nextNiveau.libelle, actif: true },
+          select: { inscription: true, mensualite: true, nbMois: true },
+        })
+      : null;
+
+    const impayesCount = await this.prisma.paiement.count({
+      where: {
+        tenantId,
+        eleveId,
+        statut: 'EN_ATTENTE',
+        ...(anneeCourante ? { anneeScolaire: { not: anneeCourante.libelle } } : {}),
+      },
+    });
+
+    return {
+      lastInscription: {
+        id: lastInscription.id,
+        classe: { id: lastInscription.classe.id, nom: lastInscription.classe.nom },
+        niveau: {
+          id: currentNiveau.id,
+          code: currentNiveau.code,
+          libelle: currentNiveau.libelle,
+          ordre: currentNiveau.ordre,
+          moyennePassage: currentNiveau.moyennePassage,
+        },
+        anneeAcademique: lastInscription.anneeAcademique,
+      },
+      moyenne,
+      peutPasser: moyenne != null && nextNiveau != null && moyenne >= currentNiveau.moyennePassage,
+      nextNiveau: nextNiveau
+        ? { id: nextNiveau.id, code: nextNiveau.code, libelle: nextNiveau.libelle, ordre: nextNiveau.ordre }
+        : null,
+      classesDisponibles,
+      frais,
+      impayesCount,
+    };
+  }
+
+  async createDemandePassage(tenantId: string | undefined, body: Payload, userId: string | undefined) {
+    if (!tenantId) throw new NotFoundException('Tenant introuvable');
+    if (!userId) throw new BadRequestException('Utilisateur requis');
+    const eleveId = this.assertUuid(body.eleveId, 'eleveId');
+    const classeDestId = this.assertUuid(body.classeDestId, 'classeDestId');
+    const anneeCourante = await this.findCurrentAnnee(tenantId);
+    if (!anneeCourante) throw new BadRequestException('Aucune année académique courante');
+
+    return this.prisma.demandePassage.create({
+      data: {
+        tenantId,
+        eleveId,
+        classeDestId,
+        anneeAcademiqueId: anneeCourante.id,
+        motif: body.motif ? String(body.motif) : null,
+        statut: 'EN_ATTENTE',
+        creePar: userId,
+      },
+    });
+  }
+
+  async getDemandesPassage(tenantId: string | undefined, query: QueryParams) {
+    if (!tenantId) throw new NotFoundException('Tenant introuvable');
+    const where: Record<string, unknown> = { tenantId };
+    if (query.statut) where.statut = query.statut;
+    if (query.eleveId) where.eleveId = query.eleveId;
+    if (query.anneeAcademiqueId) where.anneeAcademiqueId = query.anneeAcademiqueId;
+
+    return this.prisma.demandePassage.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        classeDest: { select: { id: true, nom: true, niveau: { select: { id: true, code: true, libelle: true } } } },
+        anneeAcademique: { select: { id: true, libelle: true } },
+      },
+    });
+  }
+
+  async approuverDemandePassage(tenantId: string | undefined, id: string, userId: string | undefined) {
+    if (!tenantId) throw new NotFoundException('Tenant introuvable');
+    const demande = await this.prisma.demandePassage.findFirst({ where: { id, tenantId } });
+    if (!demande) throw new NotFoundException('Demande introuvable');
+    if (demande.statut !== 'EN_ATTENTE') throw new BadRequestException('Cette demande a déjà été traitée');
+
+    const anneeCourante = await this.findCurrentAnnee(tenantId);
+    if (!anneeCourante) throw new BadRequestException('Aucune année académique courante');
+    await this.assertSingleInscriptionPerYear(tenantId, {
+      eleveId: demande.eleveId,
+      classeId: demande.classeDestId,
+      anneeAcademiqueId: anneeCourante.id,
+    });
+
+    const [updated] = await this.prisma.$transaction([
+      this.prisma.demandePassage.update({
+        where: { id },
+        data: { statut: 'APPROUVEE', traitePar: userId ?? null },
+      }),
+      this.prisma.inscription.create({
+        data: {
+          tenantId,
+          eleveId: demande.eleveId,
+          classeId: demande.classeDestId,
+          anneeAcademiqueId: anneeCourante.id,
+          numeroInscription: this.generateInscriptionNumero(tenantId),
+          statut: 'ACTIF',
+          creePar: userId ?? demande.creePar,
+        },
+      }),
+    ]);
+
+    return updated;
+  }
+
+  async rejeterDemandePassage(tenantId: string | undefined, id: string, body: Payload, userId: string | undefined) {
+    if (!tenantId) throw new NotFoundException('Tenant introuvable');
+    const demande = await this.prisma.demandePassage.findFirst({ where: { id, tenantId } });
+    if (!demande) throw new NotFoundException('Demande introuvable');
+    if (demande.statut !== 'EN_ATTENTE') throw new BadRequestException('Cette demande a déjà été traitée');
+
+    return this.prisma.demandePassage.update({
+      where: { id },
+      data: {
+        statut: 'REJETEE',
+        traitePar: userId ?? null,
+        motifRefus: body.motifRefus ? String(body.motifRefus) : null,
+      },
+    });
   }
 
   private async findLatestBulletinId(tenantId: string | undefined, body: Payload): Promise<string> {

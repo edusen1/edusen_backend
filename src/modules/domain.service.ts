@@ -127,16 +127,44 @@ export class DomainService {
     });
   }
   studentReclamations(tenantId: string, eleveId: string) {
-    return this.prisma.reclamation.findMany({ where: { tenantId, eleveId } });
+    return this.prisma.reclamation.findMany({
+      where: { tenantId, eleveId },
+      include: { note: { include: { matiere: { select: { id: true, code: true, libelle: true } } } } },
+      orderBy: { createdAt: 'desc' },
+    });
   }
-  studentCreateReclamation(
+  async studentReclamationNotes(tenantId: string, eleveId: string) {
+    return this.prisma.note.findMany({
+      where: { tenantId, eleveId },
+      include: { matiere: { select: { id: true, code: true, libelle: true } } },
+      orderBy: [
+        { anneeScolaire: 'desc' },
+        { trimestre: 'asc' },
+        { matiere: { libelle: 'asc' } },
+        { dateEvaluation: 'asc' },
+      ],
+    });
+  }
+  async studentCreateReclamation(
     tenantId: string,
     eleveId: string,
     motif: string,
     noteId?: string,
+    pieceJointeUrl?: string,
   ) {
+    if (!noteId) throw new BadRequestException('La note concernée est obligatoire');
+    const note = await this.prisma.note.findFirst({
+      where: { id: noteId, tenantId, eleveId },
+      select: { id: true },
+    });
+    if (!note) throw new BadRequestException('Note concernée introuvable');
+    const existing = await this.prisma.reclamation.findFirst({
+      where: { tenantId, eleveId, noteId, statut: 'EN_ATTENTE' },
+      select: { id: true },
+    });
+    if (existing) throw new BadRequestException('Une réclamation est déjà en attente pour cette note');
     return this.prisma.reclamation.create({
-      data: { tenantId, eleveId, motif, noteId },
+      data: { tenantId, eleveId, motif, noteId, pieceJointeUrl } as any,
     });
   }
 
