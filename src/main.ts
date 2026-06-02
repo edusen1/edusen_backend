@@ -40,13 +40,25 @@ async function bootstrap(): Promise<void> {
     contentSecurityPolicy: false,
   });
 
-  const allowedOrigins = (
-    process.env.ALLOWED_ORIGINS
-    ?? 'http://localhost:4200,https://nouraschool.assanediallo.com,http://127.0.0.1:4200'
-  ).split(',').map((o) => o.trim());
+  const defaultAllowedOrigins = [
+    'http://localhost:4200',
+    'http://127.0.0.1:4200',
+    'https://noura-school.assanediallo.com',
+    'https://nouraschool.assanediallo.com',
+  ];
+  const normalizeOrigin = (origin: string) => origin.trim().replace(/\/$/, '').toLowerCase();
+  const allowedOrigins = new Set(
+    [
+      ...defaultAllowedOrigins,
+      ...(process.env.ALLOWED_ORIGINS ?? '').split(','),
+    ]
+      .map(normalizeOrigin)
+      .filter(Boolean),
+  );
   await app.register(cors, {
     origin: (origin, cb) => {
-      if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+      const normalizedOrigin = origin ? normalizeOrigin(origin) : '';
+      if (!origin || allowedOrigins.has(normalizedOrigin) || allowedOrigins.has('*')) {
         cb(null, true);
       } else {
         cb(null, false);
@@ -54,8 +66,10 @@ async function bootstrap(): Promise<void> {
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Tenant-Id', 'Accept'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Tenant-Id', 'Accept', 'Origin'],
     exposedHeaders: ['X-Total-Count'],
+    preflight: true,
+    strictPreflight: false,
   });
   await app.register(rateLimit, { max: 200, timeWindow: '1 minute' });
 
