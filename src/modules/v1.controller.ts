@@ -63,8 +63,40 @@ export class V1Controller {
   }
 
   @Get('stats/etablissement')
-  stats(@Headers('x-tenant-id') tenantId?: string) {
-    return this.crud.statsEtablissement(tenantId);
+  stats(@Headers('x-tenant-id') tenantId: string | undefined, @CurrentUser() user?: JwtUser) {
+    return this.crud.statsEtablissement(this.resolveTenantId(tenantId, user), user);
+  }
+
+  @Get('appbar/summary')
+  appbarSummary(@Headers('x-tenant-id') tenantId: string | undefined, @CurrentUser() user?: JwtUser) {
+    return this.crud.appbarSummary(this.resolveTenantId(tenantId, user), user);
+  }
+
+  @Get('appbar/notifications')
+  appbarNotifications(@Headers('x-tenant-id') tenantId: string | undefined, @CurrentUser() user?: JwtUser) {
+    return this.crud.appbarNotifications(this.resolveTenantId(tenantId, user), user);
+  }
+
+  @Get('appbar/messages')
+  appbarMessages(@Headers('x-tenant-id') tenantId: string | undefined, @CurrentUser() user?: JwtUser) {
+    return this.crud.appbarMessages(this.resolveTenantId(tenantId, user), user);
+  }
+
+  @Patch('appbar/notifications/lire-tout')
+  appbarNotificationsReadAll(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.crud.markAllAppbarNotificationsRead(this.resolveTenantId(tenantId, user), user);
+  }
+
+  @Patch('appbar/notifications/:id/lire')
+  appbarNotificationRead(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.crud.markAppbarNotificationRead(this.resolveTenantId(tenantId, user), id, user);
   }
 
   @Get('annees-academiques/courante')

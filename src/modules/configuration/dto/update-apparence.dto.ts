@@ -1,6 +1,20 @@
 import { IsIn } from 'class-validator';
 
-const THEME_COLORS = ['white', 'black', 'purple', 'orange', 'cyan', 'green', 'blue'] as const;
+const THEME_COLORS = [
+  'white',
+  'black',
+  'purple',
+  'orange',
+  'cyan',
+  'green',
+  'blue',
+  'indigo',
+  'teal',
+  'red',
+  'pink',
+  'amber',
+  'slate',
+] as const;
 const MODES = ['light', 'dark'] as const;
 
 export class UpdateApparenceDto {

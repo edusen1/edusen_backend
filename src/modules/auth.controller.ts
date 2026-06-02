@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Patch, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '@/common/decorators/public.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
@@ -29,18 +29,11 @@ export class AuthController {
   }
 
   @Public()
-  @Get('school/:code')
-  @ApiOperation({ summary: 'Informations publiques d\'une école par code d\'accès' })
-  getSchool(@Param('code') code: string) {
-    return this.authService.getSchoolByCode(code);
-  }
-
-@Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Connexion utilisateur (école via code opaque)' })
+  @ApiOperation({ summary: 'Connexion utilisateur par identifiants' })
   login(@Body() dto: LoginDto) {
-    return this.authService.login({ login: dto.telephone, password: dto.password, code: dto.code });
+    return this.authService.login({ login: dto.telephone, password: dto.password });
   }
 
   @Public()

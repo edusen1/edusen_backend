@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@/config/prisma.service';
+import { StorageService } from '@/infrastructure/storage/storage.service';
 import { UpdateEcoleConfigDto } from './dto/update-ecole-config.dto';
 import { UpdateApparenceDto } from './dto/update-apparence.dto';
 
@@ -30,7 +31,10 @@ export interface ApparenceResponse {
 
 @Injectable()
 export class EcoleConfigService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   async getEcoleConfig(tenantId: string): Promise<EcoleConfigResponse> {
     const config = await this.prisma.ecoleConfig.findUnique({ where: { tenantId } });
@@ -66,6 +70,11 @@ export class EcoleConfigService {
   }
 
   async updateEcoleConfig(tenantId: string, dto: UpdateEcoleConfigDto): Promise<EcoleConfigResponse> {
+    const previousConfig = await this.prisma.ecoleConfig.findUnique({
+      where: { tenantId },
+      select: { logoS3Key: true },
+    });
+    const logoPatch = await this.resolveLogoPatch(tenantId, dto.logoUrl);
     const data = {
       nom: dto.nom,
       slogan: dto.slogan ?? null,
@@ -81,12 +90,16 @@ export class EcoleConfigService {
 
     const config = await this.prisma.ecoleConfig.upsert({
       where: { tenantId },
-      create: { tenantId, ...data, logoUrl: dto.logoUrl ?? null },
+      create: { tenantId, ...data, ...(logoPatch ?? { logoUrl: null, logoS3Key: null }) },
       update: {
         ...data,
-        ...(dto.logoUrl !== undefined ? { logoUrl: dto.logoUrl } : {}),
+        ...(logoPatch ?? {}),
       },
     });
+
+    if (logoPatch?.logoS3Key && previousConfig?.logoS3Key && previousConfig.logoS3Key !== logoPatch.logoS3Key) {
+      await this.storage.delete(previousConfig.logoS3Key).catch(() => undefined);
+    }
 
     // Keep Tenant base fields in sync for coherence across the platform
     const codeEcole = await this.ensureUniqueTenantSlug(this.schoolCode(dto.nom), tenantId);
@@ -98,7 +111,7 @@ export class EcoleConfigService {
         emailContact: dto.email,
         telephone: dto.telephone,
         adresse: dto.adresse,
-        ...(dto.logoUrl !== undefined ? { logoUrl: dto.logoUrl } : {}),
+        ...(logoPatch ? { logoUrl: logoPatch.logoUrl } : {}),
       },
     });
 
@@ -208,5 +221,40 @@ export class EcoleConfigService {
     }
 
     return candidate;
+  }
+
+  private async resolveLogoPatch(
+    tenantId: string,
+    logoUrl?: string,
+  ): Promise<{ logoUrl: string | null; logoS3Key: string | null } | null> {
+    if (logoUrl === undefined) {
+      return null;
+    }
+
+    if (!logoUrl) {
+      return { logoUrl: null, logoS3Key: null };
+    }
+
+    if (/^https?:\/\//i.test(logoUrl)) {
+      return { logoUrl, logoS3Key: null };
+    }
+
+    const match = logoUrl.match(/^data:image\/(png|jpe?g|svg\+xml|webp);base64,(.+)$/i);
+    if (!match) {
+      throw new BadRequestException('Logo invalide');
+    }
+
+    const subtype = match[1].toLowerCase();
+    const contentType = `image/${subtype === 'jpg' ? 'jpeg' : subtype}`;
+    const extension = subtype === 'svg+xml' ? 'svg' : subtype === 'jpeg' ? 'jpg' : subtype;
+    const buffer = Buffer.from(match[2], 'base64');
+
+    if (!buffer.length || buffer.length > 2_000_000) {
+      throw new BadRequestException('Logo invalide ou trop volumineux');
+    }
+
+    const key = this.storage.buildKey('logos', tenantId, `logo.${extension}`);
+    const uploadedUrl = await this.storage.upload(key, buffer, contentType);
+    return { logoUrl: uploadedUrl, logoS3Key: key };
   }
 }

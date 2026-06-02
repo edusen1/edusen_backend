@@ -474,9 +474,7 @@ export class AdminController {
   ) {
     const tid = tenantId?.trim() || user?.tenantId;
     const phone = String(body.phone ?? '');
-    return this.whatsapp
-      .sendMessage(tid!, phone, 'Message de test Noura School ✅')
-      .then(() => ({ queued: true, messageId: `test-${Date.now()}` }));
+    return this.whatsapp.sendMessage(tid!, phone, 'Message de test Noura School ✅');
   }
 
   @Roles('ADMIN')

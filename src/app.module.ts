@@ -35,7 +35,7 @@ import { HealthController } from '@/modules/health.controller';
     ConfigModule.forRoot({ isGlobal: true }),
     JwtModule.register({
       global: true,
-      secret: process.env.JWT_SECRET ?? 'change-me-in-production',
+      secret: process.env.JWT_SECRET ?? 'c1573798629c7fea139ab064c71e40ebb243491a3c6c16f42faba2d13e9d838b',
       signOptions: { expiresIn: '15m' },
     }),
   ],

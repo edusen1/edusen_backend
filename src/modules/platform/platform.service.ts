@@ -107,12 +107,50 @@ export class PlatformService {
   }
 
   async stats() {
-    const [tenants, utilisateurs, utilisateursPlateforme] = await Promise.all([
+    const [totalTenants, tenantActifs, totalUsers, utilisateursPlateforme, totalInscriptions, totalPaiements, tenantParPlan] = await Promise.all([
       this.prisma.tenant.count(),
+      this.prisma.tenant.count({ where: { actif: true } }),
       this.prisma.user.count(),
       this.prisma.plateformeUtilisateur.count(),
+      this.prisma.inscription.count(),
+      this.prisma.paiement.count(),
+      this.prisma.tenant.groupBy({ by: ['plan'], _count: { _all: true } }),
     ]);
-    return { tenants, users: utilisateurs, utilisateurs, utilisateursPlateforme };
+
+    const tenantsSuspendus = totalTenants - tenantActifs;
+
+    const derniersTenants = await this.prisma.tenant.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      select: { id: true, nom: true, plan: true, actif: true, createdAt: true },
+    });
+
+    const croissanceMensuelle = await this.prisma.tenant.groupBy({
+      by: ['createdAt'],
+      _count: { _all: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // Agréger par mois
+    const parMois: Record<string, number> = {};
+    for (const row of croissanceMensuelle) {
+      const key = new Date(row.createdAt).toISOString().slice(0, 7);
+      parMois[key] = (parMois[key] ?? 0) + row._count._all;
+    }
+
+    return {
+      tenants: totalTenants,
+      tenantActifs,
+      tenantsSuspendus,
+      users: totalUsers,
+      utilisateurs: totalUsers,
+      utilisateursPlateforme,
+      inscriptions: totalInscriptions,
+      paiements: totalPaiements,
+      parPlan: tenantParPlan.map((p) => ({ plan: p.plan, count: p._count._all })),
+      derniersTenants,
+      croissanceMensuelle: Object.entries(parMois).map(([mois, count]) => ({ mois, count })),
+    };
   }
 
   auditLogs() {

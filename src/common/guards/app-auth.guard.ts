@@ -29,7 +29,7 @@ export class AppAuthGuard implements CanActivate {
       return true;
     }
 
-    const req = context.switchToHttp().getRequest<FastifyRequest & { user?: JwtUser }>();
+    const req = context.switchToHttp().getRequest<FastifyRequest & { tenantId?: string; user?: JwtUser }>();
     const auth = req.headers.authorization;
 
     if (!auth?.startsWith('Bearer ')) {
@@ -58,6 +58,11 @@ export class AppAuthGuard implements CanActivate {
     const tenantHeader = (req.headers['x-tenant-id'] as string | undefined)?.trim();
     if (payload.tenantId && tenantHeader && payload.tenantId !== tenantHeader) {
       throw new ForbiddenException('Tenant incohérent');
+    }
+
+    if (payload.tenantId) {
+      req.tenantId = payload.tenantId;
+      req.headers['x-tenant-id'] = payload.tenantId;
     }
 
     return true;

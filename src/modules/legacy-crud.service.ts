@@ -536,7 +536,8 @@ export class LegacyCrudService {
     await this.prisma.surveillantCycle.deleteMany({ where: { surveillantId, cycleId } });
   }
 
-  async statsEtablissement(tenantId: string | undefined) {
+  async statsEtablissement(tenantId: string | undefined, user?: JwtUser) {
+    const tenantFilter = tenantId ? { tenantId } : {};
     const [
       eleves,
       professeurs,
@@ -544,31 +545,104 @@ export class LegacyCrudService {
       classes,
       salles,
       inscriptionsActives,
-      paiements,
+      paiementsValidesAggregate,
+      paiementsEnAttente,
+      paiementsEnAttenteAggregate,
+      paiementsValides,
       absencesEleves,
+      absencesEnAttente,
+      retardsEleves,
+      absencesJustifiees,
+      convocationsEnAttente,
+      bulletinsValides,
+      bulletinsBrouillons,
       notes,
       elevesParClasse,
       professeursParSpecialite,
+      paiementsParStatut,
+      absencesParStatut,
+      bulletinsParStatut,
+      derniersPaiements,
+      absencesRecentes,
+      notificationsNonLues,
     ] = await Promise.all([
-      this.prisma.user.count({ where: { tenantId, role: 'ELEVE' } }),
-      this.prisma.user.count({ where: { tenantId, role: 'ENSEIGNANT' } }),
-      this.prisma.user.count({ where: { tenantId, role: 'PARENT' } }),
-      this.prisma.classe.count({ where: { tenantId } }),
-      this.prisma.salle.count({ where: { tenantId } }),
-      this.prisma.inscription.count({ where: { tenantId, statut: 'ACTIF' } }),
-      this.prisma.paiement.aggregate({ where: { tenantId, statut: 'VALIDE' }, _sum: { montant: true } }),
-      this.prisma.absenceEleve.count({ where: { tenantId } }),
-      this.prisma.note.aggregate({ where: { tenantId }, _avg: { note: true }, _count: true }),
+      this.prisma.user.count({ where: { ...tenantFilter, role: 'ELEVE' } }),
+      this.prisma.user.count({ where: { ...tenantFilter, role: 'ENSEIGNANT' } }),
+      this.prisma.user.count({ where: { ...tenantFilter, role: 'PARENT' } }),
+      this.prisma.classe.count({ where: tenantFilter }),
+      this.prisma.salle.count({ where: tenantFilter }),
+      this.prisma.inscription.count({ where: { ...tenantFilter, statut: 'ACTIF' } }),
+      this.prisma.paiement.aggregate({ where: { ...tenantFilter, statut: 'VALIDE' }, _sum: { montant: true } }),
+      this.prisma.paiement.count({ where: { ...tenantFilter, statut: 'EN_ATTENTE' } }),
+      this.prisma.paiement.aggregate({ where: { ...tenantFilter, statut: 'EN_ATTENTE' }, _sum: { montant: true } }),
+      this.prisma.paiement.count({ where: { ...tenantFilter, statut: 'VALIDE' } }),
+      this.prisma.absenceEleve.count({ where: tenantFilter }),
+      this.prisma.absenceEleve.count({ where: { ...tenantFilter, statut: 'EN_ATTENTE' } }),
+      this.prisma.absenceEleve.count({ where: { ...tenantFilter, typeAbsence: 'RETARD' } }),
+      this.prisma.absenceEleve.count({ where: { ...tenantFilter, justifiee: true } }),
+      this.prisma.convocation.count({ where: { ...tenantFilter, statut: 'EN_ATTENTE' } }),
+      this.prisma.bulletin.count({ where: { ...tenantFilter, statut: 'VALIDE' } }),
+      this.prisma.bulletin.count({ where: { ...tenantFilter, statut: 'BROUILLON' } }),
+      this.prisma.note.aggregate({ where: tenantFilter, _avg: { note: true }, _count: true }),
       this.prisma.classe.findMany({
-        where: { tenantId },
+        where: tenantFilter,
         select: { id: true, nom: true, _count: { select: { eleves: true, inscriptions: true } } },
         orderBy: { nom: 'asc' },
       }),
       this.prisma.user.groupBy({
         by: ['specialite'],
-        where: { tenantId, role: 'ENSEIGNANT' },
+        where: { ...tenantFilter, role: 'ENSEIGNANT' },
         _count: { _all: true },
       }),
+      this.prisma.paiement.groupBy({
+        by: ['statut'],
+        where: tenantFilter,
+        _count: { _all: true },
+        _sum: { montant: true },
+      }),
+      this.prisma.absenceEleve.groupBy({
+        by: ['statut'],
+        where: tenantFilter,
+        _count: { _all: true },
+      }),
+      this.prisma.bulletin.groupBy({
+        by: ['statut'],
+        where: tenantFilter,
+        _count: { _all: true },
+      }),
+      this.prisma.paiement.findMany({
+        where: tenantFilter,
+        select: {
+          id: true,
+          reference: true,
+          montant: true,
+          statut: true,
+          typePaiement: true,
+          datePaiement: true,
+          createdAt: true,
+        },
+        orderBy: [{ createdAt: 'desc' }],
+        take: 6,
+      }),
+      this.prisma.absenceEleve.findMany({
+        where: tenantFilter,
+        select: {
+          id: true,
+          date: true,
+          typeAbsence: true,
+          statut: true,
+          justifiee: true,
+          createdAt: true,
+          classe: { select: { nom: true } },
+        },
+        orderBy: [{ createdAt: 'desc' }],
+        take: 6,
+      }),
+      user?.sub
+        ? this.prisma.notification.count({
+            where: { ...tenantFilter, destinataireId: user.sub, lu: false },
+          })
+        : Promise.resolve(0),
     ]);
     return {
       eleves,
@@ -578,9 +652,19 @@ export class LegacyCrudService {
       salles,
       inscriptionsActives,
       absencesEleves,
+      absencesEnAttente,
+      retardsEleves,
+      absencesJustifiees,
+      convocationsEnAttente,
+      bulletinsValides,
+      bulletinsBrouillons,
+      notificationsNonLues,
       moyenneNotes: notes._avg.note ?? 0,
       nombreNotes: notes._count,
-      montantPaiements: paiements._sum.montant ?? 0,
+      montantPaiements: paiementsValidesAggregate._sum.montant ?? 0,
+      paiementsEnAttente,
+      montantPaiementsEnAttente: paiementsEnAttenteAggregate._sum.montant ?? 0,
+      paiementsValides,
       elevesParClasse: elevesParClasse.map((classe) => ({
         classeId: classe.id,
         classeNom: classe.nom,
@@ -591,7 +675,103 @@ export class LegacyCrudService {
         specialite: item.specialite ?? 'NON_RENSEIGNEE',
         total: item._count._all,
       })),
+      paiementsParStatut: paiementsParStatut.map((item) => ({
+        statut: item.statut,
+        total: item._count._all,
+        montant: item._sum.montant ?? 0,
+      })),
+      absencesParStatut: absencesParStatut.map((item) => ({
+        statut: item.statut,
+        total: item._count._all,
+      })),
+      bulletinsParStatut: bulletinsParStatut.map((item) => ({
+        statut: item.statut,
+        total: item._count._all,
+      })),
+      derniersPaiements,
+      absencesRecentes: absencesRecentes.map((absence) => ({
+        id: absence.id,
+        date: absence.date,
+        typeAbsence: absence.typeAbsence,
+        statut: absence.statut,
+        justifiee: absence.justifiee,
+        createdAt: absence.createdAt,
+        classeNom: absence.classe?.nom ?? null,
+      })),
     };
+  }
+
+  async appbarSummary(tenantId: string | undefined, user?: JwtUser) {
+    const tenantFilter = tenantId ? { tenantId } : {};
+    const userFilter = user?.sub ? { destinataireId: user.sub } : null;
+
+    const [notificationsNonLues, paiementsEnAttente, inscriptionsActives] = await Promise.all([
+      userFilter
+        ? this.prisma.notification.count({ where: { ...tenantFilter, ...userFilter, lu: false } })
+        : Promise.resolve(0),
+      this.prisma.paiement.count({ where: { ...tenantFilter, statut: 'EN_ATTENTE' } }),
+      this.prisma.inscription.count({ where: { ...tenantFilter, statut: 'ACTIF' } }),
+    ]);
+
+    return {
+      notificationsNonLues,
+      paiementsEnAttente,
+      inscriptionsActives,
+      messagesNonLus: 0,
+    };
+  }
+
+  async appbarNotifications(tenantId: string | undefined, user?: JwtUser) {
+    if (!user?.sub) {
+      return [];
+    }
+
+    const tenantFilter = tenantId ? { tenantId } : {};
+    return this.prisma.notification.findMany({
+      where: { ...tenantFilter, destinataireId: user.sub },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    });
+  }
+
+  async appbarMessages(_tenantId: string | undefined, _user?: JwtUser) {
+    return [];
+  }
+
+  async markAppbarNotificationRead(tenantId: string | undefined, id: string, user?: JwtUser) {
+    this.assertUuid(id, 'id');
+    if (!user?.sub) {
+      throw new NotFoundException('Notification introuvable');
+    }
+
+    const tenantFilter = tenantId ? { tenantId } : {};
+    const notification = await this.prisma.notification.findFirst({
+      where: { ...tenantFilter, id, destinataireId: user.sub },
+      select: { id: true },
+    });
+
+    if (!notification) {
+      throw new NotFoundException('Notification introuvable');
+    }
+
+    return this.prisma.notification.update({
+      where: { id },
+      data: { lu: true },
+    });
+  }
+
+  async markAllAppbarNotificationsRead(tenantId: string | undefined, user?: JwtUser) {
+    if (!user?.sub) {
+      return { updated: 0 };
+    }
+
+    const tenantFilter = tenantId ? { tenantId } : {};
+    const result = await this.prisma.notification.updateMany({
+      where: { ...tenantFilter, destinataireId: user.sub, lu: false },
+      data: { lu: true },
+    });
+
+    return { updated: result.count };
   }
 
   async parentChildren(parentId: string) {

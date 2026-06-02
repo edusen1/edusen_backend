@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "NouraSchool Backend API",
-    "description": "Collection generee depuis les controleurs NestJS. Login ecole: code obligatoire. Login plateforme: email sans code.",
+    "description": "Collection generee depuis les controleurs NestJS. Login par identifiants: le tenant ecole est deduit du compte.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -3507,7 +3507,7 @@
       "name": "Authentification",
       "item": [
         {
-          "name": "Authentification — Connexion école ADMIN (code obligatoire)",
+          "name": "Authentification — Connexion école ADMIN",
           "request": {
             "method": "POST",
             "header": [
@@ -3533,7 +3533,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"telephone\": \"{{adminTelephone}}\",\n  \"password\": \"{{password}}\",\n  \"code\": \"{{tenantCodeAdmin}}\"\n}",
+              "raw": "{\n  \"telephone\": \"{{adminTelephone}}\",\n  \"password\": \"{{password}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3797,30 +3797,6 @@
                   "language": "json"
                 }
               }
-            }
-          }
-        },
-        {
-          "name": "Authentification — Lire l’école associée au code d’accès",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/school/{{tenantCodeAdmin}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "school",
-                "{{tenantCodeAdmin}}"
-              ]
             }
           }
         },

@@ -1,30 +1,17 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   Logger,
-  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomBytes } from 'node:crypto';
-import { Prisma, UserRole } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { RedisService } from '@/infrastructure/redis/redis.service';
 import { MailService } from '@/infrastructure/mail/mail.service';
 import type { JwtUser } from '@/common/types/auth.types';
-
-type CodeType = 'ELEVE' | 'ENSEIGNANT' | 'CAISSIER' | 'ADMIN' | 'SURVEILLANT' | 'RH';
-
-const ROLE_FILTER: Record<CodeType, object> = {
-  ELEVE:       { role: UserRole.ELEVE },
-  ENSEIGNANT:  { role: UserRole.ENSEIGNANT },
-  CAISSIER:    { role: UserRole.CAISSIER },
-  ADMIN:       { role: { in: [UserRole.ADMIN, UserRole.GESTIONNAIRE] } },
-  SURVEILLANT: { role: UserRole.SURVEILLANT },
-  RH:          { role: UserRole.RH },
-};
 
 const LOCKOUT_KEY = 'auth:lockout:';
 const RATELIMIT_FORGOT_KEY = 'auth:ratelimit:forgot:';
@@ -50,14 +37,14 @@ export class AuthService {
 
   // ==================== LOGIN ====================
 
-  async login(dto: { login: string; password: string; code?: string }): Promise<{
+  async login(dto: { login: string; password: string }): Promise<{
     accessToken: string;
     refreshToken: string | null;
     expiresIn: number;
     refreshExpiresIn: number;
     passwordChangeRequired: boolean;
   }> {
-    const normalizedLogin = dto.login.trim().toLowerCase();
+    const login = dto.login.trim().toLowerCase();
     const rawLogin = dto.login.trim();
     const lockoutKey = LOCKOUT_KEY + this.normalizeLockoutKey(dto.login);
 
@@ -67,44 +54,62 @@ export class AuthService {
     }
     this.checkExponentialDelay(attempts, lastEpoch);
 
-    if (!dto.code) {
-      return this.loginPlatformUser({ login: dto.login, password: dto.password }, lockoutKey, normalizedLogin);
+    const schoolLogin = await this.loginTenantUser({ login: dto.login, password: dto.password }, lockoutKey, login, rawLogin);
+    if (schoolLogin) {
+      return schoolLogin;
     }
 
-    // Résolution du tenant + type d'accès via le code opaque
-    const { tenant, type } = await this.resolveTenantByCode(dto.code);
+    return this.loginPlatformUser({ login: dto.login, password: dto.password }, lockoutKey, login, rawLogin);
+  }
 
-    const roleFilter = ROLE_FILTER[type];
-
-    const loginConditions = [
-      { telephone: normalizedLogin },
+  private async loginTenantUser(
+    dto: { login: string; password: string },
+    lockoutKey: string,
+    normalizedLogin: string,
+    rawLogin: string,
+  ): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    expiresIn: number;
+    refreshExpiresIn: number;
+    passwordChangeRequired: boolean;
+  } | null> {
+    const loginConditions: Prisma.UserWhereInput[] = [
+      ...this.phoneLoginVariants(rawLogin).map((telephone) => ({ telephone })),
+      { email: { equals: normalizedLogin, mode: Prisma.QueryMode.insensitive } },
+      { username: { equals: normalizedLogin, mode: Prisma.QueryMode.insensitive } },
       { matricule: { equals: rawLogin, mode: Prisma.QueryMode.insensitive } },
     ];
 
-    const user = await this.prisma.user.findFirst({
+    const candidates = await this.prisma.user.findMany({
       where: {
-        tenantId: tenant.id,
-        ...roleFilter,
         OR: loginConditions,
       },
       include: { tenant: true },
     });
 
-    if (!user) {
-      await this.redis.incrementLockout(lockoutKey, LOCKOUT_TTL);
-      throw new UnauthorizedException('IDENTIFIANTS_INVALIDES');
+    if (!candidates.length) {
+      return null;
     }
 
-    if (!user.actif) throw new UnauthorizedException('USER_INACTIVE');
-
-    const valid = await bcrypt.compare(dto.password, user.passwordHash);
-    if (!valid) {
-      const newAttempts = await this.redis.incrementLockout(lockoutKey, LOCKOUT_TTL);
-      if (newAttempts >= LOCKOUT_MAX_ATTEMPTS) {
-        throw new UnauthorizedException('COMPTE_VERROUILLE');
+    const matches: typeof candidates = [];
+    for (const candidate of candidates) {
+      if (await bcrypt.compare(dto.password, candidate.passwordHash)) {
+        matches.push(candidate);
       }
-      throw new UnauthorizedException('IDENTIFIANTS_INVALIDES');
     }
+
+    if (!matches.length) {
+      return null;
+    }
+
+    if (matches.length > 1) {
+      throw new UnauthorizedException('IDENTIFIANTS_AMBIGUS');
+    }
+
+    const user = matches[0];
+    if (!user.actif) throw new UnauthorizedException('USER_INACTIVE');
+    if (!user.tenant.actif) throw new UnauthorizedException('TENANT_INACTIF');
 
     await this.redis.del(lockoutKey);
 
@@ -121,47 +126,15 @@ export class AuthService {
     const refreshToken = await this.createRefreshToken(user.id);
     const mustChange = user.mustChangePwd ?? true;
 
-    this.logger.log(`Login success userId=${user.id} role=${user.role} type=${type}`);
+    this.logger.log(`Login success userId=${user.id} role=${user.role} tenantId=${user.tenantId}`);
     return { accessToken, refreshToken, expiresIn: 900, refreshExpiresIn: REFRESH_TOKEN_SECONDS, passwordChangeRequired: mustChange };
-  }
-
-  async getSchoolByCode(code: string): Promise<{ nom: string; type: CodeType }> {
-    const { tenant, type } = await this.resolveTenantByCode(code);
-    return { nom: tenant.nom, type };
-  }
-
-  private async resolveTenantByCode(code: string): Promise<{
-    tenant: { id: string; nom: string; slug: string; actif: boolean };
-    type: CodeType;
-  }> {
-    const codeFields: Array<[string, CodeType]> = [
-      ['codeAccesEleve', 'ELEVE'],
-      ['codeAccesEnseignant', 'ENSEIGNANT'],
-      ['codeAccesCaissier', 'CAISSIER'],
-      ['codeAccesAdmin', 'ADMIN'],
-      ['codeAccesSurveillant', 'SURVEILLANT'],
-      ['codeAccesRh', 'RH'],
-    ];
-
-    for (const [field, type] of codeFields) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const tenant = await this.prisma.tenant.findFirst({
-        where: { [field]: code } as any,
-        select: { id: true, nom: true, slug: true, actif: true },
-      });
-      if (tenant) {
-        if (!tenant.actif) throw new UnauthorizedException('TENANT_INACTIF');
-        return { tenant, type };
-      }
-    }
-
-    throw new NotFoundException('CODE_ACCES_INVALIDE');
   }
 
   private async loginPlatformUser(
     dto: { login: string; password: string },
     lockoutKey: string,
     normalizedLogin: string,
+    rawLogin: string,
   ): Promise<{
     accessToken: string;
     refreshToken: null;
@@ -169,8 +142,14 @@ export class AuthService {
     refreshExpiresIn: number;
     passwordChangeRequired: boolean;
   }> {
-    const pu = await this.prisma.plateformeUtilisateur.findUnique({
-      where: { email: normalizedLogin },
+    const phoneVariants = this.phoneLoginVariants(rawLogin);
+    const pu = await this.prisma.plateformeUtilisateur.findFirst({
+      where: {
+        OR: [
+          { email: normalizedLogin },
+          ...phoneVariants.map((telephone) => ({ telephone })),
+        ],
+      },
     });
 
     if (!pu) {
@@ -494,5 +473,38 @@ export class AuthService {
 
   private normalizeLockoutKey(login: string): string {
     return (login ?? '').trim().toLowerCase().replace(/[^a-z0-9@.+\-]/g, '_');
+  }
+
+  private phoneLoginVariants(login: string): string[] {
+    const trimmed = (login ?? '').trim();
+    if (!trimmed || !/^[+\d\s().-]+$/.test(trimmed)) {
+      return [];
+    }
+
+    const compact = trimmed.replace(/[\s().-]/g, '');
+    const digits = compact.replace(/\D/g, '');
+    if (digits.length < 8) {
+      return [];
+    }
+
+    const variants = new Set<string>([trimmed, compact]);
+    let local = '';
+
+    if (digits.startsWith('00221') && digits.length > 5) {
+      local = digits.slice(5);
+    } else if (digits.startsWith('221') && digits.length > 3) {
+      local = digits.slice(3);
+    } else if (digits.length === 9) {
+      local = digits;
+    }
+
+    if (/^\d{9}$/.test(local)) {
+      variants.add(local);
+      variants.add(`+221${local}`);
+      variants.add(`221${local}`);
+      variants.add(`00221${local}`);
+    }
+
+    return [...variants];
   }
 }

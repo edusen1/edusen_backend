@@ -751,11 +751,22 @@ export class ClasseService {
     enseignantId: string,
     dto: { dateDebut?: string; dateFin?: string; heureDebut?: string; heureFin?: string; motif?: string; typeAbsence?: string; justificatifUrl?: string },
   ) {
-    const personnel = await this.prisma.personnel.findFirst({
+    let personnel = await this.prisma.personnel.findFirst({
       where: { tenantId, utilisateurId: enseignantId },
       select: { id: true },
     });
-    if (!personnel) throw new NotFoundException('Dossier personnel introuvable pour ce professeur');
+    // Auto-création du dossier personnel si absent (professeur sans fiche RH)
+    if (!personnel) {
+      const user = await this.prisma.user.findFirst({
+        where: { id: enseignantId, tenantId, role: 'ENSEIGNANT' },
+        select: { id: true },
+      });
+      if (!user) throw new NotFoundException('Utilisateur introuvable');
+      personnel = await this.prisma.personnel.create({
+        data: { tenantId, utilisateurId: enseignantId },
+        select: { id: true },
+      });
+    }
 
     if (!dto.dateDebut || !dto.dateFin) {
       throw new BadRequestException('Les dates de début et de fin sont obligatoires');

@@ -310,6 +310,7 @@ model WhatsappOutbox {
   createdAt     DateTime  @default(now())
 
   @@index([tenantId, createdAt])
+  @@index([tenantId, attempts, createdAt])
   @@map("whatsapp_outbox")
 }
 
@@ -623,6 +624,7 @@ model Inscription {
   paiements Paiement[]
 
   @@unique([tenantId, eleveId, anneeAcademiqueId], map: "inscriptions_tenant_eleve_annee_unique")
+  @@index([tenantId, statut], map: "inscriptions_tenantId_statut_idx")
 }
 
 // ==================== GRADES ====================
@@ -645,6 +647,8 @@ model Note {
   updatedAt      DateTime       @updatedAt
 
   reclamations Reclamation[]
+
+  @@index([tenantId], map: "notes_tenantId_idx")
 }
 
 model Bulletin {
@@ -671,6 +675,7 @@ model Bulletin {
   updatedAt      DateTime       @updatedAt
 
   @@unique([eleveId, classeId, trimestre, anneeScolaire])
+  @@index([tenantId, statut], map: "bulletins_tenantId_statut_idx")
 
   liensBulletin LienBulletinParent[]
 }
@@ -693,6 +698,9 @@ model AbsenceEleve {
   approuvePar String?            @db.Uuid
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
+
+  @@index([tenantId, statut, createdAt], map: "absences_eleves_tenantId_statut_createdAt_idx")
+  @@index([tenantId, typeAbsence], map: "absences_eleves_tenantId_typeAbsence_idx")
 }
 
 model AbsenceEnseignant {
@@ -809,6 +817,8 @@ model Convocation {
   creePar         String?  @db.Uuid
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
+  @@index([tenantId, statut], map: "convocations_tenantId_statut_idx")
 }
 
 model Notification {
@@ -820,6 +830,8 @@ model Notification {
   contenu        String?
   lu             Boolean  @default(false)
   createdAt      DateTime @default(now())
+
+  @@index([tenantId, destinataireId, lu, createdAt], map: "notifications_tenantId_destinataireId_lu_createdAt_idx")
 }
 
 model NotificationLog {
@@ -859,6 +871,8 @@ model Paiement {
   validePar     String?        @db.Uuid
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
+
+  @@index([tenantId, statut, createdAt], map: "paiements_tenantId_statut_createdAt_idx")
 }
 
 model LienPaiementParent {
