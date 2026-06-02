@@ -1,13 +1,46 @@
 #!/bin/sh
 
-echo ""
-echo "╔══════════════════════════════════════════════════════╗"
-echo "║        🎓  NouraSchool Backend — Démarrage           ║"
-echo "╚══════════════════════════════════════════════════════╝"
-echo ""
+if [ -t 1 ] && [ "${NO_COLOR:-}" = "" ]; then
+  BLUE='\033[1;34m'
+  GREEN='\033[1;32m'
+  YELLOW='\033[1;33m'
+  RED='\033[1;31m'
+  CYAN='\033[1;36m'
+  DIM='\033[2m'
+  RESET='\033[0m'
+else
+  BLUE=''
+  GREEN=''
+  YELLOW=''
+  RED=''
+  CYAN=''
+  DIM=''
+  RESET=''
+fi
+
+log_step() {
+  printf '%b\n' "${BLUE}▶ $1${RESET}"
+}
+
+log_ok() {
+  printf '%b\n' "${GREEN}✅ $1${RESET}"
+}
+
+log_warn() {
+  printf '%b\n' "${YELLOW}⚠️  $1${RESET}"
+}
+
+log_error() {
+  printf '%b\n' "${RED}❌ $1${RESET}"
+}
+
+printf '\n%b\n' "${CYAN}╔══════════════════════════════════════════════════════╗${RESET}"
+printf '%b\n' "${CYAN}║        🎓  NouraSchool Backend — Démarrage           ║${RESET}"
+printf '%b\n\n' "${CYAN}╚══════════════════════════════════════════════════════╝${RESET}"
+printf '%b\n' "${DIM}Environment=${NODE_ENV:-production} Port=${PORT:-3000}${RESET}"
 
 # ── 1. Migrations Prisma ──────────────────────────────────────────────────────
-echo "📦  Exécution des migrations Prisma..."
+log_step "📦 Exécution des migrations Prisma"
 
 # Capturer la sortie sans set -e pour gérer les erreurs manuellement
 migrate_log=$(npx prisma migrate deploy 2>&1)
@@ -20,32 +53,33 @@ if [ $migrate_exit -ne 0 ]; then
   failed=$(echo "$migrate_log" | sed -n 's/.*The `\([^`]*\)` migration.*/\1/p' | head -1)
 
   if [ -n "$failed" ]; then
-    echo "⚠️   Migration échouée : $failed"
+    log_warn "Migration échouée : $failed"
     # Pour les migrations seed (données seulement), on les marque comme appliquées
     # afin qu'elles ne bloquent pas les migrations de schéma suivantes.
-    echo "🔧  Marquage comme appliquée (--applied) pour débloquer les migrations suivantes..."
+    log_step "🔧 Marquage comme appliquée (--applied) pour débloquer les migrations suivantes"
     npx prisma migrate resolve --applied "$failed"
 
-    echo "🔄  Nouvelle tentative..."
+    log_step "🔄 Nouvelle tentative de migration"
     npx prisma migrate deploy
-    echo "✅  Migrations appliquées après résolution"
+    log_ok "Migrations appliquées après résolution"
   else
-    echo "❌  Migrations Prisma échouées (cause inconnue). Arrêt."
+    log_error "Migrations Prisma échouées (cause inconnue). Arrêt."
     exit 1
   fi
 else
-  echo "✅  Migrations Prisma à jour"
+  log_ok "Migrations Prisma à jour"
 fi
 
 echo ""
 
 # ── 2. Scripts de seed ────────────────────────────────────────────────────────
-echo "🌱  Scripts de seed..."
-node scripts/patch-amadou-parcours.cjs 2>&1 && echo "   ✔ patch-amadou-parcours" || echo "   ⚠ patch-amadou-parcours ignoré"
-node scripts/seed-amadou-notes.cjs     2>&1 && echo "   ✔ seed-amadou-notes"     || echo "   ⚠ seed-amadou-notes ignoré"
+log_step "🌱 Scripts de seed complémentaires"
+node scripts/patch-amadou-parcours.cjs 2>&1 && log_ok "patch-amadou-parcours" || log_warn "patch-amadou-parcours ignoré"
+node scripts/seed-amadou-notes.cjs     2>&1 && log_ok "seed-amadou-notes"     || log_warn "seed-amadou-notes ignoré"
 echo ""
 
 # ── 3. Démarrage ──────────────────────────────────────────────────────────────
-echo "🚀  Démarrage du serveur NestJS..."
+log_step "🚀 Démarrage du serveur NestJS"
+printf '%b\n\n' "${DIM}Commande: node dist/main${RESET}"
 echo ""
 exec node dist/main

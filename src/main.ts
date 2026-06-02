@@ -8,6 +8,13 @@ import rateLimit from '@fastify/rate-limit';
 import { AppModule } from '@/app.module';
 
 const logger = new Logger('Bootstrap');
+const color = {
+  cyan: '\u001b[1;36m',
+  green: '\u001b[1;32m',
+  blue: '\u001b[1;34m',
+  dim: '\u001b[2m',
+  reset: '\u001b[0m',
+};
 
 // Empêcher le process de crasher sur des rejections non gérées
 // (notamment les erreurs internes de whatsapp-web.js / Puppeteer)
@@ -78,7 +85,7 @@ async function bootstrap(): Promise<void> {
 
   const config = new DocumentBuilder()
     .setTitle('NouraSchool API')
-    .setDescription('Migration compl�te vers NestJS + Fastify')
+    .setDescription('Migration complète vers NestJS + Fastify')
     .setVersion('1.0.0')
     .addBearerAuth()
     .build();
@@ -91,16 +98,18 @@ async function bootstrap(): Promise<void> {
   await app.listen(port, '0.0.0.0');
 
   const url = `http://0.0.0.0:${port}`;
-  logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  logger.log('🎓  NouraSchool Backend — démarrage réussi');
-  logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  logger.log(`🌍  Environnement : ${env}`);
-  logger.log(`🚀  API en écoute : ${url}/api`);
-  logger.log(`📖  Swagger docs  : ${url}/docs`);
-  logger.log(`❤️   Health check  : ${url}/api/health`);
-  logger.log(`🗄️   Base de données PostgreSQL connectée`);
-  logger.log(`⚡  Moteur HTTP   : Fastify`);
-  logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  const line = `${color.cyan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${color.reset}`;
+  logger.log(line);
+  logger.log(`${color.green}🎓  NouraSchool Backend — démarrage réussi${color.reset}`);
+  logger.log(line);
+  logger.log(`${color.blue}🌍  Environnement${color.reset} : ${env}`);
+  logger.log(`${color.blue}🚀  API${color.reset}           : ${url}/api`);
+  logger.log(`${color.blue}📖  Swagger${color.reset}       : ${url}/docs`);
+  logger.log(`${color.blue}❤️   Health check${color.reset}  : ${url}/api/health`);
+  logger.log(`${color.blue}🗄️   Base de données${color.reset}: PostgreSQL connectée`);
+  logger.log(`${color.blue}⚡  Moteur HTTP${color.reset}   : Fastify`);
+  logger.log(`${color.dim}CORS autorisés: ${Array.from(allowedOrigins).join(', ')}${color.reset}`);
+  logger.log(line);
 }
 
 void bootstrap();
