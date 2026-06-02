@@ -68,7 +68,7 @@ export class AuthService {
     this.checkExponentialDelay(attempts, lastEpoch);
 
     if (!dto.code) {
-      throw new UnauthorizedException('CODE_ACCES_REQUIS');
+      return this.loginPlatformUser({ login: dto.login, password: dto.password }, lockoutKey, normalizedLogin);
     }
 
     // Résolution du tenant + type d'accès via le code opaque
