@@ -3,6 +3,9 @@ import { PrismaService } from '@/config/prisma.service';
 import { CreateClasseDto } from './dto/create-classe.dto';
 import { UpdateClasseDto } from './dto/update-classe.dto';
 
+type QueryValue = string | string[] | undefined;
+type TeacherQueryParams = Record<string, QueryValue>;
+
 const PROF_SELECT = {
   id: true,
   firstName: true,
@@ -616,6 +619,186 @@ export class ClasseService {
         slot.salleBatimentNom ?? '',
       ]),
     ]);
+  }
+
+  async getTeacherNotes(tenantId: string, enseignantId: string, query: TeacherQueryParams = {}) {
+    const classeId = this.firstQueryValue(query.classeId);
+    const classes = await this.getTeacherClasseScope(tenantId, enseignantId, classeId);
+    if (!classes.length) return this.pageResult([], 0, query);
+
+    const classIds = classes.map((classe) => classe.id);
+    const classeById = new Map(classes.map((classe) => [classe.id, classe]));
+    const inscriptions = await this.prisma.inscription.findMany({
+      where: {
+        tenantId,
+        classeId: { in: classIds },
+        statut: 'ACTIF',
+        ...(this.firstQueryValue(query.eleveId) ? { eleveId: this.firstQueryValue(query.eleveId) } : {}),
+      },
+      select: { eleveId: true, classeId: true, anneeAcademiqueId: true },
+    });
+
+    const inscriptionsByClasse = new Map<string, typeof inscriptions>();
+    for (const inscription of inscriptions) {
+      const rows = inscriptionsByClasse.get(inscription.classeId) ?? [];
+      rows.push(inscription);
+      inscriptionsByClasse.set(inscription.classeId, rows);
+    }
+
+    const noteScopes = classes.flatMap((classe) => {
+      const rows = (inscriptionsByClasse.get(classe.id) ?? []).filter(
+        (inscription) => !classe.anneeAcademiqueId || inscription.anneeAcademiqueId === classe.anneeAcademiqueId,
+      );
+      const eleveIds = rows.map((inscription) => inscription.eleveId);
+      if (!eleveIds.length) return [];
+
+      const isResponsable = classe.professeurResponsableId === enseignantId;
+      const matiereIds = classe.matiereClasses.map((matiereClasse) => matiereClasse.matiereId);
+      if (!isResponsable && !matiereIds.length) return [];
+
+      return [
+        {
+          eleveId: { in: eleveIds },
+          ...(classe.anneeAcademique?.libelle ? { anneeScolaire: classe.anneeAcademique.libelle } : {}),
+          ...(!isResponsable ? { matiereId: { in: matiereIds } } : {}),
+        },
+      ];
+    });
+
+    if (!noteScopes.length) return this.pageResult([], 0, query);
+
+    const where: Record<string, unknown> = {
+      tenantId,
+      OR: noteScopes,
+      ...this.teacherNoteFilters(query),
+    };
+    const page = this.toQueryInt(query.page, 0);
+    const size = this.toQueryInt(query.size, 20);
+
+    const [notes, totalElements] = await Promise.all([
+      this.prisma.note.findMany({
+        where,
+        skip: page * size,
+        take: size,
+        include: { matiere: { select: { id: true, code: true, libelle: true } } },
+        orderBy: this.teacherOrderBy(query, [{ anneeScolaire: 'desc' }, { trimestre: 'asc' }, { createdAt: 'desc' }]),
+      }),
+      this.prisma.note.count({ where }),
+    ]);
+
+    const eleveIds = [...new Set(notes.map((note) => note.eleveId))];
+    const eleves = eleveIds.length
+      ? await this.prisma.user.findMany({
+          where: { tenantId, id: { in: eleveIds }, role: 'ELEVE' },
+          select: { id: true, firstName: true, lastName: true, matricule: true, photoUrl: true },
+        })
+      : [];
+    const eleveById = new Map(eleves.map((eleve) => [eleve.id, eleve]));
+    const inscriptionByEleveYear = new Map<string, (typeof inscriptions)[number]>();
+    const inscriptionByEleve = new Map<string, (typeof inscriptions)[number]>();
+    for (const inscription of inscriptions) {
+      const classe = classeById.get(inscription.classeId);
+      if (!inscriptionByEleve.has(inscription.eleveId)) {
+        inscriptionByEleve.set(inscription.eleveId, inscription);
+      }
+      if (classe?.anneeAcademique?.libelle) {
+        inscriptionByEleveYear.set(`${inscription.eleveId}:${classe.anneeAcademique.libelle}`, inscription);
+      }
+    }
+
+    return this.pageResult(
+      notes.map((note) => {
+        const eleve = eleveById.get(note.eleveId);
+        const inscription = inscriptionByEleveYear.get(`${note.eleveId}:${note.anneeScolaire}`) ?? inscriptionByEleve.get(note.eleveId);
+        const classe = inscription ? classeById.get(inscription.classeId) : null;
+        const eleveNom = eleve ? `${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim() : null;
+
+        return {
+          ...note,
+          valeur: note.note,
+          bareme: note.noteSur,
+          classeId: classe?.id ?? null,
+          classe: classe ? { id: classe.id, nom: classe.nom } : null,
+          classeNom: classe?.nom ?? null,
+          eleve: eleve
+            ? {
+                id: eleve.id,
+                nom: eleveNom,
+                firstName: eleve.firstName,
+                lastName: eleve.lastName,
+                matricule: eleve.matricule,
+                photoUrl: eleve.photoUrl,
+              }
+            : null,
+          eleveNom,
+          matiereLibelle: note.matiere?.libelle ?? null,
+          matiereCode: note.matiere?.code ?? null,
+        };
+      }),
+      totalElements,
+      query,
+    );
+  }
+
+  async getTeacherBulletins(tenantId: string, enseignantId: string, query: TeacherQueryParams = {}) {
+    const classeId = this.firstQueryValue(query.classeId);
+    const classes = await this.getTeacherClasseScope(tenantId, enseignantId, classeId);
+    if (!classes.length) return this.pageResult([], 0, query);
+
+    const classIds = classes.map((classe) => classe.id);
+    const page = this.toQueryInt(query.page, 0);
+    const size = this.toQueryInt(query.size, 20);
+    const where: Record<string, unknown> = {
+      tenantId,
+      classeId: { in: classIds },
+      ...this.teacherBulletinFilters(query),
+    };
+
+    const [bulletins, totalElements] = await Promise.all([
+      this.prisma.bulletin.findMany({
+        where,
+        skip: page * size,
+        take: size,
+        include: { classe: { select: { id: true, nom: true } } },
+        orderBy: this.teacherOrderBy(query, [{ anneeScolaire: 'desc' }, { trimestre: 'asc' }, { createdAt: 'desc' }]),
+      }),
+      this.prisma.bulletin.count({ where }),
+    ]);
+
+    const eleveIds = [...new Set(bulletins.map((bulletin) => bulletin.eleveId))];
+    const eleves = eleveIds.length
+      ? await this.prisma.user.findMany({
+          where: { tenantId, id: { in: eleveIds }, role: 'ELEVE' },
+          select: { id: true, firstName: true, lastName: true, matricule: true, photoUrl: true },
+        })
+      : [];
+    const eleveById = new Map(eleves.map((eleve) => [eleve.id, eleve]));
+
+    return this.pageResult(
+      bulletins.map((bulletin) => {
+        const eleve = eleveById.get(bulletin.eleveId);
+        const eleveNom = eleve ? `${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim() : null;
+
+        return {
+          ...bulletin,
+          eleve: eleve
+            ? {
+                id: eleve.id,
+                nom: eleveNom,
+                firstName: eleve.firstName,
+                lastName: eleve.lastName,
+                matricule: eleve.matricule,
+                photoUrl: eleve.photoUrl,
+              }
+            : null,
+          eleveNom,
+          classeNom: bulletin.classe?.nom ?? null,
+          moyenneGenerale: bulletin.moyenne,
+        };
+      }),
+      totalElements,
+      query,
+    );
   }
 
   async exportTeacherClassNotes(tenantId: string, enseignantId: string, classeId: string) {
@@ -1234,6 +1417,109 @@ export class ClasseService {
   // ----------------------------------------------------------------
   // Utils
   // ----------------------------------------------------------------
+
+  private async getTeacherClasseScope(tenantId: string, enseignantId: string, classeId?: string) {
+    const classes = await this.prisma.classe.findMany({
+      where: {
+        tenantId,
+        actif: true,
+        ...(classeId ? { id: classeId } : {}),
+        OR: [
+          { professeurResponsableId: enseignantId },
+          { matiereClasses: { some: { enseignantId } } },
+        ],
+      },
+      select: {
+        id: true,
+        nom: true,
+        professeurResponsableId: true,
+        anneeAcademiqueId: true,
+        anneeAcademique: { select: { id: true, libelle: true } },
+        niveau: { select: { cycle: { select: { code: true } } } },
+        matiereClasses: {
+          where: { enseignantId },
+          select: { matiereId: true },
+        },
+      },
+      orderBy: { nom: 'asc' },
+    });
+
+    const simpleCycles = ['MATERNELLE', 'PRIMAIRE'];
+    return classes.filter((classe) => {
+      const cycleCode = classe.niveau?.cycle?.code?.toUpperCase() ?? '';
+      if (simpleCycles.includes(cycleCode)) {
+        return classe.professeurResponsableId === enseignantId;
+      }
+      return true;
+    });
+  }
+
+  private teacherNoteFilters(query: TeacherQueryParams): Record<string, unknown> {
+    const filters: Record<string, unknown> = {};
+    const eleveId = this.firstQueryValue(query.eleveId);
+    const matiereId = this.firstQueryValue(query.matiereId);
+    const trimestre = this.firstQueryValue(query.trimestre) ?? this.firstQueryValue(query.periode);
+    const anneeScolaire = this.firstQueryValue(query.anneeScolaire);
+    const typeEvaluation =
+      this.firstQueryValue(query.typeEvaluation) ??
+      this.firstQueryValue(query.typeEval) ??
+      this.firstQueryValue(query.type);
+
+    if (eleveId) filters.eleveId = eleveId;
+    if (matiereId) filters.matiereId = matiereId;
+    if (trimestre) filters.trimestre = trimestre;
+    if (anneeScolaire) filters.anneeScolaire = anneeScolaire;
+    if (typeEvaluation) filters.typeEvaluation = typeEvaluation;
+
+    return filters;
+  }
+
+  private teacherBulletinFilters(query: TeacherQueryParams): Record<string, unknown> {
+    const filters: Record<string, unknown> = {};
+    const eleveId = this.firstQueryValue(query.eleveId);
+    const trimestre = this.firstQueryValue(query.trimestre) ?? this.firstQueryValue(query.periode);
+    const anneeScolaire = this.firstQueryValue(query.anneeScolaire);
+    const statut = this.firstQueryValue(query.statut);
+
+    if (eleveId) filters.eleveId = eleveId;
+    if (trimestre) filters.trimestre = trimestre;
+    if (anneeScolaire) filters.anneeScolaire = anneeScolaire;
+    if (statut) filters.statut = statut;
+
+    return filters;
+  }
+
+  private teacherOrderBy(query: TeacherQueryParams, fallback: unknown): any {
+    const sortBy = this.firstQueryValue(query.sortBy) ?? this.firstQueryValue(query.sort);
+    if (!sortBy) return fallback;
+    const direction =
+      this.firstQueryValue(query.asc) === 'false' || this.firstQueryValue(query.ascending) === 'false' ? 'desc' : 'asc';
+    return { [sortBy]: direction };
+  }
+
+  private pageResult<T>(content: T[], totalElements: number, query: TeacherQueryParams) {
+    const page = this.toQueryInt(query.page, 0);
+    const size = this.toQueryInt(query.size, 20);
+    const totalPages = size > 0 ? Math.ceil(totalElements / size) : 0;
+    return {
+      content,
+      page,
+      size,
+      totalElements,
+      totalPages,
+      first: page === 0,
+      last: page >= totalPages - 1 || totalPages === 0,
+    };
+  }
+
+  private toQueryInt(value: QueryValue, fallback: number): number {
+    const parsed = Number(this.firstQueryValue(value));
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+  }
+
+  private firstQueryValue(value: QueryValue): string | undefined {
+    return Array.isArray(value) ? value[0] : value;
+  }
 
   private async assertTenantExists(tenantId: string): Promise<void> {
     const exists = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true } });
