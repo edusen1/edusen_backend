@@ -1,4 +1,4 @@
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -6,8 +6,8 @@ import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import { AppModule } from '@/app.module';
+import { AppLoggerService } from '@/common/logger/app-logger.service';
 
-const logger = new Logger('Bootstrap');
 const color = {
   cyan: '\u001b[1;36m',
   green: '\u001b[1;32m',
@@ -16,32 +16,40 @@ const color = {
   reset: '\u001b[0m',
 };
 
-// Empêcher le process de crasher sur des rejections non gérées
-// (notamment les erreurs internes de whatsapp-web.js / Puppeteer)
-process.on('unhandledRejection', (reason: unknown) => {
-  const msg = reason instanceof Error ? reason.message : String(reason);
-  logger.error(`[UnhandledRejection] ${msg}`);
-  // On logge mais on NE crash PAS le process
-});
+function registerProcessErrorHandlers(logger: AppLoggerService): void {
+  process.on('unhandledRejection', (reason: unknown) => {
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    const trace = reason instanceof Error ? reason.stack : undefined;
+    logger.error(`[UnhandledRejection] ${msg}`, trace, 'Process');
+    // On logge mais on NE crash PAS le process.
+  });
 
-process.on('uncaughtException', (error: Error) => {
-  const isWwebError =
-    error.stack?.includes('whatsapp-web.js') ||
-    error.stack?.includes('puppeteer') ||
-    error.message.includes('Execution context');
-  if (isWwebError) {
-    logger.error(`[UncaughtException/WhatsApp] ${error.message} — process maintenu`);
-  } else {
-    logger.error(`[UncaughtException] ${error.stack ?? error.message}`);
-    process.exit(1); // Crash uniquement sur des erreurs non-WhatsApp
-  }
-});
+  process.on('uncaughtException', (error: Error) => {
+    const isWwebError =
+      error.stack?.includes('whatsapp-web.js') ||
+      error.stack?.includes('puppeteer') ||
+      error.message.includes('Execution context');
+
+    if (isWwebError) {
+      logger.error(`[UncaughtException/WhatsApp] ${error.message} — process maintenu`, error.stack, 'Process');
+      return;
+    }
+
+    logger.fatal(`[UncaughtException] ${error.message}`, error.stack, 'Process');
+    process.exit(1); // Crash uniquement sur des erreurs non-WhatsApp.
+  });
+}
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ logger: true }),
+    new FastifyAdapter({ logger: false }),
+    { bufferLogs: true },
   );
+  const logger = app.get(AppLoggerService);
+  app.useLogger(logger);
+  app.flushLogs();
+  registerProcessErrorHandlers(logger);
 
   await app.register(helmet, {
     contentSecurityPolicy: false,
@@ -94,22 +102,29 @@ async function bootstrap(): Promise<void> {
   SwaggerModule.setup('docs', app, document);
 
   const port = Number(process.env.PORT ?? 3000);
-  const env  = process.env.NODE_ENV ?? 'development';
+  const env = process.env.NODE_ENV ?? 'development';
   await app.listen(port, '0.0.0.0');
 
   const url = `http://0.0.0.0:${port}`;
   const line = `${color.cyan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${color.reset}`;
-  logger.log(line);
-  logger.log(`${color.green}🎓  NouraSchool Backend — démarrage réussi${color.reset}`);
-  logger.log(line);
-  logger.log(`${color.blue}🌍  Environnement${color.reset} : ${env}`);
-  logger.log(`${color.blue}🚀  API${color.reset}           : ${url}/api`);
-  logger.log(`${color.blue}📖  Swagger${color.reset}       : ${url}/docs`);
-  logger.log(`${color.blue}❤️   Health check${color.reset}  : ${url}/api/health`);
-  logger.log(`${color.blue}🗄️   Base de données${color.reset}: PostgreSQL connectée`);
-  logger.log(`${color.blue}⚡  Moteur HTTP${color.reset}   : Fastify`);
-  logger.log(`${color.dim}CORS autorisés: ${Array.from(allowedOrigins).join(', ')}${color.reset}`);
-  logger.log(line);
+  logger.log(line, 'Bootstrap');
+  logger.log(`${color.green}🎓  NouraSchool Backend — démarrage réussi${color.reset}`, 'Bootstrap');
+  logger.log(line, 'Bootstrap');
+  logger.log(`${color.blue}🌍  Environnement${color.reset} : ${env}`, 'Bootstrap');
+  logger.log(`${color.blue}🚀  API${color.reset}           : ${url}/api`, 'Bootstrap');
+  logger.log(`${color.blue}📖  Swagger${color.reset}       : ${url}/docs`, 'Bootstrap');
+  logger.log(`${color.blue}❤️   Health check${color.reset}  : ${url}/api/health`, 'Bootstrap');
+  logger.log(`${color.blue}🗄️   Base de données${color.reset}: PostgreSQL connectée`, 'Bootstrap');
+  logger.log(`${color.blue}⚡  Moteur HTTP${color.reset}   : Fastify`, 'Bootstrap');
+  logger.log(`${color.dim}CORS autorisés: ${Array.from(allowedOrigins).join(', ')}${color.reset}`, 'Bootstrap');
+  logger.log(line, 'Bootstrap');
 }
 
-void bootstrap();
+void bootstrap().catch((error: unknown) => {
+  const logger = new AppLoggerService();
+  const message = error instanceof Error ? error.message : String(error);
+  const trace = error instanceof Error ? error.stack : undefined;
+
+  logger.fatal(`[BootstrapFailure] ${message}`, trace, 'Bootstrap');
+  process.exit(1);
+});

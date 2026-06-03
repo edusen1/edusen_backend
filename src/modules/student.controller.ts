@@ -32,10 +32,18 @@ export class StudentController {
   ) {
     return this.domain.studentBulletins(tenantId, user?.sub ?? "");
   }
+  @Get("bulletins/:id/export") exportBulletin(
+    @Headers("x-tenant-id") tenantId: string,
+    @Param("id") id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.domain.studentBulletinExport(tenantId, user?.sub ?? "", id);
+  }
   @Get("emploi-du-temps") emploiDuTemps(
     @Headers("x-tenant-id") tenantId: string,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.domain.v1Emplois(tenantId);
+    return this.domain.studentEmploiDuTemps(tenantId, user?.sub ?? "");
   }
   @Get("absences") absences(
     @Headers("x-tenant-id") tenantId: string,

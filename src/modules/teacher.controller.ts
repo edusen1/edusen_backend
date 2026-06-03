@@ -69,6 +69,25 @@ export class TeacherController {
     return this.crud.create(this.crud.v1Config('notes'), tenantId, { ...body, eleveId }, user?.sub);
   }
 
+  @Get('classes/:id/notes/export')
+  async exportClasseNotes(
+    @Headers('x-tenant-id') tenantId: string,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.classeService.exportTeacherClassNotes(tenantId, user?.sub ?? '', id);
+  }
+
+  @Get('classes/:id/eleves/:eleveId/bulletin/export')
+  async exportEleveBulletin(
+    @Headers('x-tenant-id') tenantId: string,
+    @Param('id') id: string,
+    @Param('eleveId') eleveId: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.classeService.exportTeacherStudentBulletin(tenantId, user?.sub ?? '', id, eleveId);
+  }
+
   @Post('classes/:id/eleves/:eleveId/comportement')
   async saveComportement(
     @Headers('x-tenant-id') tenantId: string,
@@ -153,9 +172,14 @@ export class TeacherController {
     return this.classeService.getTeacherEmploiDuTemps(tenantId, user?.sub ?? '');
   }
 
+  @Get('emploi-du-temps/export')
+  exportEmploiDuTemps(@Headers('x-tenant-id') tenantId: string, @CurrentUser() user?: JwtUser) {
+    return this.classeService.exportTeacherEmploiDuTemps(tenantId, user?.sub ?? '');
+  }
+
   @Get('notes')
-  notes(@Headers('x-tenant-id') tenantId: string, @Query() query: QueryParams) {
-    return this.crud.findAll(this.crud.v1Config('notes'), tenantId, query);
+  notes(@Headers('x-tenant-id') tenantId: string, @Query() query: QueryParams, @CurrentUser() user?: JwtUser) {
+    return this.classeService.getTeacherNotes(tenantId, user?.sub ?? '', query);
   }
 
   @Post('notes')
@@ -188,8 +212,8 @@ export class TeacherController {
   }
 
   @Get('bulletins')
-  bulletins(@Headers('x-tenant-id') tenantId: string, @Query() query: QueryParams) {
-    return this.crud.findAll(this.crud.v1Config('bulletins'), tenantId, query);
+  bulletins(@Headers('x-tenant-id') tenantId: string, @Query() query: QueryParams, @CurrentUser() user?: JwtUser) {
+    return this.classeService.getTeacherBulletins(tenantId, user?.sub ?? '', query);
   }
 
   @Get('reclamations')

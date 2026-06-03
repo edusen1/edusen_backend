@@ -77,6 +77,8 @@ const ADMIN_RESOURCES: Record<string, CrudConfig> = {
   parents: V1_RESOURCES.parents,
   classes: V1_RESOURCES.classes,
   matieres: V1_RESOURCES.matieres,
+  salles: V1_RESOURCES.salles,
+  batiments: V1_RESOURCES.batiments,
   'matieres-classes': V1_RESOURCES['matieres-classes'],
   notes: V1_RESOURCES.notes,
   bulletins: V1_RESOURCES.bulletins,

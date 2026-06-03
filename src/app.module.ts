@@ -5,6 +5,7 @@ import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppAuthGuard } from '@/common/guards/app-auth.guard';
 import { GlobalExceptionFilter } from '@/common/filters/global-exception.filter';
 import { ResponseInterceptor } from '@/common/interceptors/response.interceptor';
+import { AppLoggerService } from '@/common/logger/app-logger.service';
 import { PrismaService } from '@/config/prisma.service';
 import { AuthController } from '@/modules/auth.controller';
 import { PlatformController } from '@/modules/platform.controller';
@@ -29,6 +30,7 @@ import { AcademiqueConfigService } from '@/modules/configuration/academique-conf
 import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 import { ClasseService } from '@/modules/classes/classe.service';
 import { HealthController } from '@/modules/health.controller';
+import { EmploiDuTempsService } from '@/modules/v1/emploi-du-temps/emploi-du-temps.service';
 
 @Module({
   imports: [
@@ -52,6 +54,7 @@ import { HealthController } from '@/modules/health.controller';
     CaisseController,
   ],
   providers: [
+    AppLoggerService,
     PrismaService,
     RedisService,
     AuthService,
@@ -65,6 +68,7 @@ import { HealthController } from '@/modules/health.controller';
     AcademiqueConfigService,
     WhatsappService,
     ClasseService,
+    EmploiDuTempsService,
     { provide: APP_GUARD, useClass: AppAuthGuard },
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },

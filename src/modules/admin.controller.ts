@@ -26,6 +26,7 @@ import { UpdateWhatsappFeaturesDto } from '@/modules/whatsapp/dto/update-whatsap
 import { ClasseService } from '@/modules/classes/classe.service';
 import { CreateClasseDto } from '@/modules/classes/dto/create-classe.dto';
 import { UpdateClasseDto } from '@/modules/classes/dto/update-classe.dto';
+import { EmploiDuTempsService } from '@/modules/v1/emploi-du-temps/emploi-du-temps.service';
 
 type QueryParams = Record<string, string | string[] | undefined>;
 type Payload = Record<string, unknown>;
@@ -39,6 +40,7 @@ export class AdminController {
     private readonly academiqueConfig: AcademiqueConfigService,
     private readonly whatsapp: WhatsappService,
     private readonly classeService: ClasseService,
+    private readonly emploiService: EmploiDuTempsService,
   ) {}
 
   // ----------------------------------------------------------------
@@ -115,6 +117,81 @@ export class AdminController {
     @Param('stagiaireId') stagiaireId: string,
   ) {
     return this.classeService.removeStagiaire(tenantId!, classeId, stagiaireId);
+  }
+
+  // ----------------------------------------------------------------
+  // Emplois du temps
+  // ----------------------------------------------------------------
+
+  @Get('emplois-du-temps')
+  getEmplois(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Query('classeId') classeId?: string,
+    @Query('enseignantId') enseignantId?: string,
+  ) {
+    return this.emploiService.findAll(tenantId!, classeId, enseignantId);
+  }
+
+  @Post('emplois-du-temps')
+  createEmploi(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Payload,
+  ) {
+    return this.emploiService.create(tenantId!, body as any);
+  }
+
+  @Get('emplois-du-temps/classe/:classeId')
+  getEmploiParClasse(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('classeId') classeId: string,
+    @Query('anneeScolaire') anneeScolaire?: string,
+  ) {
+    return this.emploiService.findByClasse(tenantId!, classeId, anneeScolaire);
+  }
+
+  @Post('emplois-du-temps/classe/:classeId')
+  createEmploiParClasse(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('classeId') classeId: string,
+    @Body() body: Payload,
+  ) {
+    return this.emploiService.create(tenantId!, { ...(body as any), classeId });
+  }
+
+  @Post('emplois-du-temps/classe/:classeId/publier')
+  publierEmploiParClasse(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('classeId') classeId: string,
+    @Query('anneeScolaire') anneeScolaire?: string,
+  ) {
+    return this.emploiService.publier(tenantId!, classeId, anneeScolaire ?? '');
+  }
+
+  @Get('emplois-du-temps/:id')
+  getEmploi(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+  ) {
+    return this.emploiService.findOne(tenantId!, id);
+  }
+
+  @Put('emplois-du-temps/:id')
+  @Patch('emplois-du-temps/:id')
+  updateEmploi(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: Payload,
+  ) {
+    return this.emploiService.update(tenantId!, id, body as any);
+  }
+
+  @Delete('emplois-du-temps/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  deleteEmploi(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+  ) {
+    return this.emploiService.delete(tenantId!, id);
   }
 
   @Get('reports/rapport-trimestre')

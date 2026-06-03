@@ -580,31 +580,147 @@ export class ClasseService {
 
   async getTeacherEmploiDuTemps(tenantId: string, enseignantId: string) {
     const slots = await this.prisma.emploiDuTemps.findMany({
-      where: { tenantId, cours: { enseignantId } },
+      where: {
+        tenantId,
+        OR: [
+          { enseignantId },
+          { cours: { enseignantId } },
+        ],
+      },
       include: {
+        classe: { select: { id: true, nom: true } },
         cours: {
           include: {
             matiere: { select: { id: true, libelle: true, code: true } },
             classe: { select: { id: true, nom: true } },
           },
         },
+        salle: { include: { batiment: { select: { id: true, nom: true } } } },
       },
       orderBy: [{ jourSemaine: 'asc' }, { heureDebut: 'asc' }],
     });
-    return slots
-      .filter((s) => s.cours)
-      .map((s) => ({
-        id: s.id,
-        jourSemaine: s.jourSemaine,
-        heureDebut: s.heureDebut,
-        heureFin: s.heureFin,
-        classeId: s.cours!.classeId,
-        classeNom: s.cours!.classe?.nom ?? '',
-        matiereId: s.cours!.matiereId,
-        matiereLibelle: s.cours!.matiere?.libelle ?? '',
-        matiereCode: s.cours!.matiere?.code ?? '',
-        coursId: s.coursId,
-      }));
+    return this.mapEmploiDuTempsRows(slots);
+  }
+
+  async exportTeacherEmploiDuTemps(tenantId: string, enseignantId: string) {
+    const slots = await this.getTeacherEmploiDuTemps(tenantId, enseignantId);
+    return this.csvExport(`emploi-du-temps-professeur-${this.dateOnly(new Date())}.csv`, [
+      ['Jour', 'Heure debut', 'Heure fin', 'Classe', 'Matiere', 'Salle', 'Batiment'],
+      ...slots.map((slot: any) => [
+        slot.jourSemaine,
+        slot.heureDebut,
+        slot.heureFin,
+        slot.classeNom,
+        slot.matiereLibelle ?? slot.matiereCode ?? '',
+        slot.salleNom ?? '',
+        slot.salleBatimentNom ?? '',
+      ]),
+    ]);
+  }
+
+  async exportTeacherClassNotes(tenantId: string, enseignantId: string, classeId: string) {
+    await this.assertTeacherClasseAccess(tenantId, enseignantId, classeId);
+
+    const classe = await this.prisma.classe.findFirst({
+      where: { id: classeId, tenantId },
+      include: { anneeAcademique: true },
+    });
+    if (!classe) throw new NotFoundException('Classe introuvable');
+
+    const inscriptions = await this.prisma.inscription.findMany({
+      where: {
+        tenantId,
+        classeId,
+        statut: 'ACTIF',
+        ...(classe.anneeAcademiqueId ? { anneeAcademiqueId: classe.anneeAcademiqueId } : {}),
+      },
+      select: { eleveId: true },
+    });
+    const eleveIds = inscriptions.map((inscription) => inscription.eleveId);
+    if (!eleveIds.length) {
+      return this.csvExport(`notes-${this.safeFilename(classe.nom)}.csv`, [
+        ['Eleve', 'Matricule', 'Classe', 'Matiere', 'Periode', 'Type', 'Note', 'Bareme', 'Date', 'Commentaire'],
+      ]);
+    }
+
+    const isResponsable = classe.professeurResponsableId === enseignantId;
+    const matieresAutorisees = isResponsable
+      ? []
+      : await this.prisma.matiereClasse.findMany({
+          where: { tenantId, classeId, enseignantId },
+          select: { matiereId: true },
+        });
+    const allowedMatiereIds = matieresAutorisees.map((matiere) => matiere.matiereId);
+
+    const [eleves, notes] = await Promise.all([
+      this.prisma.user.findMany({
+        where: { tenantId, id: { in: eleveIds }, role: 'ELEVE' },
+        select: { id: true, firstName: true, lastName: true, matricule: true },
+      }),
+      this.prisma.note.findMany({
+        where: {
+          tenantId,
+          eleveId: { in: eleveIds },
+          ...(classe.anneeAcademique?.libelle ? { anneeScolaire: classe.anneeAcademique.libelle } : {}),
+          ...(!isResponsable ? { matiereId: { in: allowedMatiereIds } } : {}),
+        },
+        include: { matiere: { select: { code: true, libelle: true } } },
+        orderBy: [
+          { trimestre: 'asc' },
+          { matiere: { libelle: 'asc' } },
+          { dateEvaluation: 'asc' },
+        ],
+      }),
+    ]);
+    const eleveById = new Map(eleves.map((eleve) => [eleve.id, eleve]));
+
+    return this.csvExport(`notes-${this.safeFilename(classe.nom)}-${this.dateOnly(new Date())}.csv`, [
+      ['Eleve', 'Matricule', 'Classe', 'Matiere', 'Periode', 'Type', 'Note', 'Bareme', 'Date', 'Commentaire'],
+      ...notes.map((note) => {
+        const eleve = eleveById.get(note.eleveId);
+        return [
+          eleve ? `${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim() : note.eleveId,
+          eleve?.matricule ?? '',
+          classe.nom,
+          note.matiere?.libelle ?? note.matiere?.code ?? '',
+          note.trimestre,
+          note.typeEvaluation,
+          note.note,
+          note.noteSur,
+          this.dateOnly(note.dateEvaluation),
+          note.commentaire ?? '',
+        ];
+      }),
+    ]);
+  }
+
+  async exportTeacherStudentBulletin(tenantId: string, enseignantId: string, classeId: string, eleveId: string) {
+    await this.assertTeacherClasseAccess(tenantId, enseignantId, classeId);
+    const report = await this.getEleveNotesForClasse(tenantId, classeId, eleveId);
+
+    return this.csvExport(
+      `bulletin-${this.safeFilename(report.eleve.nom)}-${this.safeFilename(report.classe.nom)}.csv`,
+      [
+        ['Eleve', report.eleve.nom],
+        ['Matricule', report.eleve.matricule ?? ''],
+        ['Classe', report.classe.nom],
+        ['Annee scolaire', report.classe.annee ?? ''],
+        ['Moyenne annuelle', report.moyenneAnnuelle ?? ''],
+        [],
+        ['Periode', 'Matiere', 'Coefficient', 'Devoirs', 'Composition', 'Moyenne', 'Appreciation'],
+        ...report.periodes.flatMap((periode) =>
+          periode.matieres.map((matiere) => [
+            periode.label,
+            matiere.libelle,
+            matiere.coefficient,
+            matiere.moyenneDevoirs ?? '',
+            matiere.composition?.length ? matiere.composition[matiere.composition.length - 1].note : '',
+            matiere.moyenne ?? '',
+            periode.appreciation ?? '',
+          ]),
+        ),
+      ],
+    );
   }
 
   async getTeacherReclamations(tenantId: string, enseignantId: string) {
@@ -1160,6 +1276,88 @@ export class ClasseService {
       where: { tenantId, anneeAcademiqueId: current.id, actif: false },
       data: { actif: true },
     });
+  }
+
+  private async mapEmploiDuTempsRows(rows: any[]) {
+    const matiereIds = [...new Set(rows.map((row) => row.matiereId ?? row.cours?.matiereId).filter(Boolean))] as string[];
+    const enseignantIds = [...new Set(rows.map((row) => row.enseignantId ?? row.cours?.enseignantId).filter(Boolean))] as string[];
+
+    const [matieres, enseignants] = await Promise.all([
+      matiereIds.length
+        ? this.prisma.matiere.findMany({
+            where: { id: { in: matiereIds } },
+            select: { id: true, code: true, libelle: true },
+          })
+        : [],
+      enseignantIds.length
+        ? this.prisma.user.findMany({
+            where: { id: { in: enseignantIds } },
+            select: { id: true, firstName: true, lastName: true },
+          })
+        : [],
+    ]);
+
+    const matiereById = new Map(matieres.map((matiere) => [matiere.id, matiere]));
+    const enseignantById = new Map(enseignants.map((enseignant) => [enseignant.id, enseignant]));
+
+    return rows.map((row) => {
+      const matiereId = row.matiereId ?? row.cours?.matiereId ?? null;
+      const enseignantId = row.enseignantId ?? row.cours?.enseignantId ?? null;
+      const matiere = matiereId ? matiereById.get(matiereId) ?? row.cours?.matiere ?? null : null;
+      const enseignant = enseignantId ? enseignantById.get(enseignantId) ?? null : null;
+
+      return {
+        id: row.id,
+        jourSemaine: row.jourSemaine,
+        heureDebut: row.heureDebut,
+        heureFin: row.heureFin,
+        classeId: row.classeId ?? row.cours?.classeId ?? null,
+        classeNom: row.classe?.nom ?? row.cours?.classe?.nom ?? '',
+        matiereId,
+        matiereLibelle: matiere?.libelle ?? '',
+        matiereCode: matiere?.code ?? '',
+        enseignantId,
+        enseignantNom: enseignant ? `${enseignant.firstName ?? ''} ${enseignant.lastName ?? ''}`.trim() : null,
+        salleId: row.salleId,
+        salleNom: row.salle?.nom ?? null,
+        salleBatimentNom: row.salle?.batiment?.nom ?? null,
+        coursId: row.coursId,
+        anneeScolaire: row.anneeScolaire,
+        dateDebutValidite: row.dateDebutValidite,
+        dateFinValidite: row.dateFinValidite,
+        publie: row.publie,
+      };
+    });
+  }
+
+  private csvExport(filename: string, rows: unknown[][]) {
+    return {
+      filename,
+      mimeType: 'text/csv;charset=utf-8',
+      content: rows.map((row) => row.map((value) => this.csvCell(value)).join(';')).join('\n'),
+    };
+  }
+
+  private csvCell(value: unknown): string {
+    if (value === null || value === undefined) return '';
+    const text = value instanceof Date ? this.dateOnly(value) : String(value);
+    const escaped = text.replace(/"/g, '""');
+    return /[;"\n\r]/.test(escaped) ? `"${escaped}"` : escaped;
+  }
+
+  private dateOnly(value?: Date | string | null): string {
+    if (!value) return '';
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(date.getTime()) ? '' : date.toISOString().substring(0, 10);
+  }
+
+  private safeFilename(value: string): string {
+    return value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .toLowerCase() || 'export';
   }
 
   private toResponse(classe: any) {

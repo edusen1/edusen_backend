@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "@/config/prisma.service";
 
 @Injectable()
@@ -107,10 +107,87 @@ export class DomainService {
     return this.prisma.user.findUnique({ where: { id: userId } });
   }
   studentNotes(tenantId: string, eleveId: string) {
-    return this.prisma.note.findMany({ where: { tenantId, eleveId } });
+    return this.prisma.note.findMany({
+      where: { tenantId, eleveId },
+      include: { matiere: { select: { id: true, code: true, libelle: true } } },
+      orderBy: [
+        { anneeScolaire: "desc" },
+        { trimestre: "asc" },
+        { matiere: { libelle: "asc" } },
+        { dateEvaluation: "asc" },
+      ],
+    });
   }
   studentBulletins(tenantId: string, eleveId: string) {
-    return this.prisma.bulletin.findMany({ where: { tenantId, eleveId } });
+    return this.prisma.bulletin.findMany({
+      where: { tenantId, eleveId },
+      include: { classe: { select: { id: true, nom: true } } },
+      orderBy: [{ anneeScolaire: "desc" }, { trimestre: "asc" }],
+    });
+  }
+  async studentBulletinExport(tenantId: string, eleveId: string, bulletinId: string) {
+    const bulletin = await this.prisma.bulletin.findFirst({
+      where: { id: bulletinId, tenantId, eleveId },
+      include: { classe: { select: { id: true, nom: true } } },
+    });
+    if (!bulletin) throw new NotFoundException("Bulletin introuvable");
+
+    const notes = await this.prisma.note.findMany({
+      where: { tenantId, eleveId, anneeScolaire: bulletin.anneeScolaire, trimestre: bulletin.trimestre },
+      include: { matiere: { select: { code: true, libelle: true } } },
+      orderBy: [{ matiere: { libelle: "asc" } }, { dateEvaluation: "asc" }],
+    });
+
+    return this.csvExport(`bulletin-${this.safeFilename(bulletin.classe?.nom ?? "classe")}-${bulletin.trimestre}.csv`, [
+      ["Classe", bulletin.classe?.nom ?? ""],
+      ["Annee scolaire", bulletin.anneeScolaire],
+      ["Periode", bulletin.trimestre],
+      ["Moyenne", bulletin.moyenne ?? ""],
+      ["Rang", bulletin.rang ?? ""],
+      [],
+      ["Matiere", "Type", "Note", "Bareme", "Date", "Commentaire"],
+      ...notes.map((note) => [
+        note.matiere?.libelle ?? note.matiere?.code ?? "",
+        note.typeEvaluation,
+        note.note,
+        note.noteSur,
+        this.dateOnly(note.dateEvaluation),
+        note.commentaire ?? "",
+      ]),
+    ]);
+  }
+  async studentEmploiDuTemps(tenantId: string, eleveId: string) {
+    const inscription = await this.prisma.inscription.findFirst({
+      where: { tenantId, eleveId, statut: "ACTIF" },
+      include: {
+        anneeAcademique: { select: { libelle: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!inscription) return [];
+
+    const rows = await this.prisma.emploiDuTemps.findMany({
+      where: {
+        tenantId,
+        classeId: inscription.classeId,
+        ...(inscription.anneeAcademique?.libelle
+          ? { OR: [{ anneeScolaire: null }, { anneeScolaire: inscription.anneeAcademique.libelle }] }
+          : {}),
+      },
+      include: {
+        classe: { select: { id: true, nom: true } },
+        cours: {
+          include: {
+            matiere: { select: { id: true, code: true, libelle: true } },
+            classe: { select: { id: true, nom: true } },
+          },
+        },
+        salle: { include: { batiment: { select: { id: true, nom: true } } } },
+      },
+      orderBy: [{ jourSemaine: "asc" }, { heureDebut: "asc" }],
+    });
+
+    return this.mapEmploiDuTempsRows(rows);
   }
   studentAbsences(tenantId: string, eleveId: string) {
     return this.prisma.absenceEleve.findMany({ where: { tenantId, eleveId } });
@@ -244,5 +321,89 @@ export class DomainService {
       where: { id },
       data: { statut: "REJETEE" },
     });
+  }
+
+  private async mapEmploiDuTempsRows(rows: any[]) {
+    const matiereIds = [...new Set(rows.map((row) => row.matiereId ?? row.cours?.matiereId).filter(Boolean))] as string[];
+    const enseignantIds = [...new Set(rows.map((row) => row.enseignantId ?? row.cours?.enseignantId).filter(Boolean))] as string[];
+
+    const [matieres, enseignants] = await Promise.all([
+      matiereIds.length
+        ? this.prisma.matiere.findMany({
+            where: { id: { in: matiereIds } },
+            select: { id: true, code: true, libelle: true },
+          })
+        : [],
+      enseignantIds.length
+        ? this.prisma.user.findMany({
+            where: { id: { in: enseignantIds } },
+            select: { id: true, firstName: true, lastName: true },
+          })
+        : [],
+    ]);
+
+    const matiereById = new Map(matieres.map((matiere) => [matiere.id, matiere]));
+    const enseignantById = new Map(enseignants.map((enseignant) => [enseignant.id, enseignant]));
+
+    return rows.map((row) => {
+      const matiereId = row.matiereId ?? row.cours?.matiereId ?? null;
+      const enseignantId = row.enseignantId ?? row.cours?.enseignantId ?? null;
+      const matiere = matiereId ? matiereById.get(matiereId) ?? row.cours?.matiere ?? null : null;
+      const enseignant = enseignantId ? enseignantById.get(enseignantId) ?? null : null;
+
+      return {
+        id: row.id,
+        classeId: row.classeId,
+        classeNom: row.classe?.nom ?? row.cours?.classe?.nom ?? "",
+        coursId: row.coursId,
+        matiereId,
+        matiereLibelle: matiere?.libelle ?? null,
+        matiereCode: matiere?.code ?? null,
+        enseignantId,
+        enseignantNom: enseignant ? `${enseignant.firstName ?? ""} ${enseignant.lastName ?? ""}`.trim() : null,
+        salleId: row.salleId,
+        salleNom: row.salle?.nom ?? null,
+        salleBatimentNom: row.salle?.batiment?.nom ?? null,
+        jourSemaine: row.jourSemaine,
+        heureDebut: row.heureDebut,
+        heureFin: row.heureFin,
+        anneeScolaire: row.anneeScolaire,
+        dateDebutValidite: row.dateDebutValidite,
+        dateFinValidite: row.dateFinValidite,
+        publie: row.publie,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      };
+    });
+  }
+
+  private csvExport(filename: string, rows: unknown[][]) {
+    return {
+      filename,
+      mimeType: "text/csv;charset=utf-8",
+      content: rows.map((row) => row.map((value) => this.csvCell(value)).join(";")).join("\n"),
+    };
+  }
+
+  private csvCell(value: unknown): string {
+    if (value === null || value === undefined) return "";
+    const text = value instanceof Date ? this.dateOnly(value) : String(value);
+    const escaped = text.replace(/"/g, '""');
+    return /[;"\n\r]/.test(escaped) ? `"${escaped}"` : escaped;
+  }
+
+  private dateOnly(value?: Date | string | null): string {
+    if (!value) return "";
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(date.getTime()) ? "" : date.toISOString().substring(0, 10);
+  }
+
+  private safeFilename(value: string): string {
+    return value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .toLowerCase() || "export";
   }
 }
