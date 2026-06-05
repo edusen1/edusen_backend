@@ -11,11 +11,14 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { RedisService } from '@/infrastructure/redis/redis.service';
 import { MailService } from '@/infrastructure/mail/mail.service';
+import { StorageService } from '@/infrastructure/storage/storage.service';
 import type { JwtUser } from '@/common/types/auth.types';
 
 const LOCKOUT_KEY = 'auth:lockout:';
 const RATELIMIT_FORGOT_KEY = 'auth:ratelimit:forgot:';
-const REFRESH_TOKEN_DAYS = Number(process.env.AUTH_REFRESH_TOKEN_DAYS ?? 1);
+const ACCESS_TOKEN_SECONDS = Number(process.env.AUTH_ACCESS_TOKEN_SECONDS ?? 86400); // 24h par défaut
+const ACCESS_TOKEN_EXPIRY = `${ACCESS_TOKEN_SECONDS}s` as `${number}s`;
+const REFRESH_TOKEN_DAYS = Number(process.env.AUTH_REFRESH_TOKEN_DAYS ?? 30);
 const REFRESH_TOKEN_SECONDS = REFRESH_TOKEN_DAYS * 24 * 60 * 60;
 const LOCKOUT_MAX_ATTEMPTS = Number(process.env.AUTH_LOCKOUT_MAX_ATTEMPTS ?? 5);
 const LOCKOUT_TTL = Number(process.env.AUTH_LOCKOUT_TTL_SECONDS ?? 600);
@@ -33,6 +36,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly redis: RedisService,
     private readonly mailService: MailService,
+    private readonly storage: StorageService,
   ) {}
 
   // ==================== LOGIN ====================
@@ -122,12 +126,12 @@ export class AuthService {
       isPlatform: false,
     };
 
-    const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
+    const accessToken = this.jwtService.sign(payload, { expiresIn: ACCESS_TOKEN_EXPIRY });
     const refreshToken = await this.createRefreshToken(user.id);
     const mustChange = user.mustChangePwd ?? true;
 
     this.logger.log(`Login success userId=${user.id} role=${user.role} tenantId=${user.tenantId}`);
-    return { accessToken, refreshToken, expiresIn: 900, refreshExpiresIn: REFRESH_TOKEN_SECONDS, passwordChangeRequired: mustChange };
+    return { accessToken, refreshToken, expiresIn: ACCESS_TOKEN_SECONDS, refreshExpiresIn: REFRESH_TOKEN_SECONDS, passwordChangeRequired: mustChange };
   }
 
   private async loginPlatformUser(
@@ -179,9 +183,9 @@ export class AuthService {
       isPlatform: true,
     };
 
-    const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
+    const accessToken = this.jwtService.sign(payload, { expiresIn: ACCESS_TOKEN_EXPIRY });
     this.logger.log(`Platform login success userId=${pu.id} role=${pu.rolePlateforme}`);
-    return { accessToken, refreshToken: null, expiresIn: 900, refreshExpiresIn: 0, passwordChangeRequired: false };
+    return { accessToken, refreshToken: null, expiresIn: ACCESS_TOKEN_SECONDS, refreshExpiresIn: 0, passwordChangeRequired: false };
   }
 
   // ==================== REFRESH ====================
@@ -232,8 +236,8 @@ export class AuthService {
       telephone: stored.user.telephone ?? undefined,
     };
 
-    const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
-    return { accessToken, refreshToken: newRefreshToken, expiresIn: 900, refreshExpiresIn: REFRESH_TOKEN_SECONDS };
+    const accessToken = this.jwtService.sign(payload, { expiresIn: ACCESS_TOKEN_EXPIRY });
+    return { accessToken, refreshToken: newRefreshToken, expiresIn: ACCESS_TOKEN_SECONDS, refreshExpiresIn: REFRESH_TOKEN_SECONDS };
   }
 
   // ==================== ME ====================
@@ -287,7 +291,7 @@ export class AuthService {
       actif: dbUser.actif,
       mustChangePwd: dbUser.mustChangePwd,
       telephone: dbUser.telephone,
-      photoUrl: dbUser.photoUrl,
+      photoUrl: this.storage.resolveUrl(dbUser.photoUrl),
       cycles,
     };
   }
@@ -506,5 +510,20 @@ export class AuthService {
     }
 
     return [...variants];
+  }
+
+  // ==================== UPLOAD PHOTO ====================
+
+  async uploadProfilePhoto(userId: string, buffer: Buffer, contentType: string, originalName: string): Promise<string> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, tenantId: true } });
+    if (!user) throw new UnauthorizedException('Utilisateur introuvable');
+
+    const key = this.storage.buildPhotoKey(user.tenantId, userId);
+    await this.storage.upload(key, buffer, contentType);
+
+    const resolvedUrl = this.storage.resolveUrl(key)!;
+    await this.prisma.user.update({ where: { id: userId }, data: { photoUrl: key } });
+    this.logger.log(`[Auth] Photo updated userId=${userId} key=${key}`);
+    return resolvedUrl;
   }
 }

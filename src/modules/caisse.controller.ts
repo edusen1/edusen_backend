@@ -1,29 +1,82 @@
-import { Controller, Get, Headers, Param, Post } from "@nestjs/common";
+import { Body, Controller, Get, Headers, Param, Post, Query, Req } from "@nestjs/common";
 import { Roles } from "@/common/decorators/roles.decorator";
 import { DomainService } from "@/modules/domain.service";
 
-@Roles("CAISSIER", "ADMIN")
+@Roles("CAISSIER", "ADMIN", "SUPER_ADMIN", "GESTIONNAIRE")
 @Controller("caisse")
 export class CaisseController {
   constructor(private readonly domain: DomainService) {}
 
-  @Get("paiements") paiements(@Headers("x-tenant-id") tenantId: string) {
-    return this.domain.caissePaiements(tenantId);
+  /** Dashboard stats pour le caissier */
+  @Get("dashboard")
+  dashboard(@Headers("x-tenant-id") tenantId: string) {
+    return this.domain.caisseDashboard(tenantId);
   }
-  @Get("paiements/historique") historiquePaiements(
+
+  /** Liste des élèves actifs (pour formulaire d'encaissement) */
+  @Get("eleves")
+  eleves(
     @Headers("x-tenant-id") tenantId: string,
+    @Query("search") search?: string,
   ) {
-    return this.domain.caissePaiements(tenantId);
+    return this.domain.caisseEleves(tenantId, search);
   }
-  @Get("paiements/statut/:statut") paiementsByStatut(
+
+  /** Liste des paiements avec filtres */
+  @Get("paiements")
+  paiements(
     @Headers("x-tenant-id") tenantId: string,
+    @Query("statut") statut?: string,
+    @Query("typePaiement") typePaiement?: string,
+    @Query("eleveId") eleveId?: string,
+    @Query("dateFrom") dateFrom?: string,
+    @Query("dateTo") dateTo?: string,
+    @Query("search") search?: string,
+    @Query("page") page?: string,
+    @Query("size") size?: string,
   ) {
-    return this.domain.caissePaiements(tenantId);
+    return this.domain.caissePaiements(tenantId, {
+      statut, typePaiement, eleveId, dateFrom, dateTo, search,
+      page: page ? Number(page) : 0,
+      size: size ? Number(size) : 50,
+    });
   }
-  @Get("paiements/:id") paiementById(@Param("id") id: string) {
+
+  /** Historique (paiements validés uniquement, filtrés par date) */
+  @Get("paiements/historique")
+  historique(
+    @Headers("x-tenant-id") tenantId: string,
+    @Query("dateFrom") dateFrom?: string,
+    @Query("dateTo") dateTo?: string,
+  ) {
+    return this.domain.caisseHistorique(tenantId, dateFrom, dateTo);
+  }
+
+  /** Détail d'un paiement */
+  @Get("paiements/:id")
+  paiementById(@Param("id") id: string) {
     return this.domain.caissePaiementById(id);
   }
-  @Post("paiements/:id/valider") validerPaiement(@Param("id") id: string) {
-    return this.domain.caisseValiderPaiement(id);
+
+  /** Créer un encaissement */
+  @Post("paiements")
+  createPaiement(
+    @Headers("x-tenant-id") tenantId: string,
+    @Body() body: any,
+    @Req() req: any,
+  ) {
+    return this.domain.caisseCreatePaiement(tenantId, body, req.user?.sub);
+  }
+
+  /** Valider un paiement */
+  @Post("paiements/:id/valider")
+  valider(@Param("id") id: string, @Req() req: any) {
+    return this.domain.caisseValiderPaiement(id, req.user?.sub);
+  }
+
+  /** Rejeter un paiement */
+  @Post("paiements/:id/rejeter")
+  rejeter(@Param("id") id: string, @Body() body: { motif?: string }) {
+    return this.domain.caisseRejeterPaiement(id, body?.motif);
   }
 }

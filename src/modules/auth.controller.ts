@@ -1,4 +1,5 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Patch, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Patch, Post, Req } from '@nestjs/common';
+import type { FastifyRequest } from 'fastify';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '@/common/decorators/public.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
@@ -92,5 +93,23 @@ export class AuthController {
   async changePassword(@CurrentUser() user: JwtUser, @Body() dto: ChangePasswordDto) {
     await this.authService.changePassword(user.sub, dto.currentPassword, dto.newPassword);
     return { message: 'Mot de passe changé avec succès' };
+  }
+
+  @Post('me/photo')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Upload de la photo de profil' })
+  async uploadPhoto(@CurrentUser() user: JwtUser, @Req() req: FastifyRequest) {
+    if (!req.isMultipart()) throw new BadRequestException('La requête doit être multipart/form-data');
+    const file = await req.file();
+    if (!file) throw new BadRequestException('Aucun fichier fourni');
+
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (!allowed.includes(file.mimetype)) {
+      throw new BadRequestException('Format non supporté. Utilisez JPEG, PNG, WebP ou GIF.');
+    }
+
+    const buffer = await file.toBuffer();
+    const url = await this.authService.uploadProfilePhoto(user.sub, buffer, file.mimetype, file.filename);
+    return { photoUrl: url };
   }
 }

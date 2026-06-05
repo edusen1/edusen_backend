@@ -16,6 +16,7 @@ import { TeacherController } from '@/modules/teacher.controller';
 import { StudentController } from '@/modules/student.controller';
 import { ParentController } from '@/modules/parent.controller';
 import { CaisseController } from '@/modules/caisse.controller';
+import { StorageController } from '@/modules/storage.controller';
 import { TenantMiddleware } from '@/common/guards/tenant.middleware';
 import { AuthService } from '@/modules/auth/auth.service';
 import { PlatformService } from '@/modules/platform/platform.service';
@@ -31,6 +32,8 @@ import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 import { ClasseService } from '@/modules/classes/classe.service';
 import { HealthController } from '@/modules/health.controller';
 import { EmploiDuTempsService } from '@/modules/v1/emploi-du-temps/emploi-du-temps.service';
+import { BulletinService } from '@/modules/v1/bulletin/bulletin.service';
+import { MensualitesSchedulerService } from '@/modules/mensualites-scheduler.service';
 
 @Module({
   imports: [
@@ -38,7 +41,7 @@ import { EmploiDuTempsService } from '@/modules/v1/emploi-du-temps/emploi-du-tem
     JwtModule.register({
       global: true,
       secret: process.env.JWT_SECRET ?? 'c1573798629c7fea139ab064c71e40ebb243491a3c6c16f42faba2d13e9d838b',
-      signOptions: { expiresIn: '15m' },
+      signOptions: { expiresIn: '24h' },
     }),
   ],
   controllers: [
@@ -52,6 +55,7 @@ import { EmploiDuTempsService } from '@/modules/v1/emploi-du-temps/emploi-du-tem
     StudentController,
     ParentController,
     CaisseController,
+    StorageController,
   ],
   providers: [
     AppLoggerService,
@@ -69,6 +73,8 @@ import { EmploiDuTempsService } from '@/modules/v1/emploi-du-temps/emploi-du-tem
     WhatsappService,
     ClasseService,
     EmploiDuTempsService,
+    BulletinService,
+    MensualitesSchedulerService,
     { provide: APP_GUARD, useClass: AppAuthGuard },
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },

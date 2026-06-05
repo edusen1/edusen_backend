@@ -1,10 +1,13 @@
-import { Body, Controller, Get, Headers, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, Param, Patch, Post, Put, Query, Req } from '@nestjs/common';
 import { Roles } from '@/common/decorators/roles.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import type { JwtUser } from '@/common/types/auth.types';
 import { DomainService } from '@/modules/domain.service';
 import { LegacyCrudService } from '@/modules/legacy-crud.service';
 import { ClasseService } from '@/modules/classes/classe.service';
+import { StorageService } from '@/infrastructure/storage/storage.service';
+import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
+import type { FastifyRequest } from 'fastify';
 
 type QueryParams = Record<string, string | string[] | undefined>;
 type Payload = Record<string, unknown>;
@@ -16,6 +19,8 @@ export class TeacherController {
     private readonly domain: DomainService,
     private readonly crud: LegacyCrudService,
     private readonly classeService: ClasseService,
+    private readonly storage: StorageService,
+    private readonly whatsapp: WhatsappService,
   ) {}
 
   @Get('profil')
@@ -207,8 +212,46 @@ export class TeacherController {
   }
 
   @Post('absences')
-  createAbsence(@Headers('x-tenant-id') tenantId: string, @Body() body: Payload, @CurrentUser() user?: JwtUser) {
-    return this.classeService.createTeacherAbsence(tenantId, user?.sub ?? '', body as any);
+  async createAbsence(@Headers('x-tenant-id') tenantId: string, @Body() body: Payload, @CurrentUser() user?: JwtUser) {
+    const absence = await this.classeService.createTeacherAbsence(tenantId, user?.sub ?? '', body as any);
+    const teacher = user?.sub ? await this.domain.teacherProfil(user.sub) : null;
+
+    const label = [
+      'NouraSchool - Nouvelle absence professeur',
+      `Type: ${String(body.typeAbsence ?? 'MALADIE')}`,
+      `Du: ${String(body.dateDebut ?? '')}`,
+      `Au: ${String(body.dateFin ?? '')}`,
+      `Motif: ${String(body.motif ?? '—')}`,
+    ].join('\n');
+
+    if (teacher?.telephone) {
+      this.whatsapp.sendMessage(tenantId, String(teacher.telephone), label).catch(() => {});
+    }
+    this.whatsapp.broadcastToRoles(tenantId, label, ['ADMIN']).catch(() => {});
+
+    return absence;
+  }
+
+  @Post('absences/justificatif')
+  async uploadAbsenceJustificatif(
+    @Headers('x-tenant-id') tenantId: string,
+    @Req() req: FastifyRequest,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    if (!req.isMultipart()) throw new BadRequestException('La requête doit être multipart/form-data');
+    const file = await req.file();
+    if (!file) throw new BadRequestException('Aucun fichier fourni');
+
+    const allowed = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+    if (!allowed.includes(file.mimetype)) {
+      throw new BadRequestException('Format non supporté. Utilisez PDF, JPEG, PNG ou WebP.');
+    }
+
+    const buffer = await file.toBuffer();
+    const key = this.storage.buildKey('justificatifs', tenantId, file.filename || 'justificatif.pdf');
+    const stored = await this.storage.upload(key, buffer, file.mimetype);
+    const url = stored.startsWith('http') ? stored : this.storage.buildPublicAccessUrl(stored);
+    return { justificatifUrl: url, key };
   }
 
   @Get('bulletins')

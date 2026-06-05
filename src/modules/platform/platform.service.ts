@@ -5,12 +5,22 @@ import { PrismaService } from '@/config/prisma.service';
 import { CreateTenantDto } from '@/modules/platform/dto/create-tenant.dto';
 import { CreateUserDto } from '@/modules/platform/dto/create-user.dto';
 import { rethrowServiceError } from '@/common/utils/service-error.util';
+import { StorageService } from '@/infrastructure/storage/storage.service';
 
 @Injectable()
 export class PlatformService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
-  findTenants() { return this.prisma.tenant.findMany({ orderBy: { createdAt: 'desc' } }); }
+  async findTenants() {
+    const tenants = await this.prisma.tenant.findMany({ orderBy: { createdAt: 'desc' } });
+    return tenants.map((tenant) => ({
+      ...tenant,
+      logoUrl: this.storage.resolveUrl(tenant.logoUrl) ?? tenant.logoUrl,
+    }));
+  }
   async createTenant(dto: CreateTenantDto) {
     try {
       const dateExpiration = dto.durationMonths
@@ -55,13 +65,16 @@ export class PlatformService {
       rethrowServiceError(error, 'création tenant');
     }
   }
-  findTenantById(id: string) { return this.prisma.tenant.findUnique({ where: { id } }); }
+  async findTenantById(id: string) {
+    const tenant = await this.prisma.tenant.findUnique({ where: { id } });
+    return tenant ? { ...tenant, logoUrl: this.storage.resolveUrl(tenant.logoUrl) ?? tenant.logoUrl } : null;
+  }
   async updateTenant(id: string, dto: Partial<CreateTenantDto>) {
     const slug = dto.slug || dto.nom
       ? await this.ensureUniqueTenantSlug(dto.slug ?? this.schoolCode(dto.nom ?? ''), id)
       : undefined;
 
-    return this.prisma.tenant.update({
+    const tenant = await this.prisma.tenant.update({
       where: { id },
       data: {
         slug,
@@ -74,6 +87,7 @@ export class PlatformService {
         actif: dto.actif,
       },
     });
+    return { ...tenant, logoUrl: this.storage.resolveUrl(tenant.logoUrl) ?? tenant.logoUrl };
   }
   suspendTenant(id: string) { return this.prisma.tenant.update({ where: { id }, data: { actif: false } }); }
   reactivateTenant(id: string) { return this.prisma.tenant.update({ where: { id }, data: { actif: true } }); }
@@ -122,7 +136,7 @@ export class PlatformService {
     const derniersTenants = await this.prisma.tenant.findMany({
       orderBy: { createdAt: 'desc' },
       take: 5,
-      select: { id: true, nom: true, plan: true, actif: true, createdAt: true },
+      select: { id: true, nom: true, plan: true, actif: true, createdAt: true, logoUrl: true },
     });
 
     const croissanceMensuelle = await this.prisma.tenant.groupBy({
@@ -138,6 +152,11 @@ export class PlatformService {
       parMois[key] = (parMois[key] ?? 0) + row._count._all;
     }
 
+    const derniersTenantsResolved = derniersTenants.map((tenant) => ({
+      ...tenant,
+      logoUrl: this.storage.resolveUrl((tenant as any).logoUrl) ?? (tenant as any).logoUrl,
+    }));
+
     return {
       tenants: totalTenants,
       tenantActifs,
@@ -148,7 +167,7 @@ export class PlatformService {
       inscriptions: totalInscriptions,
       paiements: totalPaiements,
       parPlan: tenantParPlan.map((p) => ({ plan: p.plan, count: p._count._all })),
-      derniersTenants,
+      derniersTenants: derniersTenantsResolved,
       croissanceMensuelle: Object.entries(parMois).map(([mois, count]) => ({ mois, count })),
     };
   }

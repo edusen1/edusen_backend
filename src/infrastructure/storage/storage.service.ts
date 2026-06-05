@@ -2,11 +2,13 @@ import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  GetObjectCommandOutput,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { randomUUID } from 'node:crypto';
+import { NotFoundException } from '@nestjs/common';
 
 @Injectable()
 export class StorageService {
@@ -66,6 +68,21 @@ export class StorageService {
     }
   }
 
+  async getObject(key: string): Promise<GetObjectCommandOutput> {
+    try {
+      return await this.client.send(
+        new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+        }),
+      );
+    } catch (err) {
+      const error = err as { name?: string; code?: string; message?: string };
+      this.logger.warn(`[Storage] Get object failed key=${key}: ${error.message ?? 'unknown error'}`);
+      throw new NotFoundException('Fichier introuvable');
+    }
+  }
+
   async delete(key: string): Promise<void> {
     try {
       await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
@@ -88,5 +105,43 @@ export class StorageService {
 
   buildPhotoKey(tenantId: string, userId: string): string {
     return `photos/${tenantId}/${userId}`;
+  }
+
+  buildPublicAccessUrl(key: string): string {
+    const base = process.env.API_PUBLIC_URL ?? process.env.PUBLIC_API_URL ?? 'http://localhost:3000/api';
+    return `${base.replace(/\/$/, '')}/storage/file?key=${encodeURIComponent(key)}`;
+  }
+
+  /**
+   * Normalise une valeur stockée en base (clé brute ou URL complète avec n'importe quel hôte)
+   * vers l'URL publique correcte (S3_PUBLIC_URL actuel). Gère la migration transparente
+   * si l'hôte MinIO a changé depuis la création de l'enregistrement.
+   */
+  resolveUrl(stored: string | null | undefined): string | null {
+    if (!stored) return null;
+
+    if (!stored.startsWith('http')) {
+      return this.buildPublicAccessUrl(stored);
+    }
+
+    try {
+      const parsed = new URL(stored);
+      const segments = parsed.pathname.split('/').filter(Boolean);
+
+      // URLs déjà résolues vers notre endpoint public: ne pas retransformer
+      if (segments[0] === 'storage' && segments[1] === 'file') {
+        return stored;
+      }
+
+      // URLs MinIO/S3 classiques: on ne réécrit que les hôtes MinIO connus
+      if ((parsed.hostname.includes('minio') || parsed.pathname.includes(`/${this.bucket}/`)) && segments.length >= 2) {
+        const key = segments.slice(1).join('/');
+        return this.buildPublicAccessUrl(key);
+      }
+    } catch {
+      // fallback below
+    }
+
+    return stored;
   }
 }

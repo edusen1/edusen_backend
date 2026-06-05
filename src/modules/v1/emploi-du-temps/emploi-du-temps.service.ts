@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@/config/prisma.service';
+import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 import { Prisma } from '@prisma/client';
 
 export interface CreateEmploiDuTempsDto {
@@ -19,7 +20,12 @@ export interface CreateEmploiDuTempsDto {
 
 @Injectable()
 export class EmploiDuTempsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(EmploiDuTempsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly whatsapp: WhatsappService,
+  ) {}
 
   async create(tenantId: string, dto: CreateEmploiDuTempsDto): Promise<unknown> {
     const resolved = await this.resolveCourseFields(tenantId, dto);
@@ -105,6 +111,53 @@ export class EmploiDuTempsService {
       where: { tenantId, classeId, anneeScolaire },
       data: { publie: true },
     });
+
+    // Notify students and teachers via WhatsApp (fire-and-forget)
+    this.notifyEmploiPublie(tenantId, classeId).catch((e) =>
+      this.logger.warn(`WhatsApp emploi du temps: ${e?.message}`),
+    );
+  }
+
+  private async notifyEmploiPublie(tenantId: string, classeId: string): Promise<void> {
+    const classe = await this.prisma.classe.findFirst({
+      where: { id: classeId },
+      select: { nom: true },
+    });
+    const classeNom = classe?.nom ?? 'votre classe';
+    const msg = `📅 *Emploi du temps disponible*\nL'emploi du temps de la classe *${classeNom}* a été publié. Connectez-vous pour le consulter.`;
+
+    // Students in this class — get eleveIds then their phones
+    const inscriptions = await this.prisma.inscription.findMany({
+      where: { classeId, tenantId },
+      select: { eleveId: true },
+    });
+    if (inscriptions.length) {
+      const eleveIds = inscriptions.map((i) => i.eleveId);
+      const eleves = await this.prisma.user.findMany({
+        where: { id: { in: eleveIds }, telephone: { not: null } },
+        select: { telephone: true },
+      });
+      for (const e of eleves) {
+        if (e.telephone) this.whatsapp.sendMessage(tenantId, e.telephone, msg).catch(() => {});
+      }
+    }
+
+    // Teachers teaching this class
+    const coursList = await this.prisma.cours.findMany({
+      where: { classeId, tenantId },
+      select: { enseignantId: true },
+    });
+    const enseignantIds = [...new Set(coursList.map((c) => c.enseignantId).filter(Boolean) as string[])];
+    if (enseignantIds.length) {
+      const teachers = await this.prisma.user.findMany({
+        where: { id: { in: enseignantIds }, telephone: { not: null } },
+        select: { telephone: true },
+      });
+      const teacherMsg = `📅 *Emploi du temps publié*\nL'emploi du temps de la classe *${classeNom}* a été publié. Connectez-vous pour le consulter.`;
+      for (const t of teachers) {
+        if (t.telephone) this.whatsapp.sendMessage(tenantId, t.telephone, teacherMsg).catch(() => {});
+      }
+    }
   }
 
   private readInclude() {

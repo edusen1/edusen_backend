@@ -312,6 +312,28 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     });
   }
 
+  /**
+   * Envoie un message à tous les utilisateurs d'un tenant ayant l'un des rôles spécifiés.
+   * Les erreurs individuelles sont silencieuses (log uniquement) pour ne pas bloquer l'appelant.
+   */
+  async broadcastToRoles(tenantId: string, message: string, roles: string[]): Promise<void> {
+    const users = await this.prisma.user.findMany({
+      where: { tenantId, role: { in: roles as any }, actif: true, telephone: { not: null } },
+      select: { telephone: true },
+    });
+
+    const phones = [...new Set(users.map((u) => u.telephone!).filter(Boolean))];
+    this.logger.log(`[WA Broadcast] tenant=${tenantId} roles=${roles.join(',')} destinataires=${phones.length}`);
+
+    for (const phone of phones) {
+      try {
+        await this.sendMessage(tenantId, phone, message);
+      } catch (err) {
+        this.logger.warn(`[WA Broadcast] échec phone=${phone}: ${(err as Error).message}`);
+      }
+    }
+  }
+
   isReady(tenantId: string): boolean {
     return this.states.get(tenantId)?.ready ?? false;
   }

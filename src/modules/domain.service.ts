@@ -1,9 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import { PrismaService } from "@/config/prisma.service";
+import { WhatsappService } from "@/modules/whatsapp/whatsapp.service";
 
 @Injectable()
 export class DomainService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly whatsapp: WhatsappService,
+  ) {}
 
   adminUsers(tenantId: string) {
     return this.prisma.user.findMany({ where: { tenantId } });
@@ -68,7 +73,7 @@ export class DomainService {
     if (!matiereId) {
       throw new BadRequestException("matiereId (ou coursId valide) est requis");
     }
-    return this.prisma.note.create({
+    const note = await this.prisma.note.create({
       data: {
         tenantId,
         eleveId: data.eleveId,
@@ -87,6 +92,9 @@ export class DomainService {
         anneeScolaire: new Date().getFullYear().toString(),
       },
     });
+
+    void this.notifyNoteCreated(tenantId, note.eleveId, note.id).catch(() => {});
+    return note;
   }
   teacherUpdateNote(noteId: string, valeur: number) {
     return this.prisma.note.update({
@@ -106,9 +114,15 @@ export class DomainService {
   studentProfil(userId: string) {
     return this.prisma.user.findUnique({ where: { id: userId } });
   }
-  studentNotes(tenantId: string, eleveId: string) {
+  studentUpdateProfil(userId: string, data: { telephone?: string }) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { telephone: data.telephone ?? undefined },
+    });
+  }
+  studentNotes(tenantId: string, eleveId: string, trimestre?: string) {
     return this.prisma.note.findMany({
-      where: { tenantId, eleveId },
+      where: { tenantId, eleveId, ...(trimestre ? { trimestre } : {}) },
       include: { matiere: { select: { id: true, code: true, libelle: true } } },
       orderBy: [
         { anneeScolaire: "desc" },
@@ -203,6 +217,13 @@ export class DomainService {
       data: { lu: true },
     });
   }
+  async studentReadAllNotifications(tenantId: string, destinataireId: string) {
+    await this.prisma.notification.updateMany({
+      where: { tenantId, destinataireId, lu: false },
+      data: { lu: true },
+    });
+    return { success: true };
+  }
   studentReclamations(tenantId: string, eleveId: string) {
     return this.prisma.reclamation.findMany({
       where: { tenantId, eleveId },
@@ -240,29 +261,336 @@ export class DomainService {
       select: { id: true },
     });
     if (existing) throw new BadRequestException('Une réclamation est déjà en attente pour cette note');
-    return this.prisma.reclamation.create({
+    const reclamation = await this.prisma.reclamation.create({
       data: { tenantId, eleveId, motif, noteId, pieceJointeUrl } as any,
     });
+    void this.notifyReclamationCreated(tenantId, eleveId, noteId, reclamation.id).catch(() => {});
+    return reclamation;
+  }
+
+  private async notifyNoteCreated(tenantId: string, eleveId: string, noteId: string): Promise<void> {
+    const note = await this.prisma.note.findFirst({
+      where: { id: noteId, tenantId, eleveId },
+      include: { matiere: { select: { libelle: true, code: true } } },
+    });
+    if (!note) return;
+
+    const eleve = await this.prisma.user.findUnique({
+      where: { id: eleveId },
+      select: { id: true, firstName: true, lastName: true, telephone: true },
+    });
+    const parents = await this.prisma.eleveParent.findMany({
+      where: { eleveId },
+      include: { parent: { select: { id: true, firstName: true, lastName: true, telephone: true } } },
+    });
+
+    const message = [
+      'NouraSchool - Nouvelle note',
+      `Matière: ${note.matiere?.libelle ?? note.matiere?.code ?? '—'}`,
+      `Note: ${note.note ?? '—'}/${note.noteSur ?? 20}`,
+      `Période: ${note.trimestre ?? '—'}`,
+      'Vous pouvez consulter les détails et déposer une réclamation si nécessaire.',
+    ].join('\n');
+
+    const notifications: Array<{ destinataireId: string; titre: string; contenu: string }> = [];
+    if (eleve) {
+      notifications.push({
+        destinataireId: eleve.id,
+        titre: 'Nouvelle note publiée',
+        contenu: message,
+      });
+      if (eleve.telephone) {
+        this.whatsapp.sendMessage(tenantId, eleve.telephone, message).catch(() => {});
+      }
+    }
+    for (const link of parents) {
+      notifications.push({
+        destinataireId: link.parent.id,
+        titre: 'Nouvelle note de votre enfant',
+        contenu: message,
+      });
+      if (link.parent.telephone) {
+        this.whatsapp.sendMessage(tenantId, link.parent.telephone, message).catch(() => {});
+      }
+    }
+    if (notifications.length) {
+      await this.prisma.notification.createMany({
+        data: notifications.map((n) => ({
+          tenantId,
+          destinataireId: n.destinataireId,
+          titre: n.titre,
+          contenu: n.contenu,
+          lu: false,
+        })),
+      });
+    }
+    this.whatsapp.broadcastToRoles(tenantId, message, ['ADMIN']).catch(() => {});
+  }
+
+  private async notifyReclamationCreated(tenantId: string, eleveId: string, noteId: string, reclamationId: string): Promise<void> {
+    const note = await this.prisma.note.findFirst({
+      where: { id: noteId, tenantId, eleveId },
+      include: { matiere: { select: { libelle: true, code: true } } },
+    });
+    const eleve = await this.prisma.user.findUnique({
+      where: { id: eleveId },
+      select: { id: true, firstName: true, lastName: true, telephone: true },
+    });
+    if (!note || !eleve) return;
+    const message = [
+      'NouraSchool - Réclamation déposée',
+      `Élève: ${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim(),
+      `Matière: ${note.matiere?.libelle ?? note.matiere?.code ?? '—'}`,
+      `Réclamation: ${reclamationId}`,
+    ].join('\n');
+    this.whatsapp.broadcastToRoles(tenantId, message, ['ADMIN', 'ENSEIGNANT']).catch(() => {});
+    if (eleve.telephone) {
+      this.whatsapp.sendMessage(tenantId, eleve.telephone, message).catch(() => {});
+    }
   }
 
   parentPaiements(tenantId: string) {
-    return this.prisma.paiement.findMany({ where: { tenantId } });
+    return this.prisma.paiement.findMany({
+      where: { tenantId },
+      include: {
+        inscription: {
+          include: {
+            classe: { select: { id: true, nom: true } },
+            anneeAcademique: { select: { id: true, libelle: true } },
+          },
+        },
+      },
+    });
   }
-  caissePaiements(tenantId: string) {
-    return this.prisma.paiement.findMany({ where: { tenantId } });
+  // ─── CAISSE ────────────────────────────────────────────────────────────────
+
+  private readonly paiementInclude = {
+    inscription: {
+      include: {
+        classe: { select: { id: true, nom: true } },
+        anneeAcademique: { select: { id: true, libelle: true } },
+      },
+    },
+  } as const;
+
+  private async attachEleveToPaiements<T extends { eleveId?: string | null; eleve?: unknown }>(
+    rows: T[],
+  ): Promise<T[]> {
+    const ids = [...new Set(rows.map((r) => r.eleveId).filter(Boolean))] as string[];
+    if (!ids.length) return rows;
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, firstName: true, lastName: true, matricule: true, telephone: true },
+    });
+    const map = new Map(users.map((u) => [u.id, u]));
+    return rows.map((r) => ({ ...r, eleve: map.get(r.eleveId ?? '') ?? null }));
   }
-  caissePaiementById(id: string) {
-    return this.prisma.paiement.findUnique({ where: { id } });
+
+  async caisseDashboard(tenantId: string) {
+    const now = new Date();
+    const startDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const [todayCnt, todayAgg, monthCnt, monthAgg, enAttenteCnt, enAttenteAgg, rejeteCnt, totalCnt] =
+      await Promise.all([
+        this.prisma.paiement.count({ where: { tenantId, statut: 'VALIDE', datePaiement: { gte: startDay } } }),
+        this.prisma.paiement.aggregate({ where: { tenantId, statut: 'VALIDE', datePaiement: { gte: startDay } }, _sum: { montant: true } }),
+        this.prisma.paiement.count({ where: { tenantId, statut: 'VALIDE', datePaiement: { gte: startMonth } } }),
+        this.prisma.paiement.aggregate({ where: { tenantId, statut: 'VALIDE', datePaiement: { gte: startMonth } }, _sum: { montant: true } }),
+        this.prisma.paiement.count({ where: { tenantId, statut: 'EN_ATTENTE' } }),
+        this.prisma.paiement.aggregate({ where: { tenantId, statut: 'EN_ATTENTE' }, _sum: { montant: true } }),
+        this.prisma.paiement.count({ where: { tenantId, statut: 'REJETE' } }),
+        this.prisma.paiement.count({ where: { tenantId } }),
+      ]);
+    return {
+      today: { count: todayCnt, montant: todayAgg._sum.montant ?? 0 },
+      month: { count: monthCnt, montant: monthAgg._sum.montant ?? 0 },
+      enAttente: { count: enAttenteCnt, montant: enAttenteAgg._sum.montant ?? 0 },
+      rejete: { count: rejeteCnt },
+      total: totalCnt,
+    };
   }
-  caisseValiderPaiement(id: string) {
+
+  async caissePaiements(
+    tenantId: string,
+    filters: {
+      statut?: string;
+      typePaiement?: string;
+      eleveId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      search?: string;
+      page?: number;
+      size?: number;
+    } = {},
+  ) {
+    const where: Record<string, unknown> = { tenantId };
+    if (filters.statut) where.statut = filters.statut;
+    if (filters.typePaiement) where.typePaiement = filters.typePaiement;
+    if (filters.eleveId) where.eleveId = filters.eleveId;
+    if (filters.dateFrom || filters.dateTo) {
+      where.createdAt = {
+        ...(filters.dateFrom ? { gte: new Date(filters.dateFrom) } : {}),
+        ...(filters.dateTo ? { lte: new Date(filters.dateTo + 'T23:59:59') } : {}),
+      };
+    }
+
+    const page = filters.page ?? 0;
+    const size = filters.size ?? 50;
+
+    let rows = await this.prisma.paiement.findMany({
+      where,
+      include: this.paiementInclude,
+      orderBy: { createdAt: 'desc' },
+      skip: page * size,
+      take: size,
+    });
+    rows = await this.attachEleveToPaiements(rows as any) as any;
+
+    if (filters.search) {
+      const q = filters.search.toLowerCase();
+      rows = rows.filter((r: any) => {
+        const eleve = r.eleve ?? r.inscription?.eleve;
+        const nom = `${eleve?.firstName ?? ''} ${eleve?.lastName ?? ''}`.toLowerCase();
+        return nom.includes(q) || (r.reference ?? '').toLowerCase().includes(q) || (eleve?.matricule ?? '').toLowerCase().includes(q);
+      });
+    }
+
+    const total = await this.prisma.paiement.count({ where });
+    return { content: rows, total, page, size };
+  }
+
+  async caissePaiementById(id: string) {
+    const row = await this.prisma.paiement.findUnique({ where: { id }, include: this.paiementInclude });
+    if (!row) throw new NotFoundException('Paiement introuvable');
+    const [hydrated] = await this.attachEleveToPaiements([row as any]);
+    return hydrated;
+  }
+
+  async caisseCreatePaiement(
+    tenantId: string,
+    body: {
+      eleveId: string;
+      inscriptionId?: string;
+      montant: number;
+      typePaiement: string;
+      modePaiement: string;
+      anneeScolaire: string;
+      trimestre?: string;
+      description?: string;
+      transactionId?: string;
+      statut?: string;
+    },
+    userId?: string,
+  ) {
+    const year = new Date().getFullYear();
+    const ref = `PAY-${year}-${randomUUID().slice(0, 8).toUpperCase()}`;
+    const created = await this.prisma.paiement.create({
+      data: {
+        tenantId,
+        eleveId: body.eleveId,
+        inscriptionId: body.inscriptionId ?? null,
+        reference: ref,
+        montant: Number(body.montant),
+        typePaiement: body.typePaiement as any,
+        modePaiement: body.modePaiement as any,
+        statut: (body.statut ?? 'EN_ATTENTE') as any,
+        anneeScolaire: body.anneeScolaire,
+        trimestre: body.trimestre ?? null,
+        description: body.description ?? null,
+        transactionId: body.transactionId ?? null,
+        datePaiement: body.statut === 'VALIDE' ? new Date() : null,
+        validePar: body.statut === 'VALIDE' ? (userId ?? null) : null,
+      },
+      include: this.paiementInclude,
+    });
+    return created;
+  }
+
+  async caisseValiderPaiement(id: string, userId?: string) {
+    const paiement = await this.prisma.paiement.findUnique({ where: { id } });
+    if (!paiement) throw new NotFoundException('Paiement introuvable');
+    const updated = await this.prisma.paiement.update({
+      where: { id },
+      data: { statut: 'VALIDE', datePaiement: new Date(), validePar: userId ?? null },
+      include: this.paiementInclude,
+    });
+    // Notify via WhatsApp
+    const eleve = await this.prisma.user.findUnique({
+      where: { id: paiement.eleveId },
+      select: { firstName: true, lastName: true, telephone: true },
+    });
+    if (eleve?.telephone) {
+      const msg = `✅ *Paiement confirmé*\nBonjour ${eleve.firstName ?? ''},\nVotre paiement de *${Number(paiement.montant).toLocaleString('fr-FR')} FCFA* (${paiement.typePaiement}) a été validé.\nRéférence : ${paiement.reference}`;
+      this.whatsapp.sendMessage(paiement.tenantId, eleve.telephone, msg).catch(() => {});
+    }
+    return updated;
+  }
+
+  async caisseRejeterPaiement(id: string, motif?: string) {
+    const paiement = await this.prisma.paiement.findUnique({ where: { id } });
+    if (!paiement) throw new NotFoundException('Paiement introuvable');
     return this.prisma.paiement.update({
       where: { id },
-      data: { statut: "VALIDE" },
+      data: {
+        statut: 'REJETE',
+        description: motif ? `[REJETÉ] ${motif}` : paiement.description,
+      },
     });
   }
 
+  async caisseEleves(tenantId: string, search?: string) {
+    const where: Record<string, unknown> = { tenantId, role: 'ELEVE', actif: true };
+    const users = await this.prisma.user.findMany({
+      where,
+      select: { id: true, firstName: true, lastName: true, matricule: true, telephone: true, classeId: true },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      take: 200,
+    });
+    let result = users;
+    if (search) {
+      const q = search.toLowerCase();
+      result = users.filter((u) => {
+        const nom = `${u.firstName ?? ''} ${u.lastName ?? ''}`.toLowerCase();
+        return nom.includes(q) || (u.matricule ?? '').toLowerCase().includes(q);
+      });
+    }
+    // Attach classe
+    const classeIds = [...new Set(result.map((u) => u.classeId).filter(Boolean))] as string[];
+    const classes = classeIds.length
+      ? await this.prisma.classe.findMany({ where: { id: { in: classeIds } }, select: { id: true, nom: true } })
+      : [];
+    const classeMap = new Map(classes.map((c) => [c.id, c]));
+    return result.map((u) => ({ ...u, classe: u.classeId ? (classeMap.get(u.classeId) ?? null) : null }));
+  }
+
+  async caisseHistorique(tenantId: string, dateFrom?: string, dateTo?: string) {
+    const where: Record<string, unknown> = { tenantId, statut: 'VALIDE' };
+    if (dateFrom || dateTo) {
+      where.datePaiement = {
+        ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
+        ...(dateTo ? { lte: new Date(dateTo + 'T23:59:59') } : {}),
+      };
+    }
+    const rows = await this.prisma.paiement.findMany({
+      where,
+      include: this.paiementInclude,
+      orderBy: { datePaiement: 'desc' },
+    });
+    return this.attachEleveToPaiements(rows as any);
+  }
+
   v1Paiements(tenantId: string) {
-    return this.prisma.paiement.findMany({ where: { tenantId } });
+    return this.prisma.paiement.findMany({
+      where: { tenantId },
+      include: {
+        inscription: {
+          include: {
+            classe: { select: { id: true, nom: true } },
+            anneeAcademique: { select: { id: true, libelle: true } },
+          },
+        },
+      },
+    });
   }
   v1Inscriptions(tenantId: string) {
     return this.prisma.inscription.findMany({ where: { tenantId } });

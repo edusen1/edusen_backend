@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@/config/prisma.service';
 import { MailService } from '@/infrastructure/mail/mail.service';
+import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 import { buildPageResult, PageResult, PaginationQueryDto } from '@/shared/dto/pagination-query.dto';
 import { Prisma, StatutBulletin } from '@prisma/client';
 
@@ -20,9 +21,12 @@ export interface CreateBulletinDto {
 
 @Injectable()
 export class BulletinService {
+  private readonly logger = new Logger(BulletinService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
+    private readonly whatsapp: WhatsappService,
   ) {}
 
   async create(tenantId: string, dto: CreateBulletinDto, soumisPar?: string): Promise<unknown> {
@@ -160,6 +164,15 @@ export class BulletinService {
     });
   }
 
+  async valider(tenantId: string, id: string, validePar: string): Promise<unknown> {
+    const bulletin = await this.prisma.bulletin.findFirst({ where: { id, tenantId } });
+    if (!bulletin) throw new NotFoundException('Bulletin introuvable');
+    return this.prisma.bulletin.update({
+      where: { id },
+      data: { statut: StatutBulletin.VALIDE, validePar },
+    });
+  }
+
   async publier(tenantId: string, id: string, validePar: string): Promise<unknown> {
     const bulletin = await this.prisma.bulletin.findFirst({ where: { id, tenantId } });
     if (!bulletin) throw new NotFoundException('Bulletin introuvable');
@@ -172,18 +185,47 @@ export class BulletinService {
     const eleve = await this.prisma.user.findUnique({ where: { id: bulletin.eleveId } });
     if (eleve) {
       const nomEleve = `${eleve.firstName} ${eleve.lastName}`;
+      const trimestre = (bulletin.trimestre ?? '').replace(/_/g, ' ');
       const parents = await this.prisma.eleveParent.findMany({
         where: { eleveId: eleve.id },
-        include: { parent: { select: { email: true, firstName: true } } },
+        include: { parent: { select: { email: true, firstName: true, telephone: true } } },
       });
       for (const { parent } of parents) {
         if (parent.email) {
           this.mailService.sendBulletinDisponible(parent.email, nomEleve, bulletin.trimestre);
         }
+        if (parent.telephone) {
+          const msg = `📋 *Bulletin disponible*\nBonjour ${parent.firstName ?? ''},\nLe bulletin de *${nomEleve}* pour le *${trimestre}* est maintenant disponible. Connectez-vous pour le consulter.`;
+          this.whatsapp.sendMessage(tenantId, parent.telephone, msg).catch((e) =>
+            this.logger.warn(`WhatsApp bulletin parent ${parent.telephone}: ${e?.message}`),
+          );
+        }
+      }
+      // Notify the student if they have a phone
+      const eleveFull = await this.prisma.user.findUnique({ where: { id: eleve.id }, select: { telephone: true } });
+      if (eleveFull?.telephone) {
+        const msg = `📋 *Ton bulletin est disponible*\nBonjour ${eleve.firstName ?? ''},\nTon bulletin de *${trimestre}* est disponible. Connecte-toi pour le consulter.`;
+        this.whatsapp.sendMessage(tenantId, eleveFull.telephone, msg).catch((e) =>
+          this.logger.warn(`WhatsApp bulletin élève ${eleveFull.telephone}: ${e?.message}`),
+        );
       }
     }
 
     return updated;
+  }
+
+  async genererDuplicata(tenantId: string, id: string, demandePar: string): Promise<unknown> {
+    const bulletin = await this.prisma.bulletin.findFirst({
+      where: { id, tenantId },
+      include: {
+        classe: { select: { id: true, nom: true } },
+        liensBulletin: { select: { token: true, createdAt: true } },
+      },
+    });
+    if (!bulletin) throw new NotFoundException('Bulletin introuvable');
+    this.logger.log(`Duplicata demandé pour bulletin ${id} par ${demandePar}`);
+    // Return the bulletin with a duplicata flag for the frontend to generate a new PDF
+    return { ...bulletin, isDuplicata: true, duplicataDate: new Date(), duplicataDemandePar: demandePar };
   }
 
   async delete(tenantId: string, id: string): Promise<void> {

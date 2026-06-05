@@ -22,7 +22,7 @@ export class NoteService {
 
   async create(tenantId: string, dto: CreateNoteDto): Promise<unknown> {
     try {
-      return await this.prisma.note.create({
+      const created = await this.prisma.note.create({
         data: {
           tenantId,
           eleveId: dto.eleveId,
@@ -37,6 +37,7 @@ export class NoteService {
         },
         include: { matiere: { select: { id: true, code: true, libelle: true } } },
       });
+      return this.attachCoefficient(tenantId, created);
     } catch (error) {
       rethrowServiceError(error, 'création note');
     }
@@ -91,7 +92,8 @@ export class NoteService {
       this.prisma.note.count({ where }),
     ]);
 
-    return buildPageResult(data, total, query.page ?? 1, query.size ?? 20);
+    const hydrated = await this.attachCoefficients(tenantId, data);
+    return buildPageResult(hydrated, total, query.page ?? 1, query.size ?? 20);
   }
 
   async findOne(tenantId: string, id: string): Promise<unknown> {
@@ -105,7 +107,7 @@ export class NoteService {
 
   async update(tenantId: string, id: string, dto: Partial<CreateNoteDto>): Promise<unknown> {
     await this.findOne(tenantId, id);
-    return this.prisma.note.update({
+    const updated = await this.prisma.note.update({
       where: { id },
       data: {
         ...(dto.note !== undefined ? { note: dto.note } : {}),
@@ -116,6 +118,7 @@ export class NoteService {
       },
       include: { matiere: { select: { id: true, code: true, libelle: true } } },
     });
+    return this.attachCoefficient(tenantId, updated);
   }
 
   async delete(tenantId: string, id: string): Promise<void> {
@@ -129,11 +132,12 @@ export class NoteService {
     trimestre: string,
     anneeScolaire: string,
   ): Promise<unknown[]> {
-    return this.prisma.note.findMany({
+    const notes = await this.prisma.note.findMany({
       where: { tenantId, eleveId, trimestre, anneeScolaire },
       include: { matiere: { select: { id: true, code: true, libelle: true } } },
       orderBy: { matiere: { libelle: 'asc' } },
     });
+    return this.attachCoefficients(tenantId, notes);
   }
 
   async getMoyenneEleve(
@@ -180,6 +184,38 @@ export class NoteService {
 
     const moyenne = totalCoeff > 0 ? Math.round((totalPoints / totalCoeff) * 100) / 100 : 0;
     return { moyenne, details };
+  }
+
+  private async attachCoefficients<T extends { eleveId?: string; anneeScolaire?: string; coefficient?: number | null }>(
+    tenantId: string,
+    notes: T[],
+  ): Promise<T[]> {
+    const cache = new Map<string, Map<string, number>>();
+    const getCoefficients = async (eleveId: string, anneeScolaire: string): Promise<Map<string, number>> => {
+      const key = `${eleveId}|${anneeScolaire}`;
+      const cached = cache.get(key);
+      if (cached) return cached;
+      const map = await this.getCourseCoefficientsForStudent(tenantId, eleveId, anneeScolaire);
+      cache.set(key, map);
+      return map;
+    };
+
+    return Promise.all(notes.map(async (note) => {
+      if (!note.eleveId || !note.anneeScolaire) return { ...note } as T;
+      const coefficients = await getCoefficients(note.eleveId, note.anneeScolaire);
+      return {
+        ...note,
+        coefficient: note.coefficient ?? coefficients.get((note as any).matiereId) ?? 1,
+      };
+    }));
+  }
+
+  private async attachCoefficient<T extends { eleveId?: string; anneeScolaire?: string; coefficient?: number | null }>(
+    tenantId: string,
+    note: T,
+  ): Promise<T> {
+    const [hydrated] = await this.attachCoefficients(tenantId, [note]);
+    return hydrated;
   }
 
   private async getCourseCoefficientsForStudent(

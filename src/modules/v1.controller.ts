@@ -16,13 +16,17 @@ import { Public } from '@/common/decorators/public.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import type { JwtUser } from '@/common/types/auth.types';
 import { LegacyCrudService } from '@/modules/legacy-crud.service';
+import { AcademiqueConfigService } from '@/modules/configuration/academique-config.service';
 
 type QueryParams = Record<string, string | string[] | undefined>;
 type Payload = Record<string, unknown>;
 
 @Controller('v1')
 export class V1Controller {
-  constructor(private readonly crud: LegacyCrudService) {}
+  constructor(
+    private readonly crud: LegacyCrudService,
+    private readonly academiqueConfig: AcademiqueConfigService,
+  ) {}
 
   private resolveTenantId(tenantId: string | undefined, user?: JwtUser): string | undefined {
     const headerTenantId = tenantId?.trim();
@@ -102,6 +106,24 @@ export class V1Controller {
   @Get('annees-academiques/courante')
   anneeCourante(@Headers('x-tenant-id') tenantId?: string) {
     return this.crud.findCurrentAnnee(tenantId);
+  }
+
+  @Get('annees-academiques')
+  anneesAcademiques(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Query() query: QueryParams,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.crud.findAll(
+      this.crud.v1Config('annees-academiques'),
+      this.resolveTenantId(tenantId, user),
+      query,
+    );
+  }
+
+  @Get('configuration/sections')
+  configurationSections(@Headers('x-tenant-id') tenantId?: string, @CurrentUser() user?: JwtUser) {
+    return this.academiqueConfig.getSections(this.resolveTenantId(tenantId, user)!);
   }
 
   @Post('annees-academiques/:id/activer')

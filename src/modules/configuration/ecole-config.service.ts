@@ -56,7 +56,7 @@ export class EcoleConfigService {
       pays: 'SN',
       telephone: tenant.telephone ?? '',
       email: tenant.emailContact ?? '',
-      logoUrl: tenant.logoUrl ?? undefined,
+      logoUrl: this.storage.resolveUrl(tenant.logoUrl) ?? undefined,
       typeEtablissement: 'PRIVE',
     };
   }
@@ -184,7 +184,7 @@ export class EcoleConfigService {
       siteWeb: config.siteWeb ?? undefined,
       numeroAgrement: config.numeroAgrement ?? undefined,
       typeEtablissement: 'PRIVE',
-      logoUrl: config.logoUrl ?? undefined,
+      logoUrl: this.storage.resolveUrl(config.logoUrl) ?? undefined,
     };
   }
 
@@ -236,7 +236,8 @@ export class EcoleConfigService {
     }
 
     if (/^https?:\/\//i.test(logoUrl)) {
-      return { logoUrl, logoS3Key: null };
+      // URL complète (déjà stockée en base ou envoyée telle quelle) — normaliser l'hôte
+      return { logoUrl: this.storage.resolveUrl(logoUrl) ?? logoUrl, logoS3Key: null };
     }
 
     const match = logoUrl.match(/^data:image\/(png|jpe?g|svg\+xml|webp);base64,(.+)$/i);
@@ -254,7 +255,8 @@ export class EcoleConfigService {
     }
 
     const key = this.storage.buildKey('logos', tenantId, `logo.${extension}`);
-    const uploadedUrl = await this.storage.upload(key, buffer, contentType);
-    return { logoUrl: uploadedUrl, logoS3Key: key };
+    await this.storage.upload(key, buffer, contentType);
+    // Stocker la clé brute — resolveUrl() est appliqué à la lecture
+    return { logoUrl: key, logoS3Key: key };
   }
 }

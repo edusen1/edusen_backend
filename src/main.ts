@@ -4,6 +4,7 @@ import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
+import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
 import { AppModule } from '@/app.module';
 import { AppLoggerService } from '@/common/logger/app-logger.service';
@@ -86,6 +87,7 @@ async function bootstrap(): Promise<void> {
     preflight: true,
     strictPreflight: false,
   });
+  await app.register(multipart, { limits: { fileSize: 5 * 1024 * 1024 } }); // 5 MB max
   await app.register(rateLimit, { max: 200, timeWindow: '1 minute' });
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));

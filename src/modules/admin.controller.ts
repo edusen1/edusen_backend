@@ -27,6 +27,8 @@ import { ClasseService } from '@/modules/classes/classe.service';
 import { CreateClasseDto } from '@/modules/classes/dto/create-classe.dto';
 import { UpdateClasseDto } from '@/modules/classes/dto/update-classe.dto';
 import { EmploiDuTempsService } from '@/modules/v1/emploi-du-temps/emploi-du-temps.service';
+import { BulletinService } from '@/modules/v1/bulletin/bulletin.service';
+import { DomainService } from '@/modules/domain.service';
 
 type QueryParams = Record<string, string | string[] | undefined>;
 type Payload = Record<string, unknown>;
@@ -41,6 +43,8 @@ export class AdminController {
     private readonly whatsapp: WhatsappService,
     private readonly classeService: ClasseService,
     private readonly emploiService: EmploiDuTempsService,
+    private readonly bulletinService: BulletinService,
+    private readonly domain: DomainService,
   ) {}
 
   // ----------------------------------------------------------------
@@ -221,6 +225,33 @@ export class AdminController {
     @CurrentUser() user?: JwtUser,
   ) {
     return this.crud.generateBulletinsForClasse(tenantId, body, user?.sub);
+  }
+
+  @Post('bulletins/:id/valider')
+  validerBulletin(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.bulletinService.valider(tenantId!, id, user?.sub ?? 'admin');
+  }
+
+  @Post('bulletins/:id/publier')
+  publierBulletin(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.bulletinService.publier(tenantId!, id, user?.sub ?? 'admin');
+  }
+
+  @Post('bulletins/:id/duplicata')
+  duplicataBulletin(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.bulletinService.genererDuplicata(tenantId!, id, user?.sub ?? 'admin');
   }
 
   @Post('absences-eleves/:id/approuver')
@@ -578,6 +609,92 @@ export class AdminController {
     @Param('id') id: string,
   ) {
     return this.crud.adminEleveParcours(tenantId, id);
+  }
+
+  // ----------------------------------------------------------------
+  // Paiements — alias admin vers la caisse
+  // ----------------------------------------------------------------
+
+  @Get('paiements')
+  getPaiements(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Query('statut') statut?: string,
+    @Query('typePaiement') typePaiement?: string,
+    @Query('eleveId') eleveId?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('size') size?: string,
+  ) {
+    return this.domain.caissePaiements(tenantId!, {
+      statut,
+      typePaiement,
+      eleveId,
+      dateFrom,
+      dateTo,
+      search,
+      page: page ? Number(page) : 0,
+      size: size ? Number(size) : 50,
+    });
+  }
+
+  @Get('paiements/:id')
+  getPaiementById(@Param('id') id: string) {
+    return this.domain.caissePaiementById(id);
+  }
+
+  @Post('paiements')
+  createPaiement(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.domain.caisseCreatePaiement(tenantId!, body as any, user?.sub);
+  }
+
+  @Post('paiements/:id/valider')
+  validerPaiement(@Param('id') id: string, @CurrentUser() user?: JwtUser) {
+    return this.domain.caisseValiderPaiement(id, user?.sub);
+  }
+
+  @Post('paiements/:id/rejeter')
+  rejeterPaiement(@Param('id') id: string, @Body() body: { motif?: string }) {
+    return this.domain.caisseRejeterPaiement(id, body?.motif);
+  }
+
+  // ----------------------------------------------------------------
+  // Réclamations — actions spécifiques
+  // ----------------------------------------------------------------
+
+  @Put('reclamations/:id/statut')
+  updateReclamationStatut(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: { statut: string },
+  ) {
+    return this.crud.update(
+      this.crud.adminConfig('reclamations'),
+      tenantId,
+      id,
+      { statut: body.statut },
+    );
+  }
+
+  @Post('reclamations/:id/repondre')
+  repondreReclamation(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: { message: string; statut?: string },
+  ) {
+    const updateData: Payload = { reponse: body.message };
+    if (body.statut) updateData['statut'] = body.statut;
+    return this.crud.update(
+      this.crud.adminConfig('reclamations'),
+      tenantId,
+      id,
+      updateData,
+    );
   }
 
   // ----------------------------------------------------------------

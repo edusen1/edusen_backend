@@ -89,6 +89,13 @@ const ADMIN_RESOURCES: Record<string, CrudConfig> = {
   'calendrier-scolaire': V1_RESOURCES['calendrier-scolaire'],
   appels: V1_RESOURCES.appels,
   'cahier-texte': V1_RESOURCES['cahier-texte'],
+  annonces: V1_RESOURCES.annonces,
+  personnel: V1_RESOURCES.personnel,
+  pointages: V1_RESOURCES.pointages,
+  'absences-personnel': V1_RESOURCES['absences-personnel'],
+  convocations: V1_RESOURCES.convocations,
+  cours: V1_RESOURCES.cours,
+  inscriptions: V1_RESOURCES.inscriptions,
 };
 
 @Injectable()
@@ -169,18 +176,34 @@ export class LegacyCrudService {
         },
         orderBy: { ordre: 'asc' },
       },
+    } : config.model === 'bulletin' ? {
+      classe: { select: { id: true, nom: true } },
+    } : config.model === 'absenceEleve' ? {
+      classe: { select: { id: true, nom: true } },
+    } : config.model === 'cours' ? {
+      matiere: { select: { id: true, code: true, libelle: true } },
+      classe: { select: { id: true, nom: true } },
+      anneeAcademique: { select: { id: true, libelle: true } },
+    } : config.model === 'note' ? {
+      matiere: { select: { id: true, code: true, libelle: true } },
+    } : config.model === 'paiement' ? {
+      inscription: {
+        include: {
+          classe: { select: { id: true, nom: true } },
+          anneeAcademique: { select: { id: true, libelle: true } },
+          eleve: { select: { id: true, firstName: true, lastName: true, matricule: true } },
+        },
+      },
     } : undefined;
 
     if (config.paged || query.page !== undefined || query.size !== undefined) {
       const page = this.toInt(query.page, 0);
-      const size = this.toInt(query.size, 20);
+      const size = this.toInt(query.size, config.model === 'inscription' ? 10 : 20);
       let [content, totalElements] = await Promise.all([
         delegate.findMany({ where, skip: page * size, take: size, orderBy, ...(include ? { include } : {}) }),
         delegate.count({ where }),
       ]);
-      if (config.model === 'inscription') {
-        content = await this.attachInscriptionEleves(content);
-      }
+      content = await this.attachEleveIfNeeded(config.model, content, tenantId);
       const totalPages = size > 0 ? Math.ceil(totalElements / size) : 0;
       return {
         content: content.map((item: Payload) => this.sanitizeEntity(config.model, item)),
@@ -194,9 +217,7 @@ export class LegacyCrudService {
     }
 
     let rows = await delegate.findMany({ where, orderBy, ...(include ? { include } : {}) });
-    if (config.model === 'inscription') {
-      rows = await this.attachInscriptionEleves(rows);
-    }
+    rows = await this.attachEleveIfNeeded(config.model, rows, tenantId);
     return rows.map((item: Payload) => this.sanitizeEntity(config.model, item));
   }
 
@@ -249,6 +270,24 @@ export class LegacyCrudService {
         },
         orderBy: { ordre: 'asc' },
       },
+    } : config.model === 'bulletin' ? {
+      classe: { select: { id: true, nom: true } },
+    } : config.model === 'absenceEleve' ? {
+      classe: { select: { id: true, nom: true } },
+    } : config.model === 'cours' ? {
+      matiere: { select: { id: true, code: true, libelle: true } },
+      classe: { select: { id: true, nom: true } },
+      anneeAcademique: { select: { id: true, libelle: true } },
+    } : config.model === 'note' ? {
+      matiere: { select: { id: true, code: true, libelle: true } },
+    } : config.model === 'paiement' ? {
+      inscription: {
+        include: {
+          classe: { select: { id: true, nom: true } },
+          anneeAcademique: { select: { id: true, libelle: true } },
+          eleve: { select: { id: true, firstName: true, lastName: true, matricule: true } },
+        },
+      },
     } : undefined;
 
     const entity = await this.delegate(config.model).findFirst({
@@ -256,11 +295,8 @@ export class LegacyCrudService {
       ...(include ? { include } : {}),
     });
     if (!entity) throw new NotFoundException('Ressource introuvable');
-    if (config.model === 'inscription') {
-      const [hydrated] = await this.attachInscriptionEleves([entity]);
-      return this.sanitizeEntity(config.model, hydrated);
-    }
-    return this.sanitizeEntity(config.model, entity);
+    const [hydrated] = await this.attachEleveIfNeeded(config.model, [entity], tenantId);
+    return this.sanitizeEntity(config.model, hydrated);
   }
 
   async create(config: CrudConfig, tenantId: string | undefined, body: Payload, userOrId?: string | JwtUser) {
@@ -1536,9 +1572,80 @@ export class LegacyCrudService {
   }
 
   private sanitizeEntity(model: string, entity: Payload): Payload {
-    if (!entity || model !== 'user') return entity;
-    const { passwordHash: _passwordHash, ...safeEntity } = entity;
-    return safeEntity;
+    if (!entity) return entity;
+    if (model === 'user') {
+      const { passwordHash: _passwordHash, ...safeEntity } = entity as Payload & { passwordHash?: string };
+      if (safeEntity.photoUrl) safeEntity.photoUrl = this.storage.resolveUrl(safeEntity.photoUrl as string) ?? undefined;
+      return safeEntity;
+    }
+    // Resolve photo URLs nested in personnel.utilisateur
+    if (model === 'personnel' && entity.utilisateur) {
+      const u = entity.utilisateur as Payload & { passwordHash?: string; photoUrl?: string };
+      const { passwordHash: _ph, ...safeU } = u;
+      if (safeU.photoUrl) safeU.photoUrl = this.storage.resolveUrl(safeU.photoUrl as string) ?? undefined;
+      return { ...entity, utilisateur: safeU };
+    }
+    return entity;
+  }
+
+  private async attachEleveIfNeeded<T extends Payload>(model: string, rows: T[], tenantId?: string): Promise<T[]> {
+    if (model === 'inscription') return this.attachInscriptionEleves(rows);
+    if (model === 'bulletin' || model === 'absenceEleve' || model === 'reclamation') {
+      return this.attachEleveById(rows);
+    }
+    if (model === 'cours') return this.attachEnseignantById(rows);
+    if (model === 'pointage') return this.attachPointagePersonnel(rows);
+    if (model === 'note') {
+      const withEleves = await this.attachEleveById(rows);
+      return tenantId ? this.attachNoteCoefficients(tenantId, withEleves) : withEleves;
+    }
+    if (model === 'convocation') return this.attachEleveById(rows);
+    return rows;
+  }
+
+  private async attachEnseignantById<T extends Payload>(rows: T[]): Promise<T[]> {
+    const ids = [...new Set(rows.map((r) => String(r.enseignantId ?? '')).filter(Boolean))];
+    if (ids.length === 0) return rows;
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, firstName: true, lastName: true, email: true },
+    });
+    const map = new Map(users.map((u) => [u.id, u]));
+    return rows.map((r) => ({ ...r, enseignant: map.get(String(r.enseignantId ?? '')) ?? null }));
+  }
+
+  private async attachNoteCoefficients<T extends Payload>(tenantId: string, rows: T[]): Promise<T[]> {
+    const cache = new Map<string, Map<string, number>>();
+    const getCoefficients = async (eleveId: string, anneeScolaire: string): Promise<Map<string, number>> => {
+      const key = `${eleveId}|${anneeScolaire}`;
+      const cached = cache.get(key);
+      if (cached) return cached;
+      const map = await this.findStudentCourseCoefficients(tenantId, eleveId, anneeScolaire);
+      cache.set(key, map);
+      return map;
+    };
+
+    return Promise.all(rows.map(async (row) => {
+      const eleveId = String(row.eleveId ?? '');
+      const anneeScolaire = String(row.anneeScolaire ?? '');
+      if (!eleveId || !anneeScolaire) return row;
+      const coefficients = await getCoefficients(eleveId, anneeScolaire);
+      return {
+        ...row,
+        coefficient: row.coefficient ?? coefficients.get(String(row.matiereId ?? '')) ?? 1,
+      };
+    }));
+  }
+
+  private async attachEleveById<T extends Payload>(rows: T[]): Promise<T[]> {
+    const ids = [...new Set(rows.map((r) => String(r.eleveId ?? '')).filter(Boolean))];
+    if (ids.length === 0) return rows;
+    const eleves = await this.prisma.user.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, firstName: true, lastName: true, matricule: true, email: true },
+    });
+    const map = new Map(eleves.map((e) => [e.id, e]));
+    return rows.map((r) => ({ ...r, eleve: map.get(String(r.eleveId ?? '')) ?? null }));
   }
 
   private async attachInscriptionEleves<T extends Payload>(inscriptions: T[]): Promise<T[]> {
@@ -1555,6 +1662,29 @@ export class LegacyCrudService {
       ...inscription,
       eleve: elevesById.get(String(inscription.eleveId ?? '')) ?? null,
     }));
+  }
+
+  private async attachPointagePersonnel<T extends Payload>(rows: T[]): Promise<T[]> {
+    const personnelIds = [...new Set(rows.map((row) => String(row.personnelId ?? '')).filter(Boolean))];
+    if (personnelIds.length === 0) return rows;
+
+    const personnels = await this.prisma.personnel.findMany({
+      where: { id: { in: personnelIds } },
+      include: {
+        utilisateur: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            telephone: true,
+            specialite: true,
+          },
+        },
+      },
+    });
+    const map = new Map(personnels.map((personnel) => [personnel.id, personnel]));
+    return rows.map((row) => ({ ...row, personnel: map.get(String(row.personnelId ?? '')) ?? null }));
   }
 
   private async resolveSchoolSender(tenantId: string): Promise<string | undefined> {
@@ -1959,6 +2089,8 @@ export class LegacyCrudService {
     delete data.enseignantId;
     delete data.dateCreation;
     delete data.dateModification;
+    delete data.coefficient;
+    delete data.classeId;
   }
 
   private async normalizeBulletinData(tenantId: string, data: Payload, userId?: string): Promise<void> {

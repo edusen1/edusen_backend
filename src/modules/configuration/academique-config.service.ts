@@ -1,5 +1,6 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@/config/prisma.service';
+import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 import { SaveFraisDto, FraisNiveauItemDto } from './dto/save-frais.dto';
 
 export interface FraisNiveauResponse {
@@ -127,7 +128,12 @@ const DEFAULT_STRUCTURE = [
 
 @Injectable()
 export class AcademiqueConfigService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(AcademiqueConfigService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly whatsapp: WhatsappService,
+  ) {}
 
   // ----------------------------------------------------------------
   // Frais
@@ -349,7 +355,11 @@ export class AcademiqueConfigService {
       },
       include: { section: { select: { libelle: true } } },
     });
-    return this.toCalendrierResponse(created);
+    const response = this.toCalendrierResponse(created);
+    this.notifyCalendrier(tenantId, response, 'create').catch((e) =>
+      this.logger.warn(`[Notif calendrier] ${(e as Error).message}`),
+    );
+    return response;
   }
 
   async updateCalendrier(
@@ -456,7 +466,7 @@ export class AcademiqueConfigService {
       await this.syncClassActivityForActiveYear(tenantId, created.id);
     }
 
-    return {
+    const anneeResponse: AnneeAcademiqueResponse = {
       id: created.id,
       libelle: created.libelle,
       dateDebut: created.dateDebut.toISOString(),
@@ -464,6 +474,12 @@ export class AcademiqueConfigService {
       active: created.actif,
       statut: created.actif ? 'OUVERTE' : 'CLOTUREE',
     };
+
+    this.notifyNouvelleAnnee(tenantId, anneeResponse).catch((e) =>
+      this.logger.warn(`[Notif annee] ${(e as Error).message}`),
+    );
+
+    return anneeResponse;
   }
 
   async activateAnnee(tenantId: string, id: string): Promise<AnneeAcademiqueResponse> {
@@ -660,6 +676,44 @@ export class AcademiqueConfigService {
       moyennePassage,
       actif: row.actif,
     };
+  }
+
+  // ----------------------------------------------------------------
+  // Notifications WhatsApp (fire-and-forget)
+  // ----------------------------------------------------------------
+
+  private readonly WA_ROLES = ['ELEVE', 'PARENT', 'ENSEIGNANT'];
+
+  private async notifyCalendrier(
+    tenantId: string,
+    evt: CalendrierScolaireResponse,
+    action: 'create' | 'update',
+  ): Promise<void> {
+    const dateDebut = new Date(evt.dateDebut).toLocaleDateString('fr-FR');
+    const dateFin = evt.dateFin ? ` → ${new Date(evt.dateFin).toLocaleDateString('fr-FR')}` : '';
+    const type = evt.type ?? 'Événement';
+    const verb = action === 'create' ? 'Nouvel événement' : 'Mise à jour';
+    const section = evt.section ? ` [${evt.section}]` : '';
+
+    const message =
+      `📅 *${verb} au calendrier scolaire*${section}\n` +
+      `📌 *${evt.titre}*\n` +
+      (evt.description ? `📝 ${evt.description}\n` : '') +
+      `🗓️ ${dateDebut}${dateFin}\n` +
+      `🏷️ Type : ${type}`;
+
+    await this.whatsapp.broadcastToRoles(tenantId, message, this.WA_ROLES);
+  }
+
+  private async notifyNouvelleAnnee(tenantId: string, annee: AnneeAcademiqueResponse): Promise<void> {
+    const dateDebut = new Date(annee.dateDebut).toLocaleDateString('fr-FR');
+    const statut = annee.active ? 'en cours ✅' : 'créée';
+    const message =
+      `🎓 *Nouvelle année académique ${statut}*\n` +
+      `📚 *${annee.libelle}*\n` +
+      `📅 Début : ${dateDebut}`;
+
+    await this.whatsapp.broadcastToRoles(tenantId, message, this.WA_ROLES);
   }
 
   private toCalendrierResponse(row: {
