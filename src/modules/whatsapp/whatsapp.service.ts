@@ -152,6 +152,10 @@ const OUTBOX_FLUSH_INTERVAL_MS = Number(process.env.WHATSAPP_OUTBOX_FLUSH_INTERV
 const OUTBOX_FLUSH_DEBOUNCE_MS = Number(process.env.WHATSAPP_OUTBOX_FLUSH_DEBOUNCE_MS ?? 50);
 const OUTBOX_BATCH_SIZE = Number(process.env.WHATSAPP_OUTBOX_BATCH_SIZE ?? 100);
 const RETRY_PROMOTION_INTERVAL_MS = Number(process.env.WHATSAPP_RETRY_PROMOTION_INTERVAL_MS ?? 2_000);
+const PROCESSING_RECOVERY_INTERVAL_MS = Number(process.env.WHATSAPP_PROCESSING_RECOVERY_INTERVAL_MS ?? 30_000);
+const PROCESSING_STALE_AFTER_MS = Number(process.env.WHATSAPP_PROCESSING_STALE_AFTER_MS ?? 5 * 60_000);
+const HISTORY_CLEANUP_INTERVAL_MS = Number(process.env.WHATSAPP_HISTORY_CLEANUP_INTERVAL_MS ?? 60_000);
+const HISTORY_CLEANUP_BATCH_SIZE = Number(process.env.WHATSAPP_HISTORY_CLEANUP_BATCH_SIZE ?? 500);
 const LOCK_TTL_SECONDS = Number(process.env.WHATSAPP_FLUSH_LOCK_TTL_SECONDS ?? 30);
 const MESSAGE_HISTORY_TTL_SECONDS = Number(process.env.WHATSAPP_MESSAGE_HISTORY_TTL_SECONDS ?? 7 * 24 * 60 * 60);
 const OTP_TTL_SECONDS = Number(process.env.WHATSAPP_OTP_TTL_SECONDS ?? 300);
@@ -159,6 +163,7 @@ const OTP_MAX_ATTEMPTS = Number(process.env.WHATSAPP_OTP_MAX_ATTEMPTS ?? 5);
 const RETRY_BATCH_SIZE = Number(process.env.WHATSAPP_RETRY_BATCH_SIZE ?? 100);
 
 const WA_SESSION_INDEX_KEY = 'wa:sessions';
+const WA_SESSION_META_PREFIX = 'wa:session:meta:';
 const WA_STATUS_PREFIX = 'wa:status:';
 const WA_FEATURE_PREFIX = 'wa:features:';
 const WA_QUEUE_PREFIX = 'wa:queue:';
@@ -166,8 +171,10 @@ const WA_PROCESSING_PREFIX = 'wa:processing:';
 const WA_RETRY_PREFIX = 'wa:retry:';
 const WA_MESSAGE_PREFIX = 'wa:message:';
 const WA_MESSAGE_INDEX_PREFIX = 'wa:messages:';
+const WA_HISTORY_PREFIX = 'wa:history:';
 const WA_FLUSH_LOCK_PREFIX = 'wa:lock:flush:';
 const WA_OTP_PREFIX = 'wa:otp:';
+const WA_ACTIVE_TENANTS_KEY = 'wa:tenants:active';
 
 @Injectable()
 export class WhatsappService implements OnApplicationBootstrap, OnApplicationShutdown {
@@ -177,6 +184,8 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
   private readonly scheduledFlushes = new Map<string, NodeJS.Timeout>();
   private outboxFlushTimer: NodeJS.Timeout | null = null;
   private retryPromotionTimer: NodeJS.Timeout | null = null;
+  private processingRecoveryTimer: NodeJS.Timeout | null = null;
+  private historyCleanupTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly config: ConfigService,
@@ -216,6 +225,14 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     if (this.retryPromotionTimer) {
       clearInterval(this.retryPromotionTimer);
       this.retryPromotionTimer = null;
+    }
+    if (this.processingRecoveryTimer) {
+      clearInterval(this.processingRecoveryTimer);
+      this.processingRecoveryTimer = null;
+    }
+    if (this.historyCleanupTimer) {
+      clearInterval(this.historyCleanupTimer);
+      this.historyCleanupTimer = null;
     }
     for (const timer of this.scheduledFlushes.values()) {
       clearTimeout(timer);
@@ -309,6 +326,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     }
 
     await this.redis.del(this.getSessionKey(tenantId));
+    await this.redis.del(this.getSessionMetaKey(tenantId));
     await this.redis.srem(WA_SESSION_INDEX_KEY, tenantId);
     await this.persistStatus(tenantId, {
       connected: false,
@@ -364,14 +382,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       updatedAt: now,
     };
 
-    await this.saveMessageRecord(record);
-    await this.redis.rpush(this.getQueueKey(tenantId), id);
-
-    if (await this.hasPersistedSession(tenantId)) {
-      this.startClientIfNeeded(tenantId);
-    }
-
-    this.scheduleOutboxFlush(tenantId, true);
+    await this.queueMessageRecord(record);
     this.logger.log(`Message WhatsApp mis en file Redis → ${normalizedPhone} (tenant=${tenantId}, message=${id})`);
     return { queued: true, messageId: id };
   }
@@ -424,13 +435,33 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     const phones = [...new Set(users.map((u) => u.telephone!).filter(Boolean))];
     this.logger.log(`[WA Broadcast] tenant=${tenantId} roles=${roles.join(',')} destinataires=${phones.length}`);
 
+    const now = new Date();
+    const records: WhatsappQueueRecord[] = [];
     for (const phone of phones) {
       try {
-        await this.sendMessage(tenantId, phone, message);
+        const normalizedPhone = this.normalizePhone(phone);
+        const iso = now.toISOString();
+        records.push({
+          id: randomUUID(),
+          tenantId,
+          phone: normalizedPhone,
+          message: String(message ?? '').trim(),
+          status: 'QUEUED',
+          attempts: 0,
+          createdAt: iso,
+          queuedAt: iso,
+          lastAttemptAt: null,
+          nextAttemptAt: null,
+          lastError: null,
+          sentAt: null,
+          updatedAt: iso,
+        });
       } catch (err) {
-        this.logger.warn(`[WA Broadcast] échec phone=${phone}: ${(err as Error).message}`);
+        this.logger.warn(`[WA Broadcast] phone ignoré ${phone}: ${(err as Error).message}`);
       }
     }
+
+    await this.queueMessageRecords(records);
   }
 
   async issueOtp(
@@ -501,6 +532,30 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
 
   isReady(tenantId: string): boolean {
     return this.states.get(tenantId)?.ready ?? false;
+  }
+
+  private async queueMessageRecord(record: WhatsappQueueRecord): Promise<void> {
+    await this.queueMessageRecords([record]);
+  }
+
+  private async queueMessageRecords(records: WhatsappQueueRecord[]): Promise<void> {
+    if (!records.length) return;
+    const tenantId = records[0].tenantId;
+    const ids: string[] = [];
+
+    for (const record of records) {
+      await this.saveMessageRecord(record);
+      ids.push(record.id);
+    }
+
+    await this.redis.rpush(this.getQueueKey(tenantId), ...ids);
+    await this.redis.sadd(WA_ACTIVE_TENANTS_KEY, tenantId);
+
+    if (await this.hasPersistedSession(tenantId)) {
+      this.startClientIfNeeded(tenantId);
+    }
+
+    this.scheduleOutboxFlush(tenantId, true);
   }
 
   private getOrCreateState(tenantId: string): TenantWaState {
@@ -699,6 +754,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       state.lastError = msg || 'Échec authentification WhatsApp';
       this.logger.error(`Auth failure (tenant=${tenantId}): ${state.lastError}`);
       void this.redis.del(this.getSessionKey(tenantId)).catch(() => null);
+      void this.redis.del(this.getSessionMetaKey(tenantId)).catch(() => null);
       void this.redis.srem(WA_SESSION_INDEX_KEY, tenantId).catch(() => null);
       void this.persistStatus(tenantId, {
         connected: false,
@@ -816,6 +872,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     this.states.delete(tenantId);
 
     await this.redis.del(this.getSessionKey(tenantId));
+    await this.redis.del(this.getSessionMetaKey(tenantId));
     await this.redis.srem(WA_SESSION_INDEX_KEY, tenantId);
     await this.persistStatus(tenantId, {
       connected: false,
@@ -1034,10 +1091,12 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       const messageId = await this.redis.rpoplpush(pendingKey, processingKey);
       if (!messageId) break;
 
-      const sent = await this.sendAndAckMessage(tenantId, state, messageId);
-      if (!sent) break;
       processed++;
+      const shouldContinue = await this.sendAndAckMessage(tenantId, state, messageId);
+      if (!shouldContinue) break;
     }
+
+    await this.pruneInactiveTenant(tenantId);
   }
 
   private async sendAndAckMessage(
@@ -1084,7 +1143,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
         record.nextAttemptAt = null;
         await this.saveMessageRecord(record, MESSAGE_HISTORY_TTL_SECONDS);
         this.logger.warn(`Message WhatsApp abandonné après ${record.attempts} tentative(s) (tenant=${tenantId}, message=${messageId}): ${error}`);
-        return false;
+        return state.ready && !!state.client;
       }
 
       const retryAtEpochMs = Date.now() + this.computeRetryDelayMs(record.attempts);
@@ -1092,18 +1151,19 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       record.nextAttemptAt = new Date(retryAtEpochMs).toISOString();
       await this.saveMessageRecord(record);
       await this.redis.zadd(retryKey, retryAtEpochMs, messageId);
+      await this.redis.sadd(WA_ACTIVE_TENANTS_KEY, tenantId);
       this.logger.warn(`Échec envoi WhatsApp — replanifié (tenant=${tenantId}, message=${messageId}): ${error}`);
-      return false;
+      return state.ready && !!state.client;
     }
   }
 
   private async promoteRetryQueues(): Promise<void> {
-    const keys = await this.redis.scanKeys(`${WA_RETRY_PREFIX}*`);
-    if (!keys.length) return;
+    const tenantIds = await this.getActiveTenantIds();
+    if (!tenantIds.length) return;
 
     const now = Date.now();
-    for (const retryKey of keys) {
-      const tenantId = retryKey.replace(WA_RETRY_PREFIX, '');
+    for (const tenantId of tenantIds) {
+      const retryKey = this.getRetryKey(tenantId);
       const dueIds = await this.redis.zrangebyscore(retryKey, 0, now, { offset: 0, count: RETRY_BATCH_SIZE });
       if (!dueIds.length) continue;
 
@@ -1121,9 +1181,73 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
         record.updatedAt = new Date().toISOString();
         await this.saveMessageRecord(record);
         await this.redis.rpush(this.getQueueKey(tenantId), messageId);
+        await this.redis.sadd(WA_ACTIVE_TENANTS_KEY, tenantId);
       }
 
       this.scheduleOutboxFlush(tenantId, true);
+      await this.pruneInactiveTenant(tenantId);
+    }
+  }
+
+  private async recoverStaleProcessingMessages(): Promise<void> {
+    const tenantIds = await this.getActiveTenantIds();
+    if (!tenantIds.length) return;
+
+    const staleThreshold = Date.now() - PROCESSING_STALE_AFTER_MS;
+    for (const tenantId of tenantIds) {
+      const processingKey = this.getProcessingKey(tenantId);
+      const processingIds = await this.redis.lrange(processingKey, 0, -1);
+      if (!processingIds.length) {
+        await this.pruneInactiveTenant(tenantId);
+        continue;
+      }
+
+      for (const messageId of processingIds) {
+        const record = await this.getMessageRecord(tenantId, messageId);
+        if (!record) {
+          await this.redis.lrem(processingKey, 0, messageId);
+          continue;
+        }
+
+        const lastAttemptAt = record.lastAttemptAt ? new Date(record.lastAttemptAt).getTime() : 0;
+        if (record.status !== 'PROCESSING' || !lastAttemptAt || lastAttemptAt > staleThreshold) {
+          continue;
+        }
+
+        record.status = 'QUEUED';
+        record.nextAttemptAt = null;
+        record.updatedAt = new Date().toISOString();
+        await this.saveMessageRecord(record);
+        await this.redis.lrem(processingKey, 0, messageId);
+        await this.redis.rpush(this.getQueueKey(tenantId), messageId);
+        this.logger.warn(`Message WhatsApp récupéré depuis processing stale (tenant=${tenantId}, message=${messageId})`);
+      }
+
+      this.scheduleOutboxFlush(tenantId, true);
+      await this.pruneInactiveTenant(tenantId);
+    }
+  }
+
+  private async cleanupMessageHistory(): Promise<void> {
+    const tenantIds = await this.getActiveTenantIds();
+    if (!tenantIds.length) return;
+
+    const now = Date.now();
+    for (const tenantId of tenantIds) {
+      const historyKey = this.getHistoryKey(tenantId);
+      const expiredIds = await this.redis.zrangebyscore(historyKey, 0, now, {
+        offset: 0,
+        count: HISTORY_CLEANUP_BATCH_SIZE,
+      });
+      if (!expiredIds.length) {
+        await this.pruneInactiveTenant(tenantId);
+        continue;
+      }
+
+      await this.redis.zrem(historyKey, ...expiredIds);
+      await this.redis.srem(this.getMessageIndexKey(tenantId), ...expiredIds);
+      await this.redis.delMany(expiredIds.map((messageId) => this.getMessageKey(tenantId, messageId)));
+      await this.pruneInactiveTenant(tenantId);
     }
   }
 
@@ -1138,6 +1262,18 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       this.retryPromotionTimer = setInterval(() => {
         void this.promoteRetryQueues();
       }, RETRY_PROMOTION_INTERVAL_MS);
+    }
+
+    if (!this.processingRecoveryTimer) {
+      this.processingRecoveryTimer = setInterval(() => {
+        void this.recoverStaleProcessingMessages();
+      }, PROCESSING_RECOVERY_INTERVAL_MS);
+    }
+
+    if (!this.historyCleanupTimer) {
+      this.historyCleanupTimer = setInterval(() => {
+        void this.cleanupMessageHistory();
+      }, HISTORY_CLEANUP_INTERVAL_MS);
     }
   }
 
@@ -1166,7 +1302,14 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
 
     for (const session of sessions as LegacySessionRecord[]) {
       if (session.sessionData && !await this.redis.exists(this.getSessionKey(session.tenantId))) {
-        await this.redis.set(this.getSessionKey(session.tenantId), Buffer.from(session.sessionData).toString('base64'));
+        const bytes = Buffer.from(session.sessionData);
+        await this.redis.setBuffer(this.getSessionKey(session.tenantId), bytes);
+        await this.redis.setJson(this.getSessionMetaKey(session.tenantId), {
+          encoding: 'binary',
+          checksum: createHash('sha256').update(bytes).digest('hex'),
+          size: bytes.length,
+          updatedAt: new Date().toISOString(),
+        });
         await this.redis.sadd(WA_SESSION_INDEX_KEY, session.tenantId);
       }
 
@@ -1231,13 +1374,15 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
           updatedAt: new Date().toISOString(),
         };
 
-        await this.saveMessageRecord(queueRecord);
+        await this.saveMessageRecord(queueRecord, invalidPhone ? MESSAGE_HISTORY_TTL_SECONDS : undefined);
         if (invalidPhone) {
           this.logger.warn(`Migration WhatsApp: message ${entry.id} marqué en échec à cause d'un numéro invalide (${String(entry.phone ?? '')})`);
         } else if (status === 'QUEUED') {
           await this.redis.rpush(this.getQueueKey(entry.tenantId), entry.id);
+          await this.redis.sadd(WA_ACTIVE_TENANTS_KEY, entry.tenantId);
         } else if (status === 'RETRY' && queueRecord.nextAttemptAt) {
           await this.redis.zadd(this.getRetryKey(entry.tenantId), new Date(queueRecord.nextAttemptAt).getTime(), entry.id);
+          await this.redis.sadd(WA_ACTIVE_TENANTS_KEY, entry.tenantId);
         }
       }
       migratedIds.push(entry.id);
@@ -1282,7 +1427,14 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     }
 
     if (legacy.sessionData && !await this.redis.exists(this.getSessionKey(tenantId))) {
-      await this.redis.set(this.getSessionKey(tenantId), Buffer.from(legacy.sessionData).toString('base64'));
+      const bytes = Buffer.from(legacy.sessionData);
+      await this.redis.setBuffer(this.getSessionKey(tenantId), bytes);
+      await this.redis.setJson(this.getSessionMetaKey(tenantId), {
+        encoding: 'binary',
+        checksum: createHash('sha256').update(bytes).digest('hex'),
+        size: bytes.length,
+        updatedAt: new Date().toISOString(),
+      });
       await this.redis.sadd(WA_SESSION_INDEX_KEY, tenantId);
     }
   }
@@ -1298,10 +1450,38 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
   private async saveMessageRecord(record: WhatsappQueueRecord, ttlSeconds?: number): Promise<void> {
     await this.redis.setJson(this.getMessageKey(record.tenantId, record.id), record, ttlSeconds);
     await this.redis.sadd(this.getMessageIndexKey(record.tenantId), record.id);
+    await this.redis.sadd(WA_ACTIVE_TENANTS_KEY, record.tenantId);
+    if (ttlSeconds) {
+      await this.redis.zadd(this.getHistoryKey(record.tenantId), Date.now() + ttlSeconds * 1000, record.id);
+    } else {
+      await this.redis.zrem(this.getHistoryKey(record.tenantId), record.id);
+    }
   }
 
   private async getMessageRecord(tenantId: string, messageId: string): Promise<WhatsappQueueRecord | null> {
     return this.redis.getJson<WhatsappQueueRecord>(this.getMessageKey(tenantId, messageId));
+  }
+
+  private async getActiveTenantIds(): Promise<string[]> {
+    const ids = new Set<string>(await this.redis.smembers(WA_ACTIVE_TENANTS_KEY));
+    for (const tenantId of this.states.keys()) {
+      ids.add(tenantId);
+    }
+    return [...ids];
+  }
+
+  private async pruneInactiveTenant(tenantId: string): Promise<void> {
+    const [queued, processing, retry, history, indexed] = await Promise.all([
+      this.redis.llen(this.getQueueKey(tenantId)),
+      this.redis.llen(this.getProcessingKey(tenantId)),
+      this.redis.zcard(this.getRetryKey(tenantId)),
+      this.redis.zcard(this.getHistoryKey(tenantId)),
+      this.redis.scard(this.getMessageIndexKey(tenantId)),
+    ]);
+
+    if (!queued && !processing && !retry && !history && !indexed) {
+      await this.redis.srem(WA_ACTIVE_TENANTS_KEY, tenantId);
+    }
   }
 
   private getStatusKey(tenantId: string): string {
@@ -1314,6 +1494,10 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
 
   private getSessionKey(tenantId: string): string {
     return `wa:session:data:${tenantId}`;
+  }
+
+  private getSessionMetaKey(tenantId: string): string {
+    return `${WA_SESSION_META_PREFIX}${tenantId}`;
   }
 
   private getQueueKey(tenantId: string): string {
@@ -1334,6 +1518,10 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
 
   private getMessageIndexKey(tenantId: string): string {
     return `${WA_MESSAGE_INDEX_PREFIX}${tenantId}`;
+  }
+
+  private getHistoryKey(tenantId: string): string {
+    return `${WA_HISTORY_PREFIX}${tenantId}`;
   }
 
   private getFlushLockKey(tenantId: string): string {

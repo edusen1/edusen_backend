@@ -51,6 +51,26 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  async getBuffer(key: string): Promise<Buffer | null> {
+    try {
+      return await this.client.getBuffer(key);
+    } catch {
+      return null;
+    }
+  }
+
+  async setBuffer(key: string, value: Buffer, ttlSeconds?: number): Promise<void> {
+    try {
+      if (ttlSeconds) {
+        await this.client.set(key, value, 'EX', ttlSeconds);
+      } else {
+        await this.client.set(key, value);
+      }
+    } catch (err) {
+      this.logger.warn(`Redis setBuffer failed for key=${key}: ${(err as Error).message}`);
+    }
+  }
+
   async setIfAbsent(key: string, value: string, ttlSeconds: number): Promise<boolean> {
     try {
       const result = await this.client.set(key, value, 'EX', ttlSeconds, 'NX');
@@ -245,6 +265,22 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     try {
       if (!members.length) return 0;
       return await this.client.zrem(key, ...members);
+    } catch {
+      return 0;
+    }
+  }
+
+  async zcard(key: string): Promise<number> {
+    try {
+      return await this.client.zcard(key);
+    } catch {
+      return 0;
+    }
+  }
+
+  async scard(key: string): Promise<number> {
+    try {
+      return await this.client.scard(key);
     } catch {
       return 0;
     }

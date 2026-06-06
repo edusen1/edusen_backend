@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { Logger } from '@nestjs/common';
@@ -5,6 +6,14 @@ import { RedisService } from '@/infrastructure/redis/redis.service';
 
 const SESSION_INDEX_KEY = 'wa:sessions';
 const SESSION_DATA_PREFIX = 'wa:session:data:';
+const SESSION_META_PREFIX = 'wa:session:meta:';
+
+interface RedisStoredSessionMeta {
+  encoding: 'binary' | 'base64';
+  checksum: string;
+  size: number;
+  updatedAt: string;
+}
 
 export class RedisRemoteAuthTenantStore {
   private readonly logger = new Logger(RedisRemoteAuthTenantStore.name);
@@ -28,7 +37,21 @@ export class RedisRemoteAuthTenantStore {
 
     try {
       const data = readFileSync(zipPath);
-      await this.redis.set(this.sessionKey(), data.toString('base64'));
+      const checksum = createHash('sha256').update(data).digest('hex');
+      const existingMeta = await this.redis.getJson<RedisStoredSessionMeta>(this.sessionMetaKey());
+      if (existingMeta?.encoding === 'binary' && existingMeta.checksum === checksum && existingMeta.size === data.length) {
+        await this.redis.sadd(SESSION_INDEX_KEY, this.tenantId);
+        this.logger.debug(`save(tenant=${this.tenantId}) — session inchangée, écriture Redis ignorée`);
+        return;
+      }
+
+      await this.redis.setBuffer(this.sessionKey(), data);
+      await this.redis.setJson(this.sessionMetaKey(), {
+        encoding: 'binary',
+        checksum,
+        size: data.length,
+        updatedAt: new Date().toISOString(),
+      } satisfies RedisStoredSessionMeta);
       await this.redis.sadd(SESSION_INDEX_KEY, this.tenantId);
       this.logger.log(`save(tenant=${this.tenantId}) — ${data.length} octets sauvegardés dans Redis`);
     } catch (err) {
@@ -39,16 +62,21 @@ export class RedisRemoteAuthTenantStore {
 
   async extract({ session }: { session: string }): Promise<void> {
     try {
-      const encoded = await this.redis.get(this.sessionKey());
-      if (!encoded) {
+      const meta = await this.redis.getJson<RedisStoredSessionMeta>(this.sessionMetaKey());
+      const bytes = meta?.encoding === 'binary'
+        ? await this.redis.getBuffer(this.sessionKey())
+        : null;
+      const legacyEncoded = !meta ? await this.redis.get(this.sessionKey()) : null;
+      const payload = bytes ?? (legacyEncoded ? Buffer.from(legacyEncoded, 'base64') : null);
+
+      if (!payload) {
         this.logger.warn(`extract(tenant=${this.tenantId}) — aucune session Redis, nouveau QR requis`);
         return;
       }
 
       mkdirSync(this.dataPath, { recursive: true });
-      const bytes = Buffer.from(encoded, 'base64');
-      writeFileSync(join(this.dataPath, `${session}.zip`), bytes);
-      this.logger.log(`extract(tenant=${this.tenantId}) — session restaurée (${bytes.length} octets)`);
+      writeFileSync(join(this.dataPath, `${session}.zip`), payload);
+      this.logger.log(`extract(tenant=${this.tenantId}) — session restaurée (${payload.length} octets)`);
     } catch (err) {
       this.logger.error(`extract — échec : ${err instanceof Error ? err.message : String(err)}`);
       throw err;
@@ -57,11 +85,16 @@ export class RedisRemoteAuthTenantStore {
 
   async delete(_: { session: string }): Promise<void> {
     await this.redis.del(this.sessionKey());
+    await this.redis.del(this.sessionMetaKey());
     await this.redis.srem(SESSION_INDEX_KEY, this.tenantId);
     this.logger.log(`delete(tenant=${this.tenantId}) — session Redis effacée`);
   }
 
   private sessionKey(): string {
     return `${SESSION_DATA_PREFIX}${this.tenantId}`;
+  }
+
+  private sessionMetaKey(): string {
+    return `${SESSION_META_PREFIX}${this.tenantId}`;
   }
 }
