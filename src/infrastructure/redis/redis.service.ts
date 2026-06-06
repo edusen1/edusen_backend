@@ -28,7 +28,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
-    await this.client.quit();
+    await this.client.quit().catch(() => undefined);
   }
 
   async get(key: string): Promise<string | null> {
@@ -49,6 +49,47 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     } catch (err) {
       this.logger.warn(`Redis set failed for key=${key}: ${(err as Error).message}`);
     }
+  }
+
+  async setIfAbsent(key: string, value: string, ttlSeconds: number): Promise<boolean> {
+    try {
+      const result = await this.client.set(key, value, 'EX', ttlSeconds, 'NX');
+      return result === 'OK';
+    } catch (err) {
+      this.logger.warn(`Redis setIfAbsent failed for key=${key}: ${(err as Error).message}`);
+      return false;
+    }
+  }
+
+  async exists(key: string): Promise<boolean> {
+    try {
+      return (await this.client.exists(key)) > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  async ttl(key: string): Promise<number> {
+    try {
+      return await this.client.ttl(key);
+    } catch {
+      return -2;
+    }
+  }
+
+  async getJson<T>(key: string): Promise<T | null> {
+    const raw = await this.get(key);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as T;
+    } catch (err) {
+      this.logger.warn(`Redis getJson parse failed for key=${key}: ${(err as Error).message}`);
+      return null;
+    }
+  }
+
+  async setJson(key: string, value: unknown, ttlSeconds?: number): Promise<void> {
+    await this.set(key, JSON.stringify(value), ttlSeconds);
   }
 
   async del(key: string): Promise<void> {
@@ -92,6 +133,14 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  async lpush(key: string, ...values: string[]): Promise<number> {
+    try {
+      return await this.client.lpush(key, ...values);
+    } catch {
+      return 0;
+    }
+  }
+
   async lrange(key: string, start: number, stop: number): Promise<string[]> {
     try {
       return await this.client.lrange(key, start, stop);
@@ -119,6 +168,118 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   async llen(key: string): Promise<number> {
     try {
       return await this.client.llen(key);
+    } catch {
+      return 0;
+    }
+  }
+
+  async lrem(key: string, count: number, value: string): Promise<number> {
+    try {
+      return await this.client.lrem(key, count, value);
+    } catch {
+      return 0;
+    }
+  }
+
+  async rpoplpush(source: string, destination: string): Promise<string | null> {
+    try {
+      return await this.client.rpoplpush(source, destination);
+    } catch {
+      return null;
+    }
+  }
+
+  async sadd(key: string, ...members: string[]): Promise<number> {
+    try {
+      if (!members.length) return 0;
+      return await this.client.sadd(key, ...members);
+    } catch {
+      return 0;
+    }
+  }
+
+  async srem(key: string, ...members: string[]): Promise<number> {
+    try {
+      if (!members.length) return 0;
+      return await this.client.srem(key, ...members);
+    } catch {
+      return 0;
+    }
+  }
+
+  async smembers(key: string): Promise<string[]> {
+    try {
+      return await this.client.smembers(key);
+    } catch {
+      return [];
+    }
+  }
+
+  async zadd(key: string, score: number, member: string): Promise<number> {
+    try {
+      return await this.client.zadd(key, String(score), member);
+    } catch {
+      return 0;
+    }
+  }
+
+  async zrangebyscore(key: string, min: number | string, max: number | string, limit?: { offset: number; count: number }): Promise<string[]> {
+    try {
+      if (limit) {
+        return await this.client.zrangebyscore(
+          key,
+          String(min),
+          String(max),
+          'LIMIT',
+          String(limit.offset),
+          String(limit.count),
+        );
+      }
+      return await this.client.zrangebyscore(key, String(min), String(max));
+    } catch {
+      return [];
+    }
+  }
+
+  async zrem(key: string, ...members: string[]): Promise<number> {
+    try {
+      if (!members.length) return 0;
+      return await this.client.zrem(key, ...members);
+    } catch {
+      return 0;
+    }
+  }
+
+  async hset(key: string, values: Record<string, string>): Promise<void> {
+    try {
+      const entries = Object.entries(values);
+      if (!entries.length) return;
+      await this.client.hset(key, Object.fromEntries(entries));
+    } catch (err) {
+      this.logger.warn(`Redis hset failed for key=${key}: ${(err as Error).message}`);
+    }
+  }
+
+  async hget(key: string, field: string): Promise<string | null> {
+    try {
+      return await this.client.hget(key, field);
+    } catch {
+      return null;
+    }
+  }
+
+  async hgetall(key: string): Promise<Record<string, string>> {
+    try {
+      return await this.client.hgetall(key);
+    } catch {
+      return {};
+    }
+  }
+
+  async hdel(key: string, ...fields: string[]): Promise<number> {
+    try {
+      if (!fields.length) return 0;
+      return await this.client.hdel(key, ...fields);
     } catch {
       return 0;
     }

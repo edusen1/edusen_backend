@@ -8,6 +8,7 @@ export interface CreateInscriptionDto {
   eleveId: string;
   classeId: string;
   anneeAcademiqueId: string;
+  fraisInscription?: number | null;
 }
 
 @Injectable()
@@ -24,6 +25,7 @@ export class InscriptionService {
           eleveId: dto.eleveId,
           classeId: dto.classeId,
           anneeAcademiqueId: dto.anneeAcademiqueId,
+          fraisInscription: dto.fraisInscription ?? null,
           statut: StatutInscription.ACTIF,
           creePar,
         },

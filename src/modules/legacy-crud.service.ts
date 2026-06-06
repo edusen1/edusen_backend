@@ -109,6 +109,22 @@ export class LegacyCrudService {
     private readonly whatsappService: WhatsappService,
   ) {}
 
+  async resolveTenantId(tenantId: string | undefined, user?: JwtUser): Promise<string | undefined> {
+    const headerTenantId = tenantId?.trim();
+    const isUuid = !!headerTenantId
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(headerTenantId);
+
+    if (isUuid) return headerTenantId;
+    if (user?.tenantId) return user.tenantId;
+    if (!user?.sub) return undefined;
+
+    const dbUser = await this.prisma.user.findFirst({
+      where: { id: user.sub },
+      select: { tenantId: true },
+    });
+    return dbUser?.tenantId ?? undefined;
+  }
+
   v1Config(resource: string): CrudConfig {
     return this.getConfig(V1_RESOURCES, resource);
   }
@@ -448,12 +464,8 @@ export class LegacyCrudService {
       return this.findOne(config, tenantId, created.id);
     }
 
-    if (config.model === 'user' && data.role === 'ENSEIGNANT' && tempPassword) {
-      void this.sendTeacherCredentials(tenantId, created, tempPassword);
-    }
-
-    if (config.model === 'user' && data.role === 'ELEVE' && tempPassword) {
-      void this.sendStudentCredentials(tenantId, created, tempPassword);
+    if (config.model === 'user' && tempPassword) {
+      void this.sendUserCredentials(tenantId, created, tempPassword);
     }
 
     if (config.model === 'personnel') {
@@ -629,9 +641,25 @@ export class LegacyCrudService {
 
   async resetPassword(tenantId: string | undefined, id: string) {
     await this.findOne(V1_RESOURCES.utilisateurs, tenantId, id);
+    const targetUser = await this.prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        telephone: true,
+        username: true,
+        role: true,
+        matricule: true,
+      },
+    });
     const tempPassword = this.generateTempPassword();
     const passwordHash = await bcrypt.hash(tempPassword, 12);
     await this.prisma.user.update({ where: { id }, data: { passwordHash, mustChangePwd: true } });
+    if (targetUser) {
+      void this.sendUserCredentials(tenantId, targetUser as unknown as Payload, tempPassword);
+    }
     return { tempPassword };
   }
 
@@ -1464,6 +1492,16 @@ export class LegacyCrudService {
 
     if (config.model === 'user') {
       if (data.email) data.email = String(data.email).trim().toLowerCase();
+      if (data.numeroIdentificationNational !== undefined) {
+        const nin = String(data.numeroIdentificationNational ?? '').trim();
+        if (!nin) {
+          delete data.numeroIdentificationNational;
+        } else if (!/^\d{10}$/.test(nin)) {
+          throw new BadRequestException('numeroIdentificationNational invalide: 10 chiffres attendus');
+        } else {
+          data.numeroIdentificationNational = nin;
+        }
+      }
 
       const incomingFirstName = data.firstName ?? data.prenom ?? data.first_name;
       const incomingLastName = data.lastName ?? data.nom ?? data.last_name;
@@ -1550,11 +1588,9 @@ export class LegacyCrudService {
       data.datePaiement ??= new Date();
     }
 
-    if (config.model === 'absenceEleve' && create) {
-      data.date = data.date ? new Date(String(data.date)) : new Date();
-      data.typeAbsence ??= 'ABSENT';
-      data.statut ??= 'EN_ATTENTE';
-      data.justifiee ??= false;
+    if (config.model === 'absenceEleve') {
+      await this.normalizeAbsenceEleveData(tenantId ?? String(data.tenantId ?? ''), data, create);
+      if (create) data.statut ??= 'EN_ATTENTE';
     }
 
     if (config.model === 'convocation' && create) data.statut ??= 'EN_ATTENTE';
@@ -1600,59 +1636,11 @@ export class LegacyCrudService {
   }
 
   private async sendTeacherCredentials(tenantId: string | undefined, user: Payload, tempPassword: string): Promise<void> {
-    const email = String(user.email ?? '');
-    const firstName = String(user.firstName ?? '');
-    const lastName = String(user.lastName ?? '');
-    const from = tenantId ? await this.resolveSchoolSender(tenantId) : undefined;
-
-    if (email) {
-      this.mailService.sendCompteCree(email, firstName, lastName, tempPassword, from);
-    }
-
-    const telephone = String(user.telephone ?? '').trim();
-    if (!tenantId || !telephone) {
-      this.logger.warn(`Identifiants professeur non envoyés par WhatsApp: tenant ou téléphone manquant user=${String(user.id ?? '')}`);
-      return;
-    }
-
-    const message = [
-      'NouraSchool - Accès professeur',
-      `Login: ${email}`,
-      `Mot de passe: ${tempPassword}`,
-      'À changer à la première connexion.',
-    ].join('\n');
-
-    this.whatsappService.sendMessage(tenantId, telephone, message).catch((error: unknown) => {
-      this.logger.warn(`Identifiants professeur non envoyés par WhatsApp user=${String(user.id ?? '')}: ${this.formatError(error)}`);
-    });
+    await this.sendUserCredentials(tenantId, user, tempPassword, 'professeur');
   }
 
   private async sendStudentCredentials(tenantId: string | undefined, user: Payload, tempPassword: string): Promise<void> {
-    const email = String(user.email ?? '');
-    const firstName = String(user.firstName ?? '');
-    const lastName = String(user.lastName ?? '');
-    const from = tenantId ? await this.resolveSchoolSender(tenantId) : undefined;
-
-    if (email) {
-      this.mailService.sendCompteCree(email, firstName, lastName, tempPassword, from);
-    }
-
-    const telephone = String(user.telephone ?? '').trim();
-    if (!tenantId || !telephone) {
-      this.logger.warn(`Identifiants élève non envoyés par WhatsApp: tenant ou téléphone manquant user=${String(user.id ?? '')}`);
-      return;
-    }
-
-    const message = [
-      'NouraSchool - Accès élève',
-      `Login: ${email}`,
-      `Mot de passe: ${tempPassword}`,
-      'À changer à la première connexion.',
-    ].join('\n');
-
-    this.whatsappService.sendMessage(tenantId, telephone, message).catch((error: unknown) => {
-      this.logger.warn(`Identifiants élève non envoyés par WhatsApp user=${String(user.id ?? '')}: ${this.formatError(error)}`);
-    });
+    await this.sendUserCredentials(tenantId, user, tempPassword, 'élève');
   }
 
   private async sendPersonnelCredentials(
@@ -1662,26 +1650,66 @@ export class LegacyCrudService {
   ): Promise<void> {
     const user = await this.prisma.user.findUnique({ where: { id: utilisateurId } });
     if (!user) return;
+    await this.sendUserCredentials(tenantId, user as unknown as Payload, tempPassword, 'personnel');
+  }
 
-    const from = tenantId ? await this.resolveSchoolSender(tenantId) : undefined;
-    this.mailService.sendCompteCree(user.email ?? '', user.firstName, user.lastName, tempPassword, from);
-
+  private async sendUserCredentials(
+    tenantId: string | undefined,
+    user: Payload,
+    tempPassword: string,
+    explicitAudience?: string,
+  ): Promise<void> {
+    const firstName = String(user.firstName ?? '');
+    const lastName = String(user.lastName ?? '');
     const telephone = String(user.telephone ?? '').trim();
-    if (!tenantId || !telephone) {
-      this.logger.warn(`Identifiants personnel non envoyés par WhatsApp: tenant ou téléphone manquant user=${user.id}`);
+    const email = String(user.email ?? '').trim();
+    const audience = explicitAudience ?? this.roleCredentialAudience(String(user.role ?? ''));
+    const loginIdentifier = this.buildPreferredLoginIdentifier(user);
+    const message = [
+      `NouraSchool - Accès ${audience}`,
+      `Identifiant: ${loginIdentifier}`,
+      `Mot de passe provisoire: ${tempPassword}`,
+      'Vous devrez modifier ce mot de passe lors de votre première connexion.',
+    ].join('\n');
+
+    if (tenantId && telephone) {
+      this.whatsappService.sendMessage(tenantId, telephone, message).catch((error: unknown) => {
+        this.logger.warn(`Identifiants ${audience} non envoyés par WhatsApp user=${String(user.id ?? '')}: ${this.formatError(error)}`);
+      });
       return;
     }
 
-    const message = [
-      'NouraSchool - Accès personnel',
-      `Login: ${user.email}`,
-      `Mot de passe: ${tempPassword}`,
-      'À changer à la première connexion.',
-    ].join('\n');
+    if (email) {
+      const from = tenantId ? await this.resolveSchoolSender(tenantId) : undefined;
+      this.mailService.sendCompteCree(email, firstName, lastName, tempPassword, from);
+      this.logger.warn(`Fallback email utilisé pour les identifiants ${audience} user=${String(user.id ?? '')} faute de téléphone WhatsApp`);
+      return;
+    }
 
-    this.whatsappService.sendMessage(tenantId, telephone, message).catch((error: unknown) => {
-      this.logger.warn(`Identifiants personnel non envoyés par WhatsApp user=${user.id}: ${this.formatError(error)}`);
-    });
+    this.logger.warn(`Identifiants ${audience} non envoyés: aucun téléphone WhatsApp ni email user=${String(user.id ?? '')}`);
+  }
+
+  private buildPreferredLoginIdentifier(user: Payload): string {
+    const telephone = String(user.telephone ?? '').trim();
+    const email = String(user.email ?? '').trim();
+    const username = String(user.username ?? '').trim();
+    const matricule = String(user.matricule ?? '').trim();
+    return telephone || email || username || matricule || 'Votre numéro de téléphone';
+  }
+
+  private roleCredentialAudience(role: string): string {
+    const normalized = role.trim().toUpperCase();
+    const labels: Record<string, string> = {
+      ADMIN: 'administrateur',
+      ENSEIGNANT: 'professeur',
+      ELEVE: 'élève',
+      PARENT: 'parent',
+      SURVEILLANT: 'surveillant',
+      CAISSIER: 'caissier',
+      RH: 'ressources humaines',
+      GESTIONNAIRE: 'gestionnaire',
+    };
+    return labels[normalized] ?? 'utilisateur';
   }
 
   private sanitizeEntity(model: string, entity: Payload): Payload {
@@ -2029,6 +2057,48 @@ export class LegacyCrudService {
     // Champs absents du modèle AbsencePersonnel
     delete data.type;
     delete data.justificatifJoint;
+  }
+
+  private async normalizeAbsenceEleveData(tenantId: string, data: Payload, create: boolean): Promise<void> {
+    if (data.type !== undefined && data.typeAbsence === undefined) {
+      data.typeAbsence = String(data.type);
+    }
+
+    if (data.date && !(data.date instanceof Date)) {
+      data.date = new Date(String(data.date));
+    } else if (create && !data.date) {
+      data.date = new Date();
+    }
+
+    if (data.typeAbsence !== undefined && data.typeAbsence !== null && data.typeAbsence !== '') {
+      let typeAbsence = String(data.typeAbsence).trim().toUpperCase();
+      if (typeAbsence === 'ABSENCE') typeAbsence = 'ABSENT';
+      const valid = new Set(['ABSENT', 'RETARD']);
+      data.typeAbsence = valid.has(typeAbsence) ? typeAbsence : 'ABSENT';
+    } else if (create) {
+      data.typeAbsence = 'ABSENT';
+    } else {
+      delete data.typeAbsence;
+    }
+
+    if (!data.classeId && data.eleveId) {
+      const eleve = await this.prisma.user.findFirst({
+        where: { id: String(data.eleveId), tenantId, role: 'ELEVE' },
+        select: { classeId: true },
+      });
+      data.classeId = eleve?.classeId;
+    }
+
+    if (create && !data.classeId) {
+      throw new BadRequestException("Impossible d'enregistrer l'absence: aucun rattachement de classe trouvé pour cet élève.");
+    }
+
+    if (data.justifiee !== undefined) data.justifiee = Boolean(data.justifiee);
+    else if (create) data.justifiee = false;
+
+    if (data.motif === '') data.motif = null;
+
+    delete data.type;
   }
 
   private async normalizeConvocationData(

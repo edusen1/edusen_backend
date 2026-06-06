@@ -26,3 +26,7 @@ Thumbs.db
 # Coverage
 coverage/
 .nyc_output/
+
+# WhatsApp local runtime data
+.wwebjs_auth/
+.wwebjs_cache/

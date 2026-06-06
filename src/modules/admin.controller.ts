@@ -47,6 +47,10 @@ export class AdminController {
     private readonly domain: DomainService,
   ) {}
 
+  private resolveTenantId(tenantId: string | undefined, user?: JwtUser) {
+    return this.crud.resolveTenantId(tenantId, user);
+  }
+
   // ----------------------------------------------------------------
   // Classes
   // ----------------------------------------------------------------
@@ -57,8 +61,9 @@ export class AdminController {
     @Query('anneeId') anneeId?: string,
     @Query('niveauId') niveauId?: string,
     @Query('cycleId') cycleId?: string,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.classeService.getClasses(tenantId!, anneeId, niveauId, cycleId);
+    return this.resolveTenantId(tenantId, user).then((tid) => this.classeService.getClasses(tid!, anneeId, niveauId, cycleId));
   }
 
   @Post('classes')
@@ -67,13 +72,13 @@ export class AdminController {
   }
 
   @Get('classes/professeurs')
-  getProfesseurs(@Headers('x-tenant-id') tenantId: string | undefined) {
-    return this.classeService.getProfesseurs(tenantId!);
+  getProfesseurs(@Headers('x-tenant-id') tenantId: string | undefined, @CurrentUser() user?: JwtUser) {
+    return this.resolveTenantId(tenantId, user).then((tid) => this.classeService.getProfesseurs(tid!));
   }
 
   @Get('classes/:id/eleves')
-  getClasseEleves(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string) {
-    return this.classeService.getClasseEleves(tenantId!, id);
+  getClasseEleves(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string, @CurrentUser() user?: JwtUser) {
+    return this.resolveTenantId(tenantId, user).then((tid) => this.classeService.getClasseEleves(tid!, id));
   }
 
   @Get('classes/:id/eleves/:eleveId/notes')
@@ -81,13 +86,14 @@ export class AdminController {
     @Headers('x-tenant-id') tenantId: string | undefined,
     @Param('id') id: string,
     @Param('eleveId') eleveId: string,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.classeService.getEleveNotesForClasse(tenantId!, id, eleveId);
+    return this.resolveTenantId(tenantId, user).then((tid) => this.classeService.getEleveNotesForClasse(tid!, id, eleveId));
   }
 
   @Get('classes/:id')
-  getClasse(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string) {
-    return this.classeService.getClasse(tenantId!, id);
+  getClasse(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string, @CurrentUser() user?: JwtUser) {
+    return this.resolveTenantId(tenantId, user).then((tid) => this.classeService.getClasse(tid!, id));
   }
 
   @Put('classes/:id')
@@ -95,14 +101,15 @@ export class AdminController {
     @Headers('x-tenant-id') tenantId: string | undefined,
     @Param('id') id: string,
     @Body() dto: UpdateClasseDto,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.classeService.updateClasse(tenantId!, id, dto);
+    return this.resolveTenantId(tenantId, user).then((tid) => this.classeService.updateClasse(tid!, id, dto));
   }
 
   @Delete('classes/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  deleteClasse(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string) {
-    return this.classeService.deleteClasse(tenantId!, id);
+  deleteClasse(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string, @CurrentUser() user?: JwtUser) {
+    return this.resolveTenantId(tenantId, user).then((tid) => this.classeService.deleteClasse(tid!, id));
   }
 
   @Post('classes/:id/stagiaires')
@@ -110,8 +117,9 @@ export class AdminController {
     @Headers('x-tenant-id') tenantId: string | undefined,
     @Param('id') classeId: string,
     @Body('stagiaireId') stagiaireId: string,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.classeService.addStagiaire(tenantId!, classeId, stagiaireId);
+    return this.resolveTenantId(tenantId, user).then((tid) => this.classeService.addStagiaire(tid!, classeId, stagiaireId));
   }
 
   @Delete('classes/:id/stagiaires/:stagiaireId')
@@ -119,8 +127,9 @@ export class AdminController {
     @Headers('x-tenant-id') tenantId: string | undefined,
     @Param('id') classeId: string,
     @Param('stagiaireId') stagiaireId: string,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.classeService.removeStagiaire(tenantId!, classeId, stagiaireId);
+    return this.resolveTenantId(tenantId, user).then((tid) => this.classeService.removeStagiaire(tid!, classeId, stagiaireId));
   }
 
   // ----------------------------------------------------------------
@@ -706,8 +715,9 @@ export class AdminController {
     @Headers('x-tenant-id') tenantId: string | undefined,
     @Param('resource') resource: string,
     @Query() query: QueryParams,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.crud.findAll(this.crud.adminConfig(resource), tenantId, query);
+    return this.resolveTenantId(tenantId, user).then((tid) => this.crud.findAll(this.crud.adminConfig(resource), tid, query));
   }
 
   @Get(':resource/:id')
@@ -715,8 +725,9 @@ export class AdminController {
     @Headers('x-tenant-id') tenantId: string | undefined,
     @Param('resource') resource: string,
     @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.crud.findOne(this.crud.adminConfig(resource), tenantId, id);
+    return this.resolveTenantId(tenantId, user).then((tid) => this.crud.findOne(this.crud.adminConfig(resource), tid, id));
   }
 
   @Post(':resource')
@@ -726,7 +737,7 @@ export class AdminController {
     @Body() body: Payload,
     @CurrentUser() user?: JwtUser,
   ) {
-    return this.crud.create(this.crud.adminConfig(resource), tenantId, body, user?.sub);
+    return this.resolveTenantId(tenantId, user).then((tid) => this.crud.create(this.crud.adminConfig(resource), tid, body, user?.sub));
   }
 
   @Put(':resource/:id')
@@ -735,8 +746,9 @@ export class AdminController {
     @Param('resource') resource: string,
     @Param('id') id: string,
     @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.crud.update(this.crud.adminConfig(resource), tenantId, id, body);
+    return this.resolveTenantId(tenantId, user).then((tid) => this.crud.update(this.crud.adminConfig(resource), tid, id, body));
   }
 
   @Delete(':resource/:id')
@@ -745,7 +757,8 @@ export class AdminController {
     @Headers('x-tenant-id') tenantId: string | undefined,
     @Param('resource') resource: string,
     @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.crud.delete(this.crud.adminConfig(resource), tenantId, id);
+    return this.resolveTenantId(tenantId, user).then((tid) => this.crud.delete(this.crud.adminConfig(resource), tid, id));
   }
 }

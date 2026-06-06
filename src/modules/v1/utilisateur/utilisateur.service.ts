@@ -7,7 +7,7 @@ import {
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '@/config/prisma.service';
-import { MailService } from '@/infrastructure/mail/mail.service';
+import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 import { buildPageResult, PageResult, PaginationQueryDto } from '@/shared/dto/pagination-query.dto';
 import { UserRole } from '@prisma/client';
 import { Prisma } from '@prisma/client';
@@ -45,7 +45,7 @@ export interface CreateUserDto {
 export class UtilisateurService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly mailService: MailService,
+    private readonly whatsapp: WhatsappService,
   ) {}
 
   async create(dto: CreateUserDto): Promise<unknown> {
@@ -108,9 +108,7 @@ export class UtilisateurService {
       });
     }
 
-    if (user.email) {
-      this.mailService.sendCompteCree(user.email, user.firstName, user.lastName, tmpPwd);
-    }
+    await this.sendCredentialsByWhatsapp(user, tmpPwd);
     return this.sanitize(user);
   }
 
@@ -231,9 +229,7 @@ export class UtilisateurService {
       where: { id },
       data: { passwordHash, mustChangePwd: true },
     });
-    if (user.email) {
-      this.mailService.sendCompteCree(user.email, user.firstName, user.lastName, tmpPwd);
-    }
+    await this.sendCredentialsByWhatsapp(user, tmpPwd);
     return { tempPassword: tmpPwd };
   }
 
@@ -295,5 +291,51 @@ export class UtilisateurService {
   private sanitize(user: Record<string, unknown>): Record<string, unknown> {
     const { passwordHash: _, ...rest } = user as { passwordHash: string } & Record<string, unknown>;
     return rest;
+  }
+
+  private async sendCredentialsByWhatsapp(
+    user: {
+      tenantId: string;
+      telephone: string | null;
+      email: string | null;
+      username: string | null;
+      matricule: string | null;
+      firstName: string;
+      role: UserRole;
+    },
+    tempPassword: string,
+  ): Promise<void> {
+    const telephone = String(user.telephone ?? '').trim();
+    if (!telephone) return;
+
+    const loginIdentifier =
+      telephone ||
+      String(user.email ?? '').trim() ||
+      String(user.username ?? '').trim() ||
+      String(user.matricule ?? '').trim();
+
+    const label = this.roleLabel(user.role);
+    const message = [
+      `NouraSchool - Accès ${label}`,
+      `Identifiant: ${loginIdentifier}`,
+      `Mot de passe provisoire: ${tempPassword}`,
+      'Vous devrez modifier ce mot de passe lors de votre première connexion.',
+    ].join('\n');
+
+    await this.whatsapp.sendMessage(user.tenantId, telephone, message).catch(() => undefined);
+  }
+
+  private roleLabel(role: UserRole): string {
+    const labels: Partial<Record<UserRole, string>> = {
+      ADMIN: 'administrateur',
+      ENSEIGNANT: 'professeur',
+      ELEVE: 'élève',
+      PARENT: 'parent',
+      SURVEILLANT: 'surveillant',
+      CAISSIER: 'caissier',
+      RH: 'ressources humaines',
+      GESTIONNAIRE: 'gestionnaire',
+    };
+    return labels[role] ?? 'utilisateur';
   }
 }

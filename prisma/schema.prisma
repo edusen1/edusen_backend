@@ -344,6 +344,7 @@ model User {
   firstName     String    @db.VarChar(100)
   lastName      String    @db.VarChar(100)
   telephone     String?   @db.VarChar(20)
+  numeroIdentificationNational String? @db.VarChar(10)
   adresse       String?
   role          UserRole
   actif         Boolean   @default(true)
@@ -616,6 +617,7 @@ model Inscription {
   classe            Classe            @relation(fields: [classeId], references: [id])
   anneeAcademiqueId String            @db.Uuid
   anneeAcademique   AnneeAcademique   @relation(fields: [anneeAcademiqueId], references: [id])
+  fraisInscription  Float?
   statut            StatutInscription @default(ACTIF)
   creePar           String            @db.Uuid
   createdAt         DateTime          @default(now())
