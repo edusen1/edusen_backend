@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { join } from 'path';
 import { mkdirSync, rmSync } from 'fs';
 import { PrismaService } from '@/config/prisma.service';
+import { RedisService } from '@/infrastructure/redis/redis.service';
 import { PrismaRemoteAuthTenantStore } from './prisma-remote-auth-tenant.store';
 
 // Lazy-loaded au premier appel pour ne pas crasher si Chromium absent au démarrage
@@ -55,6 +56,13 @@ export interface WhatsappQueueResponse {
   messageId: string | null;
 }
 
+interface RedisQueueEntry {
+  outboxId: string;
+  phone: string;
+  message: string;
+  queuedAt: string;
+}
+
 const QR_TTL_SECONDS = 120;
 const QR_TTL_MS = QR_TTL_SECONDS * 1000;
 const QR_MAX_RETRIES_REACHED = 'Max qrcode retries reached';
@@ -63,10 +71,12 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY_MS = 10_000;
 const STARTUP_STAGGER_MS = 3_000; // délai entre chaque tenant au démarrage
 const MAX_OUTBOX_ATTEMPTS = 10;   // abandon après N tentatives d'envoi
-const OUTBOX_FLUSH_INTERVAL_MS = 2 * 60 * 1000; // flush périodique toutes les 2 minutes
-const OUTBOX_FLUSH_DEBOUNCE_MS = Number(process.env.WHATSAPP_OUTBOX_FLUSH_DEBOUNCE_MS ?? 250);
-const OUTBOX_BATCH_SIZE = Number(process.env.WHATSAPP_OUTBOX_BATCH_SIZE ?? 50);
-const OUTBOX_CONCURRENCY = Math.max(1, Number(process.env.WHATSAPP_OUTBOX_CONCURRENCY ?? 3));
+const OUTBOX_FLUSH_INTERVAL_MS = 60 * 1000; // flush périodique pour rattraper les messages
+const REDIS_QUEUE_CLEANUP_INTERVAL_MS = 10 * 60 * 1000; // purge toutes les 10 minutes
+const OUTBOX_FLUSH_DEBOUNCE_MS = Number(process.env.WHATSAPP_OUTBOX_FLUSH_DEBOUNCE_MS ?? 100);
+const OUTBOX_BATCH_SIZE = Number(process.env.WHATSAPP_OUTBOX_BATCH_SIZE ?? 100);
+const OUTBOX_CONCURRENCY = Math.max(1, Number(process.env.WHATSAPP_OUTBOX_CONCURRENCY ?? 5));
+const REDIS_QUEUE_KEY_PREFIX = 'whatsapp:queue:';
 
 interface TenantWaState {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -92,13 +102,17 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
   private readonly flushingTenants = new Set<string>();
   private readonly scheduledFlushes = new Map<string, NodeJS.Timeout>();
   private outboxFlushTimer: NodeJS.Timeout | null = null;
+  private queueCleanupTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    this.startTimers();
+
     const autostart = this.config.get<string>('WHATSAPP_AUTOSTART', 'true') !== 'false';
     if (!autostart) return;
 
@@ -125,16 +139,16 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       }
     }
 
-    // Flush périodique de l'outbox — rattrape les messages si le `ready` a été manqué
-    this.outboxFlushTimer = setInterval(() => {
-      void this.flushAllOutboxes();
-    }, OUTBOX_FLUSH_INTERVAL_MS);
   }
 
   async onApplicationShutdown(): Promise<void> {
     if (this.outboxFlushTimer) {
       clearInterval(this.outboxFlushTimer);
       this.outboxFlushTimer = null;
+    }
+    if (this.queueCleanupTimer) {
+      clearInterval(this.queueCleanupTimer);
+      this.queueCleanupTimer = null;
     }
     for (const timer of this.scheduledFlushes.values()) {
       clearTimeout(timer);
@@ -290,13 +304,24 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       throw new ServiceUnavailableException('File WhatsApp indisponible — réessayez dans quelques secondes');
     }
 
-    // 2. Démarrer le client si une session existe, sans bloquer l'appelant.
+    // 2. Empiler aussi dans Redis pour accélérer le traitement.
+    const queueEntry: RedisQueueEntry = {
+      outboxId: entry.id,
+      phone: normalizedPhone,
+      message,
+      queuedAt: new Date().toISOString(),
+    };
+    const queueKey = this.getRedisQueueKey(tenantId);
+    await this.redis.rpush(queueKey, JSON.stringify(queueEntry));
+    await this.redis.expire(queueKey, 60 * 60);
+
+    // 3. Démarrer le client si une session existe, sans bloquer l'appelant.
     const record = await this.prisma.whatsappSession.findUnique({ where: { tenantId } });
     if (record?.sessionData || record?.connected) {
       this.startClientIfNeeded(tenantId);
     }
 
-    // 3. Si WhatsApp est prêt, déclencher un flush asynchrone immédiat.
+    // 4. Si WhatsApp est prêt, déclencher un flush asynchrone immédiat.
     this.scheduleOutboxFlush(tenantId);
 
     this.logger.log(`Message WhatsApp mis en file → ${normalizedPhone} (tenant=${tenantId}, outbox=${entry.id})`);
@@ -691,6 +716,41 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     if (!state?.ready || !state.client) return;
 
     this.flushingTenants.add(tenantId);
+    try {
+      await this.flushRedisQueue(tenantId, state);
+      await this.flushDbOutbox(tenantId, state);
+    } finally {
+      this.flushingTenants.delete(tenantId);
+    }
+
+    this.scheduleOutboxFlush(tenantId);
+  }
+
+  private async flushRedisQueue(tenantId: string, state: TenantWaState): Promise<void> {
+    const queueKey = this.getRedisQueueKey(tenantId);
+    let processed = 0;
+
+    while (processed < OUTBOX_BATCH_SIZE && state.ready && state.client) {
+      const raw = await this.redis.lpop(queueKey);
+      if (!raw) break;
+
+      let entry: RedisQueueEntry | null = null;
+      try {
+        entry = JSON.parse(raw) as RedisQueueEntry;
+      } catch {
+        continue;
+      }
+
+      if (!entry?.outboxId || !entry.phone || !entry.message) {
+        continue;
+      }
+
+      const sent = await this.sendAndAckOutbox(tenantId, state, entry.outboxId, entry.phone, entry.message);
+      if (sent) processed++;
+    }
+  }
+
+  private async flushDbOutbox(tenantId: string, state: TenantWaState): Promise<void> {
     let pending: Array<{ id: string; phone: string; message: string }>;
     try {
       pending = await this.outbox.findMany({
@@ -699,33 +759,20 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
         take: OUTBOX_BATCH_SIZE,
       });
     } catch {
-      // Table absente (migration en attente) — flush ignoré silencieusement
-      this.flushingTenants.delete(tenantId);
       return;
     }
 
-    if (!pending.length) {
-      this.flushingTenants.delete(tenantId);
-      return;
-    }
-    this.logger.log(`Flush outbox: ${pending.length} message(s) en attente (tenant=${tenantId})`);
+    if (!pending.length) return;
+    this.logger.log(`Flush outbox DB: ${pending.length} message(s) en attente (tenant=${tenantId})`);
 
-    try {
-      for (let index = 0; index < pending.length; index += OUTBOX_CONCURRENCY) {
-        if (!state.ready || !state.client) {
-          this.logger.warn(`Flush interrompu — WhatsApp déconnecté (tenant=${tenantId})`);
-          break;
-        }
-
-        const chunk = pending.slice(index, index + OUTBOX_CONCURRENCY);
-        await Promise.all(chunk.map((entry) => this.sendAndAckOutbox(tenantId, state, entry.id, entry.phone, entry.message)));
+    for (let index = 0; index < pending.length; index += OUTBOX_CONCURRENCY) {
+      if (!state.ready || !state.client) {
+        this.logger.warn(`Flush interrompu — WhatsApp déconnecté (tenant=${tenantId})`);
+        break;
       }
-    } finally {
-      this.flushingTenants.delete(tenantId);
-    }
 
-    if (pending.length === OUTBOX_BATCH_SIZE) {
-      this.scheduleOutboxFlush(tenantId);
+      const chunk = pending.slice(index, index + OUTBOX_CONCURRENCY);
+      await Promise.all(chunk.map((entry) => this.sendAndAckOutbox(tenantId, state, entry.id, entry.phone, entry.message)));
     }
   }
 
@@ -735,12 +782,13 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     outboxId: string,
     phone: string,
     message: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const chatId = this.normalizePhone(phone);
     try {
       await state.client.sendMessage(chatId, message);
       await this.outbox.delete({ where: { id: outboxId } }).catch(() => null);
       this.logger.log(`Message envoyé + supprimé de l'outbox → ${chatId} (tenant=${tenantId})`);
+      return true;
     } catch (err) {
       const error = this.formatError(err);
       await this.outbox.update({
@@ -748,7 +796,33 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
         data: { attempts: { increment: 1 }, lastAttemptAt: new Date(), lastError: error },
       }).catch(() => null);
       this.logger.warn(`Échec envoi outbox → ${chatId} (tenant=${tenantId}): ${error}`);
+      return false;
     }
+  }
+
+  private startTimers(): void {
+    if (!this.outboxFlushTimer) {
+      this.outboxFlushTimer = setInterval(() => {
+        void this.flushAllOutboxes();
+      }, OUTBOX_FLUSH_INTERVAL_MS);
+    }
+
+    if (!this.queueCleanupTimer) {
+      this.queueCleanupTimer = setInterval(() => {
+        void this.cleanupRedisQueues();
+      }, REDIS_QUEUE_CLEANUP_INTERVAL_MS);
+    }
+  }
+
+  private async cleanupRedisQueues(): Promise<void> {
+    const keys = await this.redis.scanKeys(`${REDIS_QUEUE_KEY_PREFIX}*`);
+    if (!keys.length) return;
+    await this.redis.delMany(keys);
+    this.logger.log(`Nettoyage Redis WhatsApp: ${keys.length} file(s) supprimée(s)`);
+  }
+
+  private getRedisQueueKey(tenantId: string): string {
+    return `${REDIS_QUEUE_KEY_PREFIX}${tenantId}`;
   }
 
   private normalizePhone(phone: string): string {

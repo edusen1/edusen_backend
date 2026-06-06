@@ -59,6 +59,15 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  async delMany(keys: string[]): Promise<void> {
+    if (!keys.length) return;
+    try {
+      await this.client.del(...keys);
+    } catch (err) {
+      this.logger.warn(`Redis delMany failed: ${(err as Error).message}`);
+    }
+  }
+
   async incr(key: string): Promise<number> {
     try {
       return await this.client.incr(key);
@@ -72,6 +81,61 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       await this.client.expire(key, ttlSeconds);
     } catch {
       // ignore
+    }
+  }
+
+  async rpush(key: string, ...values: string[]): Promise<number> {
+    try {
+      return await this.client.rpush(key, ...values);
+    } catch {
+      return 0;
+    }
+  }
+
+  async lrange(key: string, start: number, stop: number): Promise<string[]> {
+    try {
+      return await this.client.lrange(key, start, stop);
+    } catch {
+      return [];
+    }
+  }
+
+  async lpop(key: string): Promise<string | null> {
+    try {
+      return await this.client.lpop(key);
+    } catch {
+      return null;
+    }
+  }
+
+  async ltrim(key: string, start: number, stop: number): Promise<void> {
+    try {
+      await this.client.ltrim(key, start, stop);
+    } catch {
+      // ignore
+    }
+  }
+
+  async llen(key: string): Promise<number> {
+    try {
+      return await this.client.llen(key);
+    } catch {
+      return 0;
+    }
+  }
+
+  async scanKeys(matchPattern: string, count = 100): Promise<string[]> {
+    try {
+      let cursor = '0';
+      const keys: string[] = [];
+      do {
+        const [nextCursor, found] = await this.client.scan(cursor, 'MATCH', matchPattern, 'COUNT', String(count));
+        cursor = nextCursor;
+        keys.push(...found);
+      } while (cursor !== '0');
+      return keys;
+    } catch {
+      return [];
     }
   }
 

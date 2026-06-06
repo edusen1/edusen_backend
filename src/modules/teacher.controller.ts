@@ -29,9 +29,22 @@ export class TeacherController {
   }
 
   @Get('classes-matieres')
-  classesMatieres(@Headers('x-tenant-id') tenantId: string, @CurrentUser() user?: JwtUser) {
+  classesMatieres(@Headers('x-tenant-id') tenantId: string, @CurrentUser() user?: JwtUser, @Query('classeId') classeId?: string) {
     return this.crud.findAll(this.crud.v1Config('matieres-classes'), tenantId, {
       enseignantId: user?.sub,
+      ...(classeId ? { classeId } : {}),
+    });
+  }
+
+  @Get('classes/:id/matieres')
+  classeMatieresCompat(
+    @Headers('x-tenant-id') tenantId: string,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.crud.findAll(this.crud.v1Config('matieres-classes'), tenantId, {
+      enseignantId: user?.sub,
+      classeId: id,
     });
   }
 

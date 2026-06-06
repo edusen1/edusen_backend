@@ -380,7 +380,20 @@ export class DomainService {
     if (!ids.length) return rows;
     const users = await this.prisma.user.findMany({
       where: { id: { in: ids } },
-      select: { id: true, firstName: true, lastName: true, matricule: true, telephone: true },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        matricule: true,
+        telephone: true,
+        elevParents: {
+          select: {
+            parent: {
+              select: { id: true, firstName: true, lastName: true, telephone: true, lienParente: true },
+            },
+          },
+        },
+      },
     });
     const map = new Map(users.map((u) => [u.id, u]));
     return rows.map((r) => ({ ...r, eleve: map.get(r.eleveId ?? '') ?? null }));
@@ -401,12 +414,30 @@ export class DomainService {
         this.prisma.paiement.count({ where: { tenantId, statut: 'REJETE' } }),
         this.prisma.paiement.count({ where: { tenantId } }),
       ]);
+    const recentRows = await this.prisma.paiement.findMany({
+      where: { tenantId },
+      select: {
+        id: true,
+        reference: true,
+        montant: true,
+        statut: true,
+        typePaiement: true,
+        datePaiement: true,
+        createdAt: true,
+        eleveId: true,
+      },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 6,
+    });
+    const derniersPaiements = await this.attachEleveToPaiements(recentRows as any);
+
     return {
       today: { count: todayCnt, montant: todayAgg._sum.montant ?? 0 },
       month: { count: monthCnt, montant: monthAgg._sum.montant ?? 0 },
       enAttente: { count: enAttenteCnt, montant: enAttenteAgg._sum.montant ?? 0 },
       rejete: { count: rejeteCnt },
       total: totalCnt,
+      derniersPaiements,
     };
   }
 

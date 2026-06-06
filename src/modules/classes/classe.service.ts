@@ -496,6 +496,28 @@ export class ClasseService {
     }));
   }
 
+  async getClasseMatieres(tenantId: string, enseignantId: string, classeId: string) {
+    await this.assertTeacherClasseAccess(tenantId, enseignantId, classeId);
+
+    const matieres = await this.prisma.matiereClasse.findMany({
+      where: { tenantId, classeId },
+      include: {
+        matiere: { select: { id: true, libelle: true, code: true } },
+        enseignant: { select: PROF_SELECT },
+      },
+      orderBy: { matiere: { libelle: 'asc' } },
+    });
+
+    return matieres.map((row) => ({
+      id: row.id,
+      matiereId: row.matiereId,
+      libelle: row.matiere.libelle,
+      code: row.matiere.code,
+      enseignantId: row.enseignantId,
+      enseignantNom: row.enseignant ? `${row.enseignant.firstName ?? ''} ${row.enseignant.lastName ?? ''}`.trim() : null,
+    }));
+  }
+
   async createAppelWithLignes(
     tenantId: string,
     classeId: string,

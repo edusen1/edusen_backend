@@ -129,7 +129,46 @@ export class LegacyCrudService {
       }
     }
 
-    const include = config.model === 'classe' ? {
+    if (config.model === 'user' && config.role === 'ELEVE') {
+      const inscriptionFilter = this.first(query.inscription);
+      if (inscriptionFilter && inscriptionFilter !== 'all') {
+        const currentYear = await this.findCurrentAnnee(tenantId);
+        const activeInscriptions = currentYear
+          ? await this.prisma.inscription.findMany({
+              where: {
+                tenantId: this.assertUuid(tenantId, 'tenantId'),
+                anneeAcademiqueId: currentYear.id,
+                statut: 'ACTIF',
+              },
+              select: { eleveId: true },
+            })
+          : [];
+        const ids = activeInscriptions.map((item) => item.eleveId);
+        if (inscriptionFilter === 'inscrit') {
+          where.id = { in: ids.length ? ids : ['00000000-0000-0000-0000-000000000000'] };
+        } else if (inscriptionFilter === 'non_inscrit') {
+          where.id = { notIn: ids.length ? ids : [] };
+        }
+      }
+    }
+
+    const include = config.model === 'user' && config.role === 'ELEVE' ? {
+      classe: { select: { id: true, nom: true } },
+      elevParents: {
+        select: {
+          parent: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              telephone: true,
+              email: true,
+              lienParente: true,
+            },
+          },
+        },
+      },
+    } : config.model === 'classe' ? {
       niveau: { include: { cycle: true } },
       anneeAcademique: true,
       professeurResponsable: true,
@@ -191,7 +230,28 @@ export class LegacyCrudService {
         include: {
           classe: { select: { id: true, nom: true } },
           anneeAcademique: { select: { id: true, libelle: true } },
-          eleve: { select: { id: true, firstName: true, lastName: true, matricule: true } },
+          eleve: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              matricule: true,
+              telephone: true,
+              elevParents: {
+                select: {
+                  parent: {
+                    select: {
+                      id: true,
+                      firstName: true,
+                      lastName: true,
+                      telephone: true,
+                      lienParente: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
       },
     } : undefined;
@@ -223,7 +283,23 @@ export class LegacyCrudService {
 
   async findOne(config: CrudConfig, tenantId: string | undefined, id: string) {
     this.assertUuid(id, 'id');
-    const include = config.model === 'classe' ? {
+    const include = config.model === 'user' && config.role === 'ELEVE' ? {
+      classe: { select: { id: true, nom: true } },
+      elevParents: {
+        select: {
+          parent: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              telephone: true,
+              email: true,
+              lienParente: true,
+            },
+          },
+        },
+      },
+    } : config.model === 'classe' ? {
       niveau: { include: { cycle: true } },
       anneeAcademique: true,
       professeurResponsable: true,
@@ -1317,11 +1393,36 @@ export class LegacyCrudService {
   private buildWhere(config: CrudConfig, tenantId: string | undefined, query: QueryParams): Payload {
     const where = this.fixedWhere(config, tenantId);
     for (const [key, raw] of Object.entries(query)) {
-      if (['page', 'size', 'sortBy', 'sort', 'asc', 'ascending', 'order', 'search'].includes(key)) continue;
+      if (['page', 'size', 'sortBy', 'sort', 'asc', 'ascending', 'order', 'search', 'inscription'].includes(key)) continue;
       const value = this.first(raw);
-      if (value !== undefined && value !== '') where[key] = value;
+      const normalized = this.normalizeQueryValue(key, value);
+      if (normalized !== undefined) where[key] = normalized;
+    }
+
+    const search = this.first(query.search)?.trim();
+    if (search && config.model === 'user') {
+      where.OR = [
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
+        { username: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { telephone: { contains: search, mode: 'insensitive' } },
+        { adresse: { contains: search, mode: 'insensitive' } },
+        { profession: { contains: search, mode: 'insensitive' } },
+        { lieuTravail: { contains: search, mode: 'insensitive' } },
+        { telephoneTravail: { contains: search, mode: 'insensitive' } },
+      ];
     }
     return where;
+  }
+
+  private normalizeQueryValue(key: string, value: string | undefined) {
+    if (value === undefined || value === '') return undefined;
+    if (['actif', 'active', 'estCourante', 'publie', 'valide', 'visible'].includes(key)) {
+      if (value === 'true') return true;
+      if (value === 'false') return false;
+    }
+    return value;
   }
 
   private fixedWhere(config: CrudConfig, tenantId: string | undefined): Payload {
@@ -1461,12 +1562,24 @@ export class LegacyCrudService {
     if (config.model === 'absencePersonnel' && create) data.statut ??= 'EN_ATTENTE';
     if (config.model === 'pointage' && create) data.createdBy ??= userId;
 
+    if (config.model === 'convocation') {
+      await this.normalizeConvocationData(tenantId ?? String(data.tenantId ?? ''), data, create, userId);
+    }
+
+    if (config.model === 'annonce') {
+      this.normalizeAnnonceData(data, create);
+    }
+
+    if (config.model === 'pointage') {
+      this.normalizePointageData(data, create);
+    }
+
     if (config.model === 'classe') {
       await this.normalizeClasseData(tenantId ?? String(data.tenantId ?? ''), data);
     }
 
     if (config.model === 'cours') {
-      await this.normalizeCoursData(tenantId ?? String(data.tenantId ?? ''), data);
+      await this.normalizeCoursData(tenantId ?? String(data.tenantId ?? ''), data, create);
     }
 
     if (config.model === 'salle') {
@@ -1737,6 +1850,7 @@ export class LegacyCrudService {
       user: [...common, 'classeId'],
       inscription: [...common, 'eleveId', 'classeId', 'anneeAcademiqueId', 'creePar'],
       note: [...common, 'eleveId', 'matiereId'],
+      cours: [...common, 'matiereId', 'classeId', 'enseignantId', 'anneeAcademiqueId'],
       bulletin: [...common, 'eleveId', 'classeId', 'soumisPar', 'validePar'],
       paiement: [...common, 'inscriptionId', 'eleveId', 'parentId', 'validePar'],
       absenceEleve: [...common, 'eleveId', 'classeId', 'approuvePar'],
@@ -1819,7 +1933,7 @@ export class LegacyCrudService {
     delete data.stagiaires;
   }
 
-  private async normalizeCoursData(tenantId: string, data: Payload): Promise<void> {
+  private async normalizeCoursData(tenantId: string, data: Payload, create = false): Promise<void> {
     if (!data.matiereId && data.titre) {
       const titre = String(data.titre).trim();
       const matiere = await this.prisma.matiere.findFirst({
@@ -1834,16 +1948,51 @@ export class LegacyCrudService {
     }
 
     if (data.heures !== undefined && data.volumeHoraireHebdo === undefined) {
-      const heures = Number(data.heures);
-      if (!Number.isNaN(heures)) {
-        data.volumeHoraireHebdo = heures;
+      data.volumeHoraireHebdo = data.heures;
+    }
+
+    // Coercition numérique (le front peut envoyer des chaînes)
+    if (data.volumeHoraireHebdo !== undefined && data.volumeHoraireHebdo !== null && data.volumeHoraireHebdo !== '') {
+      const vol = Number(data.volumeHoraireHebdo);
+      data.volumeHoraireHebdo = Number.isNaN(vol) ? null : Math.trunc(vol);
+    } else if (data.volumeHoraireHebdo === '' || data.volumeHoraireHebdo === undefined) {
+      if (create) data.volumeHoraireHebdo = null;
+    }
+
+    if (data.coefficient !== undefined && data.coefficient !== null && data.coefficient !== '') {
+      const coef = Number(data.coefficient);
+      data.coefficient = Number.isNaN(coef) ? null : coef;
+    } else if (data.coefficient === '') {
+      data.coefficient = null;
+    }
+
+    // Enseignant : champ obligatoire du modèle Cours
+    const rawEnseignant = data.enseignantId ?? data.enseignant ?? data.professeurId;
+    if (rawEnseignant !== undefined && rawEnseignant !== null && String(rawEnseignant).trim() !== '') {
+      const enseignantId = this.assertUuid(String(rawEnseignant).trim(), 'enseignantId');
+      const enseignant = await this.prisma.user.findFirst({
+        where: { id: enseignantId, tenantId, role: 'ENSEIGNANT' },
+        select: { id: true },
+      });
+      if (!enseignant) {
+        throw new BadRequestException('Enseignant introuvable pour cet établissement');
       }
+      data.enseignantId = enseignantId;
+    } else if (create) {
+      throw new BadRequestException('Veuillez sélectionner un enseignant pour ce cours');
+    } else {
+      delete data.enseignantId;
     }
 
-    if (data.description && data.coefficient === undefined) {
-      delete data.description;
+    // Année académique : rattacher à l'année courante par défaut
+    if (create && !data.anneeAcademiqueId) {
+      data.anneeAcademiqueId = (await this.ensureCurrentAcademicYear(tenantId)).id;
     }
 
+    // `description` n'existe pas sur le modèle Cours -> on l'écarte toujours
+    delete data.description;
+    delete data.enseignant;
+    delete data.professeurId;
     delete data.titre;
     delete data.dateDebut;
     delete data.dateFin;
@@ -1865,7 +2014,91 @@ export class LegacyCrudService {
     if (data.type !== undefined && data.typeAbsence === undefined) {
       data.typeAbsence = String(data.type);
     }
+    // Normaliser vers l'énumération TypeAbsencePersonnel (MALADIE|CONGE|SANS_SOLDE|AUTRE)
+    if (data.typeAbsence !== undefined && data.typeAbsence !== null && data.typeAbsence !== '') {
+      let t = String(data.typeAbsence).toUpperCase();
+      if (t === 'CONGES') t = 'CONGE';
+      const valid = new Set(['MALADIE', 'CONGE', 'SANS_SOLDE', 'AUTRE']);
+      data.typeAbsence = valid.has(t) ? t : 'AUTRE';
+    } else {
+      delete data.typeAbsence;
+    }
+    // Champs absents du modèle AbsencePersonnel
     delete data.type;
+    delete data.justificatifJoint;
+  }
+
+  private async normalizeConvocationData(
+    tenantId: string,
+    data: Payload,
+    create: boolean,
+    userId?: string,
+  ): Promise<void> {
+    // parentId est requis : le dériver depuis l'élève s'il n'est pas fourni
+    if (!data.parentId && data.eleveId) {
+      const eleveId = this.assertUuid(String(data.eleveId), 'eleveId');
+      const lien = await this.prisma.eleveParent.findFirst({
+        where: { eleveId },
+        select: { parentId: true },
+      });
+      if (lien?.parentId) data.parentId = lien.parentId;
+    }
+    if (create && !data.parentId) {
+      throw new BadRequestException(
+        "Cet élève n'a aucun parent rattaché — impossible de créer la convocation.",
+      );
+    }
+    if (create && !data.dateConvocation) {
+      data.dateConvocation = new Date();
+    }
+    if (!data.creePar && userId) data.creePar = userId;
+    // Champs absents du modèle Convocation
+    delete data.type;
+    delete data.observations;
+  }
+
+  private normalizeAnnonceData(data: Payload, create: boolean): void {
+    if (create && !data.dateDebut) data.dateDebut = new Date();
+    if (data.dateFin === '' || data.dateFin === undefined) {
+      if (create) data.dateFin = null;
+    }
+    if (data.actif !== undefined) data.actif = Boolean(data.actif);
+    // Champs hérités d'anciennes versions, absents du modèle Annonce
+    delete data.type;
+    delete data.cible;
+    delete data.statut;
+    delete data.priorite;
+  }
+
+  private normalizePointageData(data: Payload, create: boolean): void {
+    if (data.statut !== undefined && data.statut !== null && data.statut !== '') {
+      data.statut = String(data.statut).toUpperCase();
+    } else if (data.statut === '') {
+      data.statut = null;
+    }
+
+    // Jour de pointage (colonne `date`)
+    if (data.date && !(data.date instanceof Date)) {
+      const d = new Date(String(data.date));
+      data.date = Number.isNaN(d.getTime()) ? null : d;
+    }
+
+    // Horodatage principal `dateHeure` : jour + heure d'arrivée si disponible, sinon maintenant
+    if (!data.dateHeure) {
+      const base = data.date instanceof Date ? new Date(data.date) : new Date();
+      const hhmm = String(data.heureArrivee ?? data.heureDepart ?? '').trim();
+      const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm);
+      if (m) base.setHours(Number(m[1]), Number(m[2]), 0, 0);
+      data.dateHeure = base;
+    }
+
+    // typePointage requis par l'énumération — valeur par défaut
+    if (!data.typePointage) data.typePointage = 'ENTREE';
+
+    if (data.heureArrivee === '') data.heureArrivee = null;
+    if (data.heureDepart === '') data.heureDepart = null;
+    if (data.observations === '') data.observations = null;
+    if (create && data.date == null) data.date = new Date();
   }
 
   private async normalizePersonnelData(tenantId: string, data: Payload, create = false): Promise<void> {
@@ -2560,6 +2793,7 @@ export class LegacyCrudService {
         statut: 'EN_ATTENTE',
         creePar: userId,
       },
+      include: this.demandePassageInclude(),
     });
   }
 
@@ -2573,10 +2807,7 @@ export class LegacyCrudService {
     return this.prisma.demandePassage.findMany({
       where,
       orderBy: { createdAt: 'desc' },
-      include: {
-        classeDest: { select: { id: true, nom: true, niveau: { select: { id: true, code: true, libelle: true } } } },
-        anneeAcademique: { select: { id: true, libelle: true } },
-      },
+      include: this.demandePassageInclude(),
     });
   }
 
@@ -2598,6 +2829,7 @@ export class LegacyCrudService {
       this.prisma.demandePassage.update({
         where: { id },
         data: { statut: 'APPROUVEE', traitePar: userId ?? null },
+        include: this.demandePassageInclude(),
       }),
       this.prisma.inscription.create({
         data: {
@@ -2628,7 +2860,45 @@ export class LegacyCrudService {
         traitePar: userId ?? null,
         motifRefus: body.motifRefus ? String(body.motifRefus) : null,
       },
+      include: this.demandePassageInclude(),
     });
+  }
+
+  private demandePassageInclude() {
+    return {
+      classeDest: {
+        select: {
+          id: true,
+          nom: true,
+          niveau: { select: { id: true, code: true, libelle: true } },
+        },
+      },
+      anneeAcademique: { select: { id: true, libelle: true } },
+      eleve: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          matricule: true,
+          telephone: true,
+          eleveClasse: { select: { id: true, nom: true } },
+          elevParents: {
+            select: {
+              parent: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  telephone: true,
+                  email: true,
+                  lienParente: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    };
   }
 
   private async findLatestBulletinId(tenantId: string | undefined, body: Payload): Promise<string> {

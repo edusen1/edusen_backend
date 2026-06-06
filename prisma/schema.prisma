@@ -955,8 +955,13 @@ model Pointage {
   tenant       Tenant       @relation(fields: [tenantId], references: [id])
   personnelId  String       @db.Uuid
   personnel    Personnel    @relation(fields: [personnelId], references: [id])
-  typePointage TypePointage
-  dateHeure    DateTime
+  typePointage TypePointage @default(ENTREE)
+  dateHeure    DateTime     @default(now())
+  date         DateTime?    @db.Date
+  statut       String?      @db.VarChar(20)
+  heureArrivee String?      @db.VarChar(10)
+  heureDepart  String?      @db.VarChar(10)
+  observations String?
   methode      String?      @db.VarChar(50)
   createdBy    String?      @db.Uuid
   createdAt    DateTime     @default(now())
