@@ -108,7 +108,14 @@ export class StorageService {
   }
 
   buildPublicAccessUrl(key: string): string {
-    const base = process.env.API_PUBLIC_URL ?? process.env.PUBLIC_API_URL ?? 'http://localhost:3000/api';
+    const base =
+      process.env.API_PUBLIC_URL ??
+      process.env.PUBLIC_API_URL ??
+      process.env.BACKEND_PUBLIC_URL ??
+      process.env.APP_PUBLIC_URL ??
+      (process.env.NODE_ENV === 'production'
+        ? 'https://nouraschool-backend.assanediallo.com/api'
+        : 'http://localhost:3000/api');
     return `${base.replace(/\/$/, '')}/storage/file?key=${encodeURIComponent(key)}`;
   }
 
@@ -128,9 +135,17 @@ export class StorageService {
       const parsed = new URL(stored);
       const segments = parsed.pathname.split('/').filter(Boolean);
 
+      if (parsed.pathname.endsWith('/storage/file')) {
+        const key = parsed.searchParams.get('key');
+        if (key) {
+          return this.buildPublicAccessUrl(key);
+        }
+      }
+
       // URLs déjà résolues vers notre endpoint public: ne pas retransformer
       if (segments[0] === 'storage' && segments[1] === 'file') {
-        return stored;
+        const key = parsed.searchParams.get('key');
+        return key ? this.buildPublicAccessUrl(key) : stored;
       }
 
       // URLs MinIO/S3 classiques: on ne réécrit que les hôtes MinIO connus
