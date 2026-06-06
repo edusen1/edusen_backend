@@ -153,7 +153,7 @@ export class LegacyCrudService {
     }
 
     const include = config.model === 'user' && config.role === 'ELEVE' ? {
-      classe: { select: { id: true, nom: true } },
+      eleveClasse: { select: { id: true, nom: true } },
       elevParents: {
         select: {
           parent: {
@@ -284,7 +284,7 @@ export class LegacyCrudService {
   async findOne(config: CrudConfig, tenantId: string | undefined, id: string) {
     this.assertUuid(id, 'id');
     const include = config.model === 'user' && config.role === 'ELEVE' ? {
-      classe: { select: { id: true, nom: true } },
+      eleveClasse: { select: { id: true, nom: true } },
       elevParents: {
         select: {
           parent: {
@@ -1687,8 +1687,11 @@ export class LegacyCrudService {
   private sanitizeEntity(model: string, entity: Payload): Payload {
     if (!entity) return entity;
     if (model === 'user') {
-      const { passwordHash: _passwordHash, ...safeEntity } = entity as Payload & { passwordHash?: string };
+      const { passwordHash: _passwordHash, eleveClasse, ...safeEntity } = entity as Payload & { passwordHash?: string; eleveClasse?: Payload };
       if (safeEntity.photoUrl) safeEntity.photoUrl = this.storage.resolveUrl(safeEntity.photoUrl as string) ?? undefined;
+      if (eleveClasse && !safeEntity.classe) {
+        safeEntity.classe = eleveClasse;
+      }
       return safeEntity;
     }
     // Resolve photo URLs nested in personnel.utilisateur
