@@ -13,6 +13,7 @@ import { RedisService } from '@/infrastructure/redis/redis.service';
 import { MailService } from '@/infrastructure/mail/mail.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
 import type { JwtUser } from '@/common/types/auth.types';
+import { PASSWORD_MIN_LENGTH } from './auth.constants';
 
 const LOCKOUT_KEY = 'auth:lockout:';
 const RATELIMIT_FORGOT_KEY = 'auth:ratelimit:forgot:';
@@ -25,7 +26,9 @@ const LOCKOUT_TTL = Number(process.env.AUTH_LOCKOUT_TTL_SECONDS ?? 600);
 const FORGOT_PER_EMAIL = Number(process.env.AUTH_FORGOT_PER_EMAIL ?? 3);
 const FORGOT_WINDOW = Number(process.env.AUTH_FORGOT_WINDOW_SECONDS ?? 900);
 const RESET_TOKEN_TTL = Number(process.env.AUTH_RESET_TOKEN_TTL_SECONDS ?? 3600);
-const PASSWORD_MIN_LENGTH = Number(process.env.PASSWORD_MIN_LENGTH ?? 12);
+// PASSWORD_MIN_LENGTH est désormais centralisé dans auth.constants.ts pour rester
+// aligné avec les DTO (évite l'erreur MOT_DE_PASSE_TROP_COURT sur un mot de passe
+// pourtant accepté par la validation de la requête).
 
 @Injectable()
 export class AuthService {
