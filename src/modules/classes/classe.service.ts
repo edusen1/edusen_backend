@@ -565,7 +565,7 @@ export class ClasseService {
         cours: { select: { matiere: { select: { libelle: true, code: true } } } },
         lignes: { select: { eleveId: true, statut: true }, orderBy: { createdAt: 'asc' } },
       },
-      orderBy: { dateCours: 'desc' },
+      orderBy: [{ dateCours: 'desc' }, { heureDebut: 'desc' }, { createdAt: 'desc' }],
     });
 
     return appels.map((a) => ({

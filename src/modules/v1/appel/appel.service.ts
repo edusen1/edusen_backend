@@ -60,7 +60,7 @@ export class AppelService {
         where,
         skip,
         take: query.size ?? 20,
-        orderBy: { dateCours: 'desc' },
+        orderBy: [{ dateCours: 'desc' }, { heureDebut: 'desc' }, { createdAt: 'desc' }],
         include: { cours: { include: { matiere: true } }, _count: { select: { lignes: true } } },
       }),
       this.prisma.appel.count({ where }),

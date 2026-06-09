@@ -13,6 +13,7 @@ import { RedisService } from '@/infrastructure/redis/redis.service';
 import { MailService } from '@/infrastructure/mail/mail.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
 import type { JwtUser } from '@/common/types/auth.types';
+import { buildPhoneLoginVariants, normalizePhoneForCountry } from '@/common/utils/phone.util';
 import { PASSWORD_MIN_LENGTH } from './auth.constants';
 
 const LOCKOUT_KEY = 'auth:lockout:';
@@ -302,14 +303,20 @@ export class AuthService {
   // ==================== UPDATE PROFILE ====================
 
   async updateProfile(userId: string, dto: { firstName?: string; lastName?: string; email?: string; telephone?: string | null }): Promise<unknown> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, tenantId: true },
+    });
     if (!user) throw new UnauthorizedException('Utilisateur introuvable');
+    const phoneCountry = await this.resolveTenantPhoneCountry(user.tenantId);
 
     const data: Prisma.UserUpdateInput = {
       ...(dto.firstName !== undefined ? { firstName: dto.firstName.trim() } : {}),
       ...(dto.lastName !== undefined ? { lastName: dto.lastName.trim() } : {}),
       ...(dto.email !== undefined ? { email: dto.email.trim().toLowerCase() } : {}),
-      ...(dto.telephone !== undefined ? { telephone: dto.telephone?.trim() || null } : {}),
+      ...(dto.telephone !== undefined
+        ? { telephone: normalizePhoneForCountry(dto.telephone, phoneCountry) ?? null }
+        : {}),
     };
 
     try {
@@ -483,36 +490,15 @@ export class AuthService {
   }
 
   private phoneLoginVariants(login: string): string[] {
-    const trimmed = (login ?? '').trim();
-    if (!trimmed || !/^[+\d\s().-]+$/.test(trimmed)) {
-      return [];
-    }
+    return buildPhoneLoginVariants(login);
+  }
 
-    const compact = trimmed.replace(/[\s().-]/g, '');
-    const digits = compact.replace(/\D/g, '');
-    if (digits.length < 8) {
-      return [];
-    }
-
-    const variants = new Set<string>([trimmed, compact]);
-    let local = '';
-
-    if (digits.startsWith('00221') && digits.length > 5) {
-      local = digits.slice(5);
-    } else if (digits.startsWith('221') && digits.length > 3) {
-      local = digits.slice(3);
-    } else if (digits.length === 9) {
-      local = digits;
-    }
-
-    if (/^\d{9}$/.test(local)) {
-      variants.add(local);
-      variants.add(`+221${local}`);
-      variants.add(`221${local}`);
-      variants.add(`00221${local}`);
-    }
-
-    return [...variants];
+  private async resolveTenantPhoneCountry(tenantId: string): Promise<string> {
+    const config = await this.prisma.ecoleConfig.findUnique({
+      where: { tenantId },
+      select: { pays: true },
+    });
+    return config?.pays ?? 'SN';
   }
 
   // ==================== UPLOAD PHOTO ====================

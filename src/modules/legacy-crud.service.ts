@@ -6,6 +6,7 @@ import { StorageService } from '@/infrastructure/storage/storage.service';
 import { MailService } from '@/infrastructure/mail/mail.service';
 import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 import type { JwtUser } from '@/common/types/auth.types';
+import { normalizePhoneForCountry } from '@/common/utils/phone.util';
 
 type QueryValue = string | string[] | undefined;
 type QueryParams = Record<string, QueryValue>;
@@ -135,7 +136,7 @@ export class LegacyCrudService {
 
   async findAll(config: CrudConfig, tenantId: string | undefined, query: QueryParams = {}) {
     const delegate = this.delegate(config.model);
-    const where = this.buildWhere(config, tenantId, query);
+    const where = await this.buildWhere(config, tenantId, query);
     const orderBy = this.orderBy(config, query);
 
     if (config.model === 'classe' && !where.anneeAcademiqueId) {
@@ -1418,10 +1419,11 @@ export class LegacyCrudService {
     throw new BadRequestException('genre invalide: valeurs autorisées M, F, AUTRE');
   }
 
-  private buildWhere(config: CrudConfig, tenantId: string | undefined, query: QueryParams): Payload {
+  private async buildWhere(config: CrudConfig, tenantId: string | undefined, query: QueryParams): Promise<Payload> {
     const where = this.fixedWhere(config, tenantId);
     for (const [key, raw] of Object.entries(query)) {
       if (['page', 'size', 'sortBy', 'sort', 'asc', 'ascending', 'order', 'search', 'inscription'].includes(key)) continue;
+      if (this.shouldSkipGenericFilter(config, key)) continue;
       const value = this.first(raw);
       const normalized = this.normalizeQueryValue(key, value);
       if (normalized !== undefined) where[key] = normalized;
@@ -1441,6 +1443,7 @@ export class LegacyCrudService {
         { telephoneTravail: { contains: search, mode: 'insensitive' } },
       ];
     }
+    await this.applyModelSpecificFilters(where, config, tenantId, query);
     return where;
   }
 
@@ -1469,6 +1472,9 @@ export class LegacyCrudService {
       const direction = this.first(query.asc) === 'false' || this.first(query.ascending) === 'false' ? 'desc' : 'asc';
       return { [sortBy]: direction };
     }
+    if (config.model === 'appel') {
+      return [{ dateCours: 'desc' }, { heureDebut: 'desc' }, { createdAt: 'desc' }];
+    }
     return config.defaultOrderBy ?? { createdAt: 'desc' };
   }
 
@@ -1492,6 +1498,12 @@ export class LegacyCrudService {
 
     if (config.model === 'user') {
       if (data.email) data.email = String(data.email).trim().toLowerCase();
+      const phoneCountry = await this.resolveTenantPhoneCountry(tenantId ?? String(data.tenantId ?? ''));
+      for (const field of ['telephone', 'numeroUrgence', 'telephoneTravail']) {
+        if (data[field] !== undefined) {
+          data[field] = normalizePhoneForCountry(data[field], phoneCountry) ?? null;
+        }
+      }
       if (data.numeroIdentificationNational !== undefined) {
         const nin = String(data.numeroIdentificationNational ?? '').trim();
         if (!nin) {
@@ -1760,6 +1772,29 @@ export class LegacyCrudService {
 
   private async attachNoteCoefficients<T extends Payload>(tenantId: string, rows: T[]): Promise<T[]> {
     const cache = new Map<string, Map<string, number>>();
+    const eleveIds = [...new Set(rows.map((row) => String(row.eleveId ?? '')).filter(Boolean))];
+    const inscriptions = eleveIds.length
+      ? await this.prisma.inscription.findMany({
+          where: { tenantId, eleveId: { in: eleveIds } },
+          include: {
+            classe: { select: { id: true, nom: true } },
+            anneeAcademique: { select: { libelle: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+        })
+      : [];
+    const inscriptionByEleveYear = new Map<string, (typeof inscriptions)[number]>();
+    const latestInscriptionByEleve = new Map<string, (typeof inscriptions)[number]>();
+    for (const inscription of inscriptions) {
+      if (!latestInscriptionByEleve.has(inscription.eleveId)) {
+        latestInscriptionByEleve.set(inscription.eleveId, inscription);
+      }
+      const yearLabel = inscription.anneeAcademique?.libelle;
+      if (yearLabel && !inscriptionByEleveYear.has(`${inscription.eleveId}:${yearLabel}`)) {
+        inscriptionByEleveYear.set(`${inscription.eleveId}:${yearLabel}`, inscription);
+      }
+    }
+
     const getCoefficients = async (eleveId: string, anneeScolaire: string): Promise<Map<string, number>> => {
       const key = `${eleveId}|${anneeScolaire}`;
       const cached = cache.get(key);
@@ -1774,11 +1809,168 @@ export class LegacyCrudService {
       const anneeScolaire = String(row.anneeScolaire ?? '');
       if (!eleveId || !anneeScolaire) return row;
       const coefficients = await getCoefficients(eleveId, anneeScolaire);
+      const inscription =
+        inscriptionByEleveYear.get(`${eleveId}:${anneeScolaire}`) ??
+        latestInscriptionByEleve.get(eleveId);
       return {
         ...row,
         coefficient: row.coefficient ?? coefficients.get(String(row.matiereId ?? '')) ?? 1,
+        classeId: row.classeId ?? inscription?.classeId ?? null,
+        classe:
+          row.classe ??
+          (inscription?.classe
+            ? {
+                id: inscription.classe.id,
+                nom: inscription.classe.nom,
+              }
+            : null),
       };
     }));
+  }
+
+  private shouldSkipGenericFilter(config: CrudConfig, key: string): boolean {
+    if (['from', 'to', 'dateFrom', 'dateTo'].includes(key)) return true;
+
+    if (config.model === 'absenceEleve' && ['type', 'niveauId'].includes(key)) return true;
+    if (config.model === 'note' && ['type', 'typeEval', 'periode', 'classeId', 'niveauId'].includes(key)) return true;
+    if (config.model === 'reclamation' && ['type', 'priorite'].includes(key)) return true;
+    if (config.model === 'paiement' && ['classeId', 'niveauId', 'eleveId', 'dateFrom', 'dateTo'].includes(key)) return true;
+
+    return false;
+  }
+
+  private async applyModelSpecificFilters(
+    where: Payload,
+    config: CrudConfig,
+    tenantId: string | undefined,
+    query: QueryParams,
+  ): Promise<void> {
+    const from = this.first(query.from) ?? this.first(query.dateFrom);
+    const to = this.first(query.to) ?? this.first(query.dateTo);
+
+    switch (config.model) {
+      case 'absenceEleve': {
+        const type = this.first(query.type) ?? this.first(query.typeAbsence);
+        if (type) where.typeAbsence = this.normalizeAbsenceType(type);
+        const niveauId = this.first(query.niveauId);
+        if (niveauId) {
+          where.classe = { ...(((where.classe as Payload | undefined) ?? {})), niveauId };
+        }
+        this.applyDateRangeFilter(where, 'date', from, to);
+        break;
+      }
+      case 'note': {
+        const type =
+          this.first(query.typeEvaluation) ??
+          this.first(query.typeEval) ??
+          this.first(query.type);
+        const trimestre = this.first(query.trimestre) ?? this.first(query.periode);
+        if (type) where.typeEvaluation = this.normalizeEvaluationType(type);
+        if (trimestre && !where.trimestre) where.trimestre = trimestre;
+        this.applyDateRangeFilter(where, 'dateEvaluation', from, to);
+        await this.applyNoteScopeFilters(where, tenantId, query);
+        break;
+      }
+      case 'reclamation': {
+        this.applyDateRangeFilter(where, 'createdAt', from, to);
+        break;
+      }
+      case 'paiement': {
+        this.applyDateRangeFilter(where, 'datePaiement', from, to);
+        const inscriptionScope: Payload = {};
+        const classeId = this.first(query.classeId);
+        const niveauId = this.first(query.niveauId);
+        const eleveId = this.first(query.eleveId);
+        if (classeId) inscriptionScope.classeId = classeId;
+        if (eleveId) inscriptionScope.eleveId = eleveId;
+        if (niveauId) inscriptionScope.classe = { niveauId };
+        if (Object.keys(inscriptionScope).length > 0) {
+          where.inscription = {
+            ...((where.inscription as Payload | undefined) ?? {}),
+            ...inscriptionScope,
+          };
+        }
+        break;
+      }
+      case 'appel': {
+        this.applyDateRangeFilter(where, 'dateCours', from, to);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  private async applyNoteScopeFilters(where: Payload, tenantId: string | undefined, query: QueryParams): Promise<void> {
+    const classeId = this.first(query.classeId);
+    const niveauId = this.first(query.niveauId);
+    if (!classeId && !niveauId) return;
+    const scopedTenantId = this.assertUuid(tenantId, 'tenantId');
+
+    const inscriptions = await this.prisma.inscription.findMany({
+      where: {
+        tenantId: scopedTenantId,
+        statut: 'ACTIF',
+        ...(classeId ? { classeId } : {}),
+        ...(niveauId ? { classe: { niveauId } } : {}),
+      },
+      include: { anneeAcademique: { select: { libelle: true } } },
+    });
+
+    const eleveIds = [...new Set(inscriptions.map((inscription) => inscription.eleveId))];
+    const existingEleveId = typeof where.eleveId === 'string' ? String(where.eleveId) : null;
+
+    if (existingEleveId) {
+      where.eleveId = eleveIds.includes(existingEleveId)
+        ? existingEleveId
+        : { in: ['00000000-0000-0000-0000-000000000000'] };
+    } else {
+      where.eleveId = { in: eleveIds.length ? eleveIds : ['00000000-0000-0000-0000-000000000000'] };
+    }
+
+    if (!where.anneeScolaire) {
+      const yearLabels = [...new Set(inscriptions.map((inscription) => inscription.anneeAcademique?.libelle).filter(Boolean))];
+      if (yearLabels.length === 1) {
+        where.anneeScolaire = yearLabels[0];
+      }
+    }
+  }
+
+  private applyDateRangeFilter(where: Payload, field: string, from?: string, to?: string): void {
+    if (!from && !to) return;
+    const range: Payload = {};
+    if (from) {
+      const start = new Date(from);
+      if (!Number.isNaN(start.getTime())) range.gte = start;
+    }
+    if (to) {
+      const end = new Date(to);
+      if (!Number.isNaN(end.getTime())) {
+        end.setHours(23, 59, 59, 999);
+        range.lte = end;
+      }
+    }
+    if (Object.keys(range).length > 0) {
+      where[field] = range;
+    }
+  }
+
+  private normalizeAbsenceType(value: string): string {
+    const normalized = String(value ?? '').trim().toUpperCase();
+    return normalized === 'ABSENCE' ? 'ABSENT' : normalized || 'ABSENT';
+  }
+
+  private normalizeEvaluationType(value: string): string {
+    return String(value ?? '').trim().toUpperCase() || 'DEVOIR';
+  }
+
+  private async resolveTenantPhoneCountry(tenantId: string): Promise<string> {
+    if (!tenantId || !this.isUuidLike(tenantId)) return 'SN';
+    const config = await this.prisma.ecoleConfig.findUnique({
+      where: { tenantId },
+      select: { pays: true },
+    });
+    return config?.pays ?? 'SN';
   }
 
   private async attachEleveById<T extends Payload>(rows: T[]): Promise<T[]> {
@@ -2179,6 +2371,8 @@ export class LegacyCrudService {
     const affectationType = String(data.affectationType ?? '').trim().toUpperCase();
     const niveauId = data.niveauId ? this.assertUuid(data.niveauId, 'niveauId') : undefined;
     const sectionId = data.sectionId ? this.assertUuid(data.sectionId, 'sectionId') : undefined;
+    const phoneCountry = await this.resolveTenantPhoneCountry(tenantId);
+    const normalizedTelephone = normalizePhoneForCountry(data.telephone, phoneCountry);
 
     if (affectationType === 'SURVEILLANT' || affectationType === 'SECRETAIRE_SURVEILLANT') {
       if (!sectionId) throw new BadRequestException('sectionId est requis pour ce personnel');
@@ -2204,7 +2398,7 @@ export class LegacyCrudService {
           const userUpdate: Record<string, unknown> = {};
           if (firstName) userUpdate['firstName'] = firstName;
           if (lastName) userUpdate['lastName'] = lastName;
-          if (data.telephone) userUpdate['telephone'] = String(data.telephone);
+          if (normalizedTelephone) userUpdate['telephone'] = normalizedTelephone;
           if (data.adresse) userUpdate['adresse'] = String(data.adresse);
           if (data.specialite) userUpdate['specialite'] = String(data.specialite);
           if (Object.keys(userUpdate).length > 0) {
@@ -2223,7 +2417,7 @@ export class LegacyCrudService {
             passwordHash,
             firstName,
             lastName,
-            telephone: data.telephone ? String(data.telephone) : undefined,
+            telephone: normalizedTelephone ?? undefined,
             adresse: data.adresse ? String(data.adresse) : undefined,
             role,
             actif: true,

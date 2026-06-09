@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { randomUUID } from "node:crypto";
 import { PrismaService } from "@/config/prisma.service";
 import { WhatsappService } from "@/modules/whatsapp/whatsapp.service";
+import { normalizePhoneForCountry } from "@/common/utils/phone.util";
 
 @Injectable()
 export class DomainService {
@@ -114,10 +115,26 @@ export class DomainService {
   studentProfil(userId: string) {
     return this.prisma.user.findUnique({ where: { id: userId } });
   }
-  studentUpdateProfil(userId: string, data: { telephone?: string }) {
+  async studentUpdateProfil(userId: string, data: { telephone?: string }) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { tenantId: true },
+    });
+    if (!user) throw new NotFoundException("Utilisateur introuvable");
+
+    const config = await this.prisma.ecoleConfig.findUnique({
+      where: { tenantId: user.tenantId },
+      select: { pays: true },
+    });
+
     return this.prisma.user.update({
       where: { id: userId },
-      data: { telephone: data.telephone ?? undefined },
+      data: {
+        telephone:
+          data.telephone !== undefined
+            ? normalizePhoneForCountry(data.telephone, config?.pays ?? "SN") ?? null
+            : undefined,
+      },
     });
   }
   studentNotes(tenantId: string, eleveId: string, trimestre?: string) {
@@ -328,20 +345,29 @@ export class DomainService {
   }
 
   private async notifyReclamationCreated(tenantId: string, eleveId: string, noteId: string, reclamationId: string): Promise<void> {
-    const note = await this.prisma.note.findFirst({
-      where: { id: noteId, tenantId, eleveId },
-      include: { matiere: { select: { libelle: true, code: true } } },
-    });
+    const [note, reclamation] = await Promise.all([
+      this.prisma.note.findFirst({
+        where: { id: noteId, tenantId, eleveId },
+        include: { matiere: { select: { libelle: true, code: true } } },
+      }),
+      this.prisma.reclamation.findFirst({
+        where: { id: reclamationId, tenantId, eleveId },
+        select: { motif: true },
+      }),
+    ]);
     const eleve = await this.prisma.user.findUnique({
       where: { id: eleveId },
       select: { id: true, firstName: true, lastName: true, telephone: true },
     });
     if (!note || !eleve) return;
+    const motif = String(reclamation?.motif ?? '').trim();
+    const motifResume = motif.length > 120 ? `${motif.slice(0, 117)}...` : motif;
     const message = [
       'NouraSchool - Réclamation déposée',
       `Élève: ${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim(),
       `Matière: ${note.matiere?.libelle ?? note.matiere?.code ?? '—'}`,
-      `Réclamation: ${reclamationId}`,
+      `Motif: ${motifResume || 'Réclamation liée à une note'}`,
+      'Ouvrez la plateforme pour la traiter.',
     ].join('\n');
     this.whatsapp.broadcastToRoles(tenantId, message, ['ADMIN', 'ENSEIGNANT']).catch(() => {});
     if (eleve.telephone) {
