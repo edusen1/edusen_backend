@@ -61,12 +61,41 @@ export class EcoleConfigService {
     };
   }
 
-  async getEcoleIdentity(tenantId: string): Promise<EcoleIdentityResponse> {
-    const config = await this.getEcoleConfig(tenantId);
+  async getEcoleIdentity(tenantId?: string): Promise<EcoleIdentityResponse> {
+    const resolvedTenantId = await this.resolveTenantId(tenantId);
+    const config = await this.getEcoleConfig(resolvedTenantId);
     return {
       nom: config.nom,
       logoUrl: config.logoUrl,
     };
+  }
+
+  /**
+   * Résout le tenant à utiliser pour l'identité affichée publiquement.
+   * Appelée sans tenant depuis la page de connexion (avant authentification) :
+   * on retombe alors sur l'établissement par défaut (déploiement mono-école),
+   * surchargé au besoin par la variable d'env DEFAULT_TENANT_ID.
+   */
+  private async resolveTenantId(tenantId?: string): Promise<string> {
+    const trimmed = tenantId?.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+
+    const fallback = process.env.DEFAULT_TENANT_ID?.trim();
+    if (fallback) {
+      return fallback;
+    }
+
+    const tenant = await this.prisma.tenant.findFirst({
+      where: { actif: true, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+    if (!tenant) {
+      throw new NotFoundException('Aucun établissement configuré');
+    }
+    return tenant.id;
   }
 
   async updateEcoleConfig(tenantId: string, dto: UpdateEcoleConfigDto): Promise<EcoleConfigResponse> {
