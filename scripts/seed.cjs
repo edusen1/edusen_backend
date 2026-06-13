@@ -18,6 +18,7 @@ if (fs.existsSync(envPath)) {
 const prisma = new PrismaClient();
 
 const PASSWORD = process.env.SEED_PASSWORD || 'Noura@2026!';
+const SEED_PHONE_NUMBER = process.env.SEED_PHONE_NUMBER || '+22771272788';
 const TENANT_SLUG = 'ecole-noura-dakar';
 const TENANT_CODE_ELEVE       = 'NOURA2026E';
 const TENANT_CODE_ENSEIGNANT  = 'NOURA2026P';
@@ -87,6 +88,10 @@ function emailFromName(prenom, nom) {
 
 function usernameFromName(prenom, nom) {
   return `${slugify(prenom)}.${slugify(nom)}`;
+}
+
+function seedPhone(value) {
+  return value === undefined || value === null ? null : SEED_PHONE_NUMBER;
 }
 
 async function upsertById(modelName, where, createData, updateData) {
@@ -430,7 +435,7 @@ async function upsertTenantUser(tenantId, user, passwordHash) {
     username,
     firstName: user.prenom,
     lastName: user.nom,
-    telephone: user.telephone,
+    telephone: seedPhone(user.telephone),
     adresse: user.adresse || 'Dakar, Senegal',
     role: user.role,
     actif: true,
@@ -440,7 +445,7 @@ async function upsertTenantUser(tenantId, user, passwordHash) {
     dateNaissance: user.dateNaissance || null,
     lieuNaissance: user.lieuNaissance || null,
     genre: user.genre || null,
-    numeroUrgence: user.numeroUrgence || null,
+    numeroUrgence: seedPhone(user.numeroUrgence),
     dateInscription: user.dateInscription || null,
     photoUrl: user.photoUrl || null,
     classeId: user.classeId || null,
@@ -450,7 +455,7 @@ async function upsertTenantUser(tenantId, user, passwordHash) {
     numeroSecuriteSociale: user.numeroSecuriteSociale || null,
     profession: user.profession || null,
     lieuTravail: user.lieuTravail || null,
-    telephoneTravail: user.telephoneTravail || null,
+    telephoneTravail: seedPhone(user.telephoneTravail),
     lienParente: user.lienParente || null,
   };
 
@@ -477,7 +482,7 @@ async function upsertPlatformUser(user, passwordHash) {
     nom: user.nom,
     prenom: user.prenom,
     email: user.email,
-    telephone: user.telephone,
+    telephone: seedPhone(user.telephone),
     motDePasse: passwordHash,
     rolePlateforme: user.role,
     actif: true,
@@ -499,92 +504,92 @@ async function seedBulkEleves(tenantId, schoolYear, seededClasses, adminId, pass
   // 66 students across all levels — (nom, prenom, genre, niveauNom, classeNom, dateNaissance)
   const bulkEleves = [
     // CI A (5 more besides the 3 already seeded)
-    { prenom: 'Moussa',   nom: 'Diop',    genre: 'M', classe: 'CI A', dob: '2015-03-12', phone: '+221781100001' },
-    { prenom: 'Fatou',    nom: 'Sow',     genre: 'F', classe: 'CI A', dob: '2015-07-22', phone: '+221781100002' },
-    { prenom: 'Omar',     nom: 'Faye',    genre: 'M', classe: 'CI A', dob: '2015-01-05', phone: '+221781100003' },
-    { prenom: 'Coumba',   nom: 'Ndiaye',  genre: 'F', classe: 'CI A', dob: '2015-09-18', phone: '+221781100004' },
-    { prenom: 'Aliou',    nom: 'Gueye',   genre: 'M', classe: 'CI A', dob: '2015-11-30', phone: '+221781100005' },
+    { prenom: 'Moussa',   nom: 'Diop',    genre: 'M', classe: 'CI A', dob: '2015-03-12', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Fatou',    nom: 'Sow',     genre: 'F', classe: 'CI A', dob: '2015-07-22', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Omar',     nom: 'Faye',    genre: 'M', classe: 'CI A', dob: '2015-01-05', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Coumba',   nom: 'Ndiaye',  genre: 'F', classe: 'CI A', dob: '2015-09-18', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Aliou',    nom: 'Gueye',   genre: 'M', classe: 'CI A', dob: '2015-11-30', phone: SEED_PHONE_NUMBER },
     // CP A
-    { prenom: 'Ibrahima', nom: 'Thiam',   genre: 'M', classe: 'CP A', dob: '2014-04-14', phone: '+221781100011' },
-    { prenom: 'Mariama',  nom: 'Fall',    genre: 'F', classe: 'CP A', dob: '2014-08-27', phone: '+221781100012' },
-    { prenom: 'Cheikh',   nom: 'Mbaye',   genre: 'M', classe: 'CP A', dob: '2014-02-03', phone: '+221781100013' },
-    { prenom: 'Adja',     nom: 'Sy',      genre: 'F', classe: 'CP A', dob: '2014-12-19', phone: '+221781100014' },
-    { prenom: 'Modou',    nom: 'Diouf',   genre: 'M', classe: 'CP A', dob: '2014-06-08', phone: '+221781100015' },
+    { prenom: 'Ibrahima', nom: 'Thiam',   genre: 'M', classe: 'CP A', dob: '2014-04-14', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Mariama',  nom: 'Fall',    genre: 'F', classe: 'CP A', dob: '2014-08-27', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Cheikh',   nom: 'Mbaye',   genre: 'M', classe: 'CP A', dob: '2014-02-03', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Adja',     nom: 'Sy',      genre: 'F', classe: 'CP A', dob: '2014-12-19', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Modou',    nom: 'Diouf',   genre: 'M', classe: 'CP A', dob: '2014-06-08', phone: SEED_PHONE_NUMBER },
     // CE1 A
-    { prenom: 'Khady',    nom: 'Camara',  genre: 'F', classe: 'CE1 A', dob: '2013-05-21', phone: '+221781100021' },
-    { prenom: 'Babacar',  nom: 'Badji',   genre: 'M', classe: 'CE1 A', dob: '2013-10-10', phone: '+221781100022' },
-    { prenom: 'Seynabou', nom: 'Cisse',   genre: 'F', classe: 'CE1 A', dob: '2013-03-07', phone: '+221781100023' },
-    { prenom: 'Pape',     nom: 'Toure',   genre: 'M', classe: 'CE1 A', dob: '2013-08-15', phone: '+221781100024' },
-    { prenom: 'Yacine',   nom: 'Mboup',   genre: 'F', classe: 'CE1 A', dob: '2013-01-29', phone: '+221781100025' },
+    { prenom: 'Khady',    nom: 'Camara',  genre: 'F', classe: 'CE1 A', dob: '2013-05-21', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Babacar',  nom: 'Badji',   genre: 'M', classe: 'CE1 A', dob: '2013-10-10', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Seynabou', nom: 'Cisse',   genre: 'F', classe: 'CE1 A', dob: '2013-03-07', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Pape',     nom: 'Toure',   genre: 'M', classe: 'CE1 A', dob: '2013-08-15', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Yacine',   nom: 'Mboup',   genre: 'F', classe: 'CE1 A', dob: '2013-01-29', phone: SEED_PHONE_NUMBER },
     // CE2 A
-    { prenom: 'Samba',    nom: 'Dione',   genre: 'M', classe: 'CE2 A', dob: '2012-07-04', phone: '+221781100031' },
-    { prenom: 'Rama',     nom: 'Mendy',   genre: 'F', classe: 'CE2 A', dob: '2012-11-17', phone: '+221781100032' },
-    { prenom: 'Alioune',  nom: 'Ndoye',   genre: 'M', classe: 'CE2 A', dob: '2012-04-25', phone: '+221781100033' },
-    { prenom: 'Penda',    nom: 'Samb',    genre: 'F', classe: 'CE2 A', dob: '2012-09-02', phone: '+221781100034' },
-    { prenom: 'Seydou',   nom: 'Niang',   genre: 'M', classe: 'CE2 A', dob: '2012-02-13', phone: '+221781100035' },
+    { prenom: 'Samba',    nom: 'Dione',   genre: 'M', classe: 'CE2 A', dob: '2012-07-04', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Rama',     nom: 'Mendy',   genre: 'F', classe: 'CE2 A', dob: '2012-11-17', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Alioune',  nom: 'Ndoye',   genre: 'M', classe: 'CE2 A', dob: '2012-04-25', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Penda',    nom: 'Samb',    genre: 'F', classe: 'CE2 A', dob: '2012-09-02', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Seydou',   nom: 'Niang',   genre: 'M', classe: 'CE2 A', dob: '2012-02-13', phone: SEED_PHONE_NUMBER },
     // CM1 A
-    { prenom: 'Aminata',  nom: 'Coly',    genre: 'F', classe: 'CM1 A', dob: '2011-06-16', phone: '+221781100041' },
-    { prenom: 'Malick',   nom: 'Bassene', genre: 'M', classe: 'CM1 A', dob: '2011-10-28', phone: '+221781100042' },
-    { prenom: 'Sokhna',   nom: 'Diop',    genre: 'F', classe: 'CM1 A', dob: '2011-03-03', phone: '+221781100043' },
-    { prenom: 'Tapha',    nom: 'Fall',    genre: 'M', classe: 'CM1 A', dob: '2011-12-20', phone: '+221781100044' },
-    { prenom: 'Binta',    nom: 'Sow',     genre: 'F', classe: 'CM1 A', dob: '2011-07-09', phone: '+221781100045' },
+    { prenom: 'Aminata',  nom: 'Coly',    genre: 'F', classe: 'CM1 A', dob: '2011-06-16', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Malick',   nom: 'Bassene', genre: 'M', classe: 'CM1 A', dob: '2011-10-28', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Sokhna',   nom: 'Diop',    genre: 'F', classe: 'CM1 A', dob: '2011-03-03', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Tapha',    nom: 'Fall',    genre: 'M', classe: 'CM1 A', dob: '2011-12-20', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Binta',    nom: 'Sow',     genre: 'F', classe: 'CM1 A', dob: '2011-07-09', phone: SEED_PHONE_NUMBER },
     // CM2 A
-    { prenom: 'Thierno',  nom: 'Gueye',   genre: 'M', classe: 'CM2 A', dob: '2010-05-14', phone: '+221781100051' },
-    { prenom: 'Mame',     nom: 'Ndiaye',  genre: 'F', classe: 'CM2 A', dob: '2010-09-22', phone: '+221781100052' },
-    { prenom: 'Assane',   nom: 'Thiam',   genre: 'M', classe: 'CM2 A', dob: '2010-02-17', phone: '+221781100053' },
-    { prenom: 'Dior',     nom: 'Faye',    genre: 'F', classe: 'CM2 A', dob: '2010-11-05', phone: '+221781100054' },
-    { prenom: 'Boubacar', nom: 'Mbaye',   genre: 'M', classe: 'CM2 A', dob: '2010-04-30', phone: '+221781100055' },
+    { prenom: 'Thierno',  nom: 'Gueye',   genre: 'M', classe: 'CM2 A', dob: '2010-05-14', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Mame',     nom: 'Ndiaye',  genre: 'F', classe: 'CM2 A', dob: '2010-09-22', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Assane',   nom: 'Thiam',   genre: 'M', classe: 'CM2 A', dob: '2010-02-17', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Dior',     nom: 'Faye',    genre: 'F', classe: 'CM2 A', dob: '2010-11-05', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Boubacar', nom: 'Mbaye',   genre: 'M', classe: 'CM2 A', dob: '2010-04-30', phone: SEED_PHONE_NUMBER },
     // 6ème A
-    { prenom: 'Ndiaga',   nom: 'Sarr',    genre: 'M', classe: '6ème A', dob: '2009-08-11', phone: '+221781100061' },
-    { prenom: 'Aissatou', nom: 'Kane',    genre: 'F', classe: '6ème A', dob: '2009-01-24', phone: '+221781100062' },
-    { prenom: 'Mor',      nom: 'Diouf',   genre: 'M', classe: '6ème A', dob: '2009-06-06', phone: '+221781100063' },
-    { prenom: 'Marème',   nom: 'Camara',  genre: 'F', classe: '6ème A', dob: '2009-12-15', phone: '+221781100064' },
-    { prenom: 'Lamine',   nom: 'Cisse',   genre: 'M', classe: '6ème A', dob: '2009-04-03', phone: '+221781100065' },
+    { prenom: 'Ndiaga',   nom: 'Sarr',    genre: 'M', classe: '6ème A', dob: '2009-08-11', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Aissatou', nom: 'Kane',    genre: 'F', classe: '6ème A', dob: '2009-01-24', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Mor',      nom: 'Diouf',   genre: 'M', classe: '6ème A', dob: '2009-06-06', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Marème',   nom: 'Camara',  genre: 'F', classe: '6ème A', dob: '2009-12-15', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Lamine',   nom: 'Cisse',   genre: 'M', classe: '6ème A', dob: '2009-04-03', phone: SEED_PHONE_NUMBER },
     // 5ème A
-    { prenom: 'Fatou',    nom: 'Toure',   genre: 'F', classe: '5ème A', dob: '2008-07-19', phone: '+221781100071' },
-    { prenom: 'Fallou',   nom: 'Ndoye',   genre: 'M', classe: '5ème A', dob: '2008-02-28', phone: '+221781100072' },
-    { prenom: 'Soda',     nom: 'Samb',    genre: 'F', classe: '5ème A', dob: '2008-10-07', phone: '+221781100073' },
-    { prenom: 'Saliou',   nom: 'Niang',   genre: 'M', classe: '5ème A', dob: '2008-05-12', phone: '+221781100074' },
-    { prenom: 'Fanta',    nom: 'Diop',    genre: 'F', classe: '5ème A', dob: '2008-09-23', phone: '+221781100075' },
+    { prenom: 'Fatou',    nom: 'Toure',   genre: 'F', classe: '5ème A', dob: '2008-07-19', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Fallou',   nom: 'Ndoye',   genre: 'M', classe: '5ème A', dob: '2008-02-28', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Soda',     nom: 'Samb',    genre: 'F', classe: '5ème A', dob: '2008-10-07', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Saliou',   nom: 'Niang',   genre: 'M', classe: '5ème A', dob: '2008-05-12', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Fanta',    nom: 'Diop',    genre: 'F', classe: '5ème A', dob: '2008-09-23', phone: SEED_PHONE_NUMBER },
     // 4ème A
-    { prenom: 'Momar',    nom: 'Sy',      genre: 'M', classe: '4ème A', dob: '2007-03-16', phone: '+221781100081' },
-    { prenom: 'Yaye',     nom: 'Gueye',   genre: 'F', classe: '4ème A', dob: '2007-11-04', phone: '+221781100082' },
-    { prenom: 'Biram',    nom: 'Fall',    genre: 'M', classe: '4ème A', dob: '2007-06-27', phone: '+221781100083' },
-    { prenom: 'Maty',     nom: 'Badji',   genre: 'F', classe: '4ème A', dob: '2007-01-09', phone: '+221781100084' },
-    { prenom: 'Idy',      nom: 'Mendy',   genre: 'M', classe: '4ème A', dob: '2007-08-21', phone: '+221781100085' },
+    { prenom: 'Momar',    nom: 'Sy',      genre: 'M', classe: '4ème A', dob: '2007-03-16', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Yaye',     nom: 'Gueye',   genre: 'F', classe: '4ème A', dob: '2007-11-04', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Biram',    nom: 'Fall',    genre: 'M', classe: '4ème A', dob: '2007-06-27', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Maty',     nom: 'Badji',   genre: 'F', classe: '4ème A', dob: '2007-01-09', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Idy',      nom: 'Mendy',   genre: 'M', classe: '4ème A', dob: '2007-08-21', phone: SEED_PHONE_NUMBER },
     // 3ème A
-    { prenom: 'Rokhaya',  nom: 'Thiam',   genre: 'F', classe: '3ème A', dob: '2006-04-14', phone: '+221781100091' },
-    { prenom: 'Bocar',    nom: 'Mboup',   genre: 'M', classe: '3ème A', dob: '2006-10-30', phone: '+221781100092' },
-    { prenom: 'Ndéye',    nom: 'Dione',   genre: 'F', classe: '3ème A', dob: '2006-07-03', phone: '+221781100093' },
-    { prenom: 'Gora',     nom: 'Coly',    genre: 'M', classe: '3ème A', dob: '2006-02-18', phone: '+221781100094' },
-    { prenom: 'Mariama',  nom: 'Bassene', genre: 'F', classe: '3ème A', dob: '2006-12-08', phone: '+221781100095' },
+    { prenom: 'Rokhaya',  nom: 'Thiam',   genre: 'F', classe: '3ème A', dob: '2006-04-14', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Bocar',    nom: 'Mboup',   genre: 'M', classe: '3ème A', dob: '2006-10-30', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Ndéye',    nom: 'Dione',   genre: 'F', classe: '3ème A', dob: '2006-07-03', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Gora',     nom: 'Coly',    genre: 'M', classe: '3ème A', dob: '2006-02-18', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Mariama',  nom: 'Bassene', genre: 'F', classe: '3ème A', dob: '2006-12-08', phone: SEED_PHONE_NUMBER },
     // Seconde A
-    { prenom: 'Serigne',  nom: 'Sarr',    genre: 'M', classe: 'Seconde A', dob: '2005-05-25', phone: '+221781100101' },
-    { prenom: 'Aminata',  nom: 'Ndiaye',  genre: 'F', classe: 'Seconde A', dob: '2005-09-14', phone: '+221781100102' },
-    { prenom: 'Bamba',    nom: 'Kane',    genre: 'M', classe: 'Seconde A', dob: '2005-03-07', phone: '+221781100103' },
+    { prenom: 'Serigne',  nom: 'Sarr',    genre: 'M', classe: 'Seconde A', dob: '2005-05-25', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Aminata',  nom: 'Ndiaye',  genre: 'F', classe: 'Seconde A', dob: '2005-09-14', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Bamba',    nom: 'Kane',    genre: 'M', classe: 'Seconde A', dob: '2005-03-07', phone: SEED_PHONE_NUMBER },
     // Première A
-    { prenom: 'Coumba',   nom: 'Diallo',  genre: 'F', classe: 'Première A', dob: '2004-06-11', phone: '+221781100111' },
-    { prenom: 'Ousmane',  nom: 'Faye',    genre: 'M', classe: 'Première A', dob: '2004-11-02', phone: '+221781100112' },
-    { prenom: 'Khady',    nom: 'Toure',   genre: 'F', classe: 'Première A', dob: '2004-04-19', phone: '+221781100113' },
+    { prenom: 'Coumba',   nom: 'Diallo',  genre: 'F', classe: 'Première A', dob: '2004-06-11', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Ousmane',  nom: 'Faye',    genre: 'M', classe: 'Première A', dob: '2004-11-02', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Khady',    nom: 'Toure',   genre: 'F', classe: 'Première A', dob: '2004-04-19', phone: SEED_PHONE_NUMBER },
     // Terminale A
-    { prenom: 'Ibou',     nom: 'Diop',    genre: 'M', classe: 'Terminale A', dob: '2003-08-08', phone: '+221781100121' },
-    { prenom: 'Fatou',    nom: 'Sall',    genre: 'F', classe: 'Terminale A', dob: '2003-02-22', phone: '+221781100122' },
-    { prenom: 'Moussa',   nom: 'Camara',  genre: 'M', classe: 'Terminale A', dob: '2003-12-01', phone: '+221781100123' },
+    { prenom: 'Ibou',     nom: 'Diop',    genre: 'M', classe: 'Terminale A', dob: '2003-08-08', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Fatou',    nom: 'Sall',    genre: 'F', classe: 'Terminale A', dob: '2003-02-22', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Moussa',   nom: 'Camara',  genre: 'M', classe: 'Terminale A', dob: '2003-12-01', phone: SEED_PHONE_NUMBER },
     // Petite Section A
-    { prenom: 'Lissa',    nom: 'Ndiaye',  genre: 'F', classe: 'Petite Section A', dob: '2021-04-10', phone: '+221781100131' },
-    { prenom: 'Elhadj',   nom: 'Sow',     genre: 'M', classe: 'Petite Section A', dob: '2021-07-15', phone: '+221781100132' },
-    { prenom: 'Nena',     nom: 'Gueye',   genre: 'F', classe: 'Petite Section A', dob: '2021-01-28', phone: '+221781100133' },
-    { prenom: 'Khadim',   nom: 'Fall',    genre: 'M', classe: 'Petite Section A', dob: '2021-10-05', phone: '+221781100134' },
+    { prenom: 'Lissa',    nom: 'Ndiaye',  genre: 'F', classe: 'Petite Section A', dob: '2021-04-10', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Elhadj',   nom: 'Sow',     genre: 'M', classe: 'Petite Section A', dob: '2021-07-15', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Nena',     nom: 'Gueye',   genre: 'F', classe: 'Petite Section A', dob: '2021-01-28', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Khadim',   nom: 'Fall',    genre: 'M', classe: 'Petite Section A', dob: '2021-10-05', phone: SEED_PHONE_NUMBER },
     // Moyenne Section A
-    { prenom: 'Tida',     nom: 'Mbaye',   genre: 'F', classe: 'Moyenne Section A', dob: '2020-05-20', phone: '+221781100141' },
-    { prenom: 'Ousseynou',nom: 'Thiam',   genre: 'M', classe: 'Moyenne Section A', dob: '2020-09-03', phone: '+221781100142' },
-    { prenom: 'Rouba',    nom: 'Cisse',   genre: 'F', classe: 'Moyenne Section A', dob: '2020-03-17', phone: '+221781100143' },
-    { prenom: 'Mourtalla', nom: 'Diouf',  genre: 'M', classe: 'Moyenne Section A', dob: '2020-11-29', phone: '+221781100144' },
+    { prenom: 'Tida',     nom: 'Mbaye',   genre: 'F', classe: 'Moyenne Section A', dob: '2020-05-20', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Ousseynou',nom: 'Thiam',   genre: 'M', classe: 'Moyenne Section A', dob: '2020-09-03', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Rouba',    nom: 'Cisse',   genre: 'F', classe: 'Moyenne Section A', dob: '2020-03-17', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Mourtalla', nom: 'Diouf',  genre: 'M', classe: 'Moyenne Section A', dob: '2020-11-29', phone: SEED_PHONE_NUMBER },
     // Grande Section A
-    { prenom: 'Ndéye',    nom: 'Camara',  genre: 'F', classe: 'Grande Section A', dob: '2019-06-08', phone: '+221781100151' },
-    { prenom: 'Seybatou', nom: 'Sarr',    genre: 'M', classe: 'Grande Section A', dob: '2019-02-14', phone: '+221781100152' },
-    { prenom: 'Fatoumata',nom: 'Kane',    genre: 'F', classe: 'Grande Section A', dob: '2019-10-22', phone: '+221781100153' },
-    { prenom: 'Elton',    nom: 'Diallo',  genre: 'M', classe: 'Grande Section A', dob: '2019-07-31', phone: '+221781100154' },
+    { prenom: 'Ndéye',    nom: 'Camara',  genre: 'F', classe: 'Grande Section A', dob: '2019-06-08', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Seybatou', nom: 'Sarr',    genre: 'M', classe: 'Grande Section A', dob: '2019-02-14', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Fatoumata',nom: 'Kane',    genre: 'F', classe: 'Grande Section A', dob: '2019-10-22', phone: SEED_PHONE_NUMBER },
+    { prenom: 'Elton',    nom: 'Diallo',  genre: 'M', classe: 'Grande Section A', dob: '2019-07-31', phone: SEED_PHONE_NUMBER },
   ];
 
   let inscriptionCounter = 100;
@@ -604,7 +609,7 @@ async function seedBulkEleves(tenantId, schoolYear, seededClasses, adminId, pass
       prenom: eleve.prenom,
       nom: eleve.nom,
       role: 'ELEVE',
-      telephone: eleve.phone,
+      telephone: seedPhone(eleve.phone),
       email,
       username,
       matricule: `ELV-2025-${String(inscriptionCounter).padStart(4, '0')}`,
@@ -659,7 +664,7 @@ async function main() {
       codeAccesRh:          TENANT_CODE_RH,
       nom: 'Ecole Noura Dakar',
       emailContact: 'contact@demo.noura.sn',
-      telephone: '+221339000000',
+      telephone: SEED_PHONE_NUMBER,
       adresse: 'Dakar, Senegal',
       plan: 'TRIAL',
       actif: true,
@@ -667,7 +672,7 @@ async function main() {
     {
       nom: 'Ecole Noura Dakar',
       emailContact: 'contact@demo.noura.sn',
-      telephone: '+221339000000',
+      telephone: SEED_PHONE_NUMBER,
       adresse: 'Dakar, Senegal',
       plan: 'TRIAL',
       actif: true,
@@ -930,29 +935,29 @@ async function main() {
   );
 
   const platformUsers = [
-    { role: 'SUPER_ADMIN', prenom: 'Aissatou', nom: 'Diop', telephone: '+221771000001', email: 'aissatou.diop@demo.noura.sn' },
-    { role: 'SUPER_ADMIN', prenom: 'Bamba', nom: 'Diallo', telephone: '+221771000002', email: 'bamba.diallo@demo.noura.sn' },
-    { role: 'GESTIONNAIRE', prenom: 'Mariam', nom: 'Sow', telephone: '+221771000003', email: 'mariam.sow@demo.noura.sn' },
-    { role: 'GESTIONNAIRE', prenom: 'Cheikh', nom: 'Ndiaye', telephone: '+221771000004', email: 'cheikh.ndiaye@demo.noura.sn' },
+    { role: 'SUPER_ADMIN', prenom: 'Aissatou', nom: 'Diop', telephone: SEED_PHONE_NUMBER, email: 'aissatou.diop@demo.noura.sn' },
+    { role: 'SUPER_ADMIN', prenom: 'Bamba', nom: 'Diallo', telephone: SEED_PHONE_NUMBER, email: 'bamba.diallo@demo.noura.sn' },
+    { role: 'GESTIONNAIRE', prenom: 'Mariam', nom: 'Sow', telephone: SEED_PHONE_NUMBER, email: 'mariam.sow@demo.noura.sn' },
+    { role: 'GESTIONNAIRE', prenom: 'Cheikh', nom: 'Ndiaye', telephone: SEED_PHONE_NUMBER, email: 'cheikh.ndiaye@demo.noura.sn' },
   ];
 
   const tenantUsers = [
-    { role: 'ADMIN', prenom: 'Khady', nom: 'Ba', telephone: '+221781000011', email: 'khady.ba@demo.noura.sn', username: 'khady.ba' },
-    { role: 'ADMIN', prenom: 'Mamadou', nom: 'Fall', telephone: '+221781000012', email: 'mamadou.fall@demo.noura.sn', username: 'mamadou.fall' },
-    { role: 'CAISSIER', prenom: 'Fatou', nom: 'Cisse', telephone: '+221781000021', email: 'fatou.cisse@demo.noura.sn', username: 'fatou.cisse' },
-    { role: 'CAISSIER', prenom: 'Ibrahima', nom: 'Kane', telephone: '+221781000022', email: 'ibrahima.kane@demo.noura.sn', username: 'ibrahima.kane' },
-    { role: 'SURVEILLANT', prenom: 'Rokhaya', nom: 'Diallo', telephone: '+221781000031', email: 'rokhaya.diallo@demo.noura.sn', username: 'rokhaya.diallo' },
-    { role: 'SURVEILLANT', prenom: 'Pape', nom: 'Gaye', telephone: '+221781000032', email: 'pape.gaye@demo.noura.sn', username: 'pape.gaye' },
-    { role: 'ENSEIGNANT', prenom: 'Ousmane', nom: 'Diouf', telephone: '+221781000041', email: 'ousmane.diouf@demo.noura.sn', username: 'ousmane.diouf', specialite: 'Mathematiques', dateEmbauche: new Date('2023-09-01') },
-    { role: 'ENSEIGNANT', prenom: 'Adja', nom: 'Sarr', telephone: '+221781000042', email: 'adja.sarr@demo.noura.sn', username: 'adja.sarr', specialite: 'Francais', dateEmbauche: new Date('2024-10-01') },
-    { role: 'ELEVE', prenom: 'Amadou', nom: 'Kane', telephone: '+221781000051', email: 'amadou.kane@demo.noura.sn', username: 'amadou.kane', matricule: 'ELV-2025-0001', dateNaissance: new Date('2014-02-18'), genre: 'M', numeroUrgence: '+221771111111', dateInscription: new Date('2025-10-05'), classeId: classeCIA.id },
-    { role: 'ELEVE', prenom: 'Awa', nom: 'Diallo', telephone: '+221781000052', email: 'awa.diallo@demo.noura.sn', username: 'awa.diallo', matricule: 'ELV-2025-0002', dateNaissance: new Date('2014-06-09'), genre: 'F', numeroUrgence: '+221772222222', dateInscription: new Date('2025-10-05'), classeId: classeCIA.id },
-    { role: 'ELEVE', prenom: 'amadou', nom: 'Ba', telephone: '+221781000053', email: 'baamadou@gmail.com', username: 'amadou.ba', matricule: null, dateNaissance: new Date('2014-05-20'), genre: 'M', numeroUrgence: '+221773333333', dateInscription: new Date('2025-10-05'), classeId: classeCIA.id },
-    { role: 'PARENT', prenom: 'Mamadou', nom: 'Ndiaye', telephone: '+221781000061', email: 'mamadou.ndiaye@demo.noura.sn', username: 'mamadou.ndiaye', profession: 'Commercant', lieuTravail: 'Sandaga', telephoneTravail: '+221338888888', lienParente: 'PERE' },
-    { role: 'PARENT', prenom: 'Aminata', nom: 'Ba', telephone: '+221781000062', email: 'aminata.ba@demo.noura.sn', username: 'aminata.ba', profession: 'Assistante de direction', lieuTravail: 'Plateau', telephoneTravail: '+221338777777', lienParente: 'MERE' },
-    { role: 'PARENT', prenom: 'Ibrahima', nom: 'Ba', telephone: '+221781000064', email: 'ibrahima.ba@demo.noura.sn', username: 'ibrahima.ba', profession: 'Fonctionnaire', lieuTravail: 'Dakar', telephoneTravail: '+221338600000', lienParente: 'PERE' },
-    { role: 'RH', prenom: 'Boubacar', nom: 'Sy', telephone: '+221781000071', email: 'boubacar.sy@demo.noura.sn', username: 'boubacar.sy' },
-    { role: 'RH', prenom: 'Khadim', nom: 'Thiam', telephone: '+221781000072', email: 'khadim.thiam@demo.noura.sn', username: 'khadim.thiam' },
+    { role: 'ADMIN', prenom: 'Khady', nom: 'Ba', telephone: SEED_PHONE_NUMBER, email: 'khady.ba@demo.noura.sn', username: 'khady.ba' },
+    { role: 'ADMIN', prenom: 'Mamadou', nom: 'Fall', telephone: SEED_PHONE_NUMBER, email: 'mamadou.fall@demo.noura.sn', username: 'mamadou.fall' },
+    { role: 'CAISSIER', prenom: 'Fatou', nom: 'Cisse', telephone: SEED_PHONE_NUMBER, email: 'fatou.cisse@demo.noura.sn', username: 'fatou.cisse' },
+    { role: 'CAISSIER', prenom: 'Ibrahima', nom: 'Kane', telephone: SEED_PHONE_NUMBER, email: 'ibrahima.kane@demo.noura.sn', username: 'ibrahima.kane' },
+    { role: 'SURVEILLANT', prenom: 'Rokhaya', nom: 'Diallo', telephone: SEED_PHONE_NUMBER, email: 'rokhaya.diallo@demo.noura.sn', username: 'rokhaya.diallo' },
+    { role: 'SURVEILLANT', prenom: 'Pape', nom: 'Gaye', telephone: SEED_PHONE_NUMBER, email: 'pape.gaye@demo.noura.sn', username: 'pape.gaye' },
+    { role: 'ENSEIGNANT', prenom: 'Ousmane', nom: 'Diouf', telephone: SEED_PHONE_NUMBER, email: 'ousmane.diouf@demo.noura.sn', username: 'ousmane.diouf', specialite: 'Mathematiques', dateEmbauche: new Date('2023-09-01') },
+    { role: 'ENSEIGNANT', prenom: 'Adja', nom: 'Sarr', telephone: SEED_PHONE_NUMBER, email: 'adja.sarr@demo.noura.sn', username: 'adja.sarr', specialite: 'Francais', dateEmbauche: new Date('2024-10-01') },
+    { role: 'ELEVE', prenom: 'Amadou', nom: 'Kane', telephone: SEED_PHONE_NUMBER, email: 'amadou.kane@demo.noura.sn', username: 'amadou.kane', matricule: 'ELV-2025-0001', dateNaissance: new Date('2014-02-18'), genre: 'M', numeroUrgence: SEED_PHONE_NUMBER, dateInscription: new Date('2025-10-05'), classeId: classeCIA.id },
+    { role: 'ELEVE', prenom: 'Awa', nom: 'Diallo', telephone: SEED_PHONE_NUMBER, email: 'awa.diallo@demo.noura.sn', username: 'awa.diallo', matricule: 'ELV-2025-0002', dateNaissance: new Date('2014-06-09'), genre: 'F', numeroUrgence: SEED_PHONE_NUMBER, dateInscription: new Date('2025-10-05'), classeId: classeCIA.id },
+    { role: 'ELEVE', prenom: 'amadou', nom: 'Ba', telephone: SEED_PHONE_NUMBER, email: 'baamadou@gmail.com', username: 'amadou.ba', matricule: null, dateNaissance: new Date('2014-05-20'), genre: 'M', numeroUrgence: SEED_PHONE_NUMBER, dateInscription: new Date('2025-10-05'), classeId: classeCIA.id },
+    { role: 'PARENT', prenom: 'Mamadou', nom: 'Ndiaye', telephone: SEED_PHONE_NUMBER, email: 'mamadou.ndiaye@demo.noura.sn', username: 'mamadou.ndiaye', profession: 'Commercant', lieuTravail: 'Sandaga', telephoneTravail: SEED_PHONE_NUMBER, lienParente: 'PERE' },
+    { role: 'PARENT', prenom: 'Aminata', nom: 'Ba', telephone: SEED_PHONE_NUMBER, email: 'aminata.ba@demo.noura.sn', username: 'aminata.ba', profession: 'Assistante de direction', lieuTravail: 'Plateau', telephoneTravail: SEED_PHONE_NUMBER, lienParente: 'MERE' },
+    { role: 'PARENT', prenom: 'Ibrahima', nom: 'Ba', telephone: SEED_PHONE_NUMBER, email: 'ibrahima.ba@demo.noura.sn', username: 'ibrahima.ba', profession: 'Fonctionnaire', lieuTravail: 'Dakar', telephoneTravail: SEED_PHONE_NUMBER, lienParente: 'PERE' },
+    { role: 'RH', prenom: 'Boubacar', nom: 'Sy', telephone: SEED_PHONE_NUMBER, email: 'boubacar.sy@demo.noura.sn', username: 'boubacar.sy' },
+    { role: 'RH', prenom: 'Khadim', nom: 'Thiam', telephone: SEED_PHONE_NUMBER, email: 'khadim.thiam@demo.noura.sn', username: 'khadim.thiam' },
   ];
 
   const platformRecords = [];
