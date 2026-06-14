@@ -29,48 +29,48 @@ const TENANT_CODE_RH          = 'NOURA2026R';
 const SCHOOL_YEAR = '2025-2026';
 const CURRENT_YEAR_START = new Date('2025-10-01');
 const CURRENT_YEAR_END = new Date('2026-07-31');
-const DEFAULT_STRUCTURE = [
-  {
-    code: 'MATERNELLE',
-    nom: 'Maternelle',
-    niveaux: [
-      { code: 'PS', nom: 'Petite Section', ordre: 1 },
-      { code: 'MS', nom: 'Moyenne Section', ordre: 2 },
-      { code: 'GS', nom: 'Grande Section', ordre: 3 },
-    ],
-  },
-  {
-    code: 'PRIMAIRE',
-    nom: 'Primaire',
-    niveaux: [
-      { code: 'CI', nom: 'CI', ordre: 10 },
-      { code: 'CP', nom: 'CP', ordre: 11 },
-      { code: 'CE1', nom: 'CE1', ordre: 12 },
-      { code: 'CE2', nom: 'CE2', ordre: 13 },
-      { code: 'CM1', nom: 'CM1', ordre: 14 },
-      { code: 'CM2', nom: 'CM2', ordre: 15 },
-    ],
-  },
-  {
-    code: 'COLLEGE',
-    nom: 'Collège',
-    niveaux: [
-      { code: '6E', nom: '6ème', ordre: 20 },
-      { code: '5E', nom: '5ème', ordre: 21 },
-      { code: '4E', nom: '4ème', ordre: 22 },
-      { code: '3E', nom: '3ème', ordre: 23 },
-    ],
-  },
-  {
-    code: 'LYCEE',
-    nom: 'Lycée',
-    niveaux: [
-      { code: '2NDE', nom: 'Seconde', ordre: 30 },
-      { code: '1ERE', nom: 'Première', ordre: 31 },
-      { code: 'TLE', nom: 'Terminale', ordre: 32 },
-    ],
-  },
-];
+// const DEFAULT_STRUCTURE = [
+//   {
+//     code: 'MATERNELLE',
+//     nom: 'Maternelle',
+//     niveaux: [
+//       { code: 'PS', nom: 'Petite Section', ordre: 1 },
+//       { code: 'MS', nom: 'Moyenne Section', ordre: 2 },
+//       { code: 'GS', nom: 'Grande Section', ordre: 3 },
+//     ],
+//   },
+//   {
+//     code: 'PRIMAIRE',
+//     nom: 'Primaire',
+//     niveaux: [
+//       { code: 'CI', nom: 'CI', ordre: 10 },
+//       { code: 'CP', nom: 'CP', ordre: 11 },
+//       { code: 'CE1', nom: 'CE1', ordre: 12 },
+//       { code: 'CE2', nom: 'CE2', ordre: 13 },
+//       { code: 'CM1', nom: 'CM1', ordre: 14 },
+//       { code: 'CM2', nom: 'CM2', ordre: 15 },
+//     ],
+//   },
+//   {
+//     code: 'COLLEGE',
+//     nom: 'Collège',
+//     niveaux: [
+//       { code: '6E', nom: '6ème', ordre: 20 },
+//       { code: '5E', nom: '5ème', ordre: 21 },
+//       { code: '4E', nom: '4ème', ordre: 22 },
+//       { code: '3E', nom: '3ème', ordre: 23 },
+//     ],
+//   },
+//   {
+//     code: 'LYCEE',
+//     nom: 'Lycée',
+//     niveaux: [
+//       { code: '2NDE', nom: 'Seconde', ordre: 30 },
+//       { code: '1ERE', nom: 'Première', ordre: 31 },
+//       { code: 'TLE', nom: 'Terminale', ordre: 32 },
+//     ],
+//   },
+// ];
 
 function slugify(value) {
   return value
@@ -107,6 +107,7 @@ async function upsertById(modelName, where, createData, updateData) {
   return prisma[modelName].create({ data: createData });
 }
 
+/* ===== Helpers de seed désactivés (non utilisés : on ne crée que le tenant + les users) =====
 async function seedDefaultAcademicStructure(tenantId) {
   const result = { cycles: new Map(), niveaux: new Map() };
 
@@ -257,174 +258,175 @@ async function upsertCalendrierEvent(tenantId, event) {
 
   return prisma.calendrierScolaire.create({ data });
 }
+===== FIN helpers de seed désactivés ===== */
 
-async function seedCalendrierScolaire(tenantId) {
-  const sections = await prisma.cycle.findMany({
-    where: { tenantId, code: { in: ['MATERNELLE', 'PRIMAIRE', 'COLLEGE', 'LYCEE'] } },
-    select: { id: true, code: true },
-  });
-  const sectionByCode = new Map(sections.map((section) => [section.code, section]));
+// async function seedCalendrierScolaire(tenantId) {
+//   const sections = await prisma.cycle.findMany({
+//     where: { tenantId, code: { in: ['MATERNELLE', 'PRIMAIRE', 'COLLEGE', 'LYCEE'] } },
+//     select: { id: true, code: true },
+//   });
+//   const sectionByCode = new Map(sections.map((section) => [section.code, section]));
 
-  const globalEvents = [
-    {
-      titre: 'Rentrée des enseignants',
-      description: 'Préparation pédagogique, réunions de rentrée et organisation des classes.',
-      dateDebut: new Date('2025-09-29'),
-      type: 'RENTREE',
-    },
-    {
-      titre: 'Rentrée des élèves',
-      description: 'Accueil général des élèves et démarrage des cours.',
-      dateDebut: new Date('2025-10-06'),
-      type: 'RENTREE',
-    },
-    {
-      titre: 'Vacances de Noël',
-      description: 'Départ en vacances après les cours, reprise le matin du jour indiqué.',
-      dateDebut: new Date('2025-12-24'),
-      dateFin: new Date('2026-01-05'),
-      type: 'VACANCES',
-    },
-    {
-      titre: 'Journée sans école - Lundi de Pentecôte',
-      description: 'Journée sans école prévue comme journée de solidarité dans le calendrier national.',
-      dateDebut: new Date('2026-05-25'),
-      type: 'FERIE',
-    },
-    {
-      titre: 'Assemblée générale FOSCO',
-      description: 'Lancement des activités sociales, culturelles, sportives et éducatives du foyer scolaire.',
-      dateDebut: new Date('2026-02-14'),
-      type: 'ACTIVITE_FOSCO',
-    },
-    {
-      titre: 'Semaine culturelle et sportive',
-      description: 'Activités FOSCO, clubs, génie en herbe, théâtre, sport et valorisation des talents.',
-      dateDebut: new Date('2026-04-20'),
-      dateFin: new Date('2026-04-25'),
-      type: 'ACTIVITE_FOSCO',
-    },
-    {
-      titre: 'Clôture administrative de l’année',
-      description: 'Finalisation des dossiers, archives, bilans pédagogiques et préparation de l’année suivante.',
-      dateDebut: new Date('2026-07-31'),
-      type: 'AUTRE',
-    },
-  ];
+//   const globalEvents = [
+//     {
+//       titre: 'Rentrée des enseignants',
+//       description: 'Préparation pédagogique, réunions de rentrée et organisation des classes.',
+//       dateDebut: new Date('2025-09-29'),
+//       type: 'RENTREE',
+//     },
+//     {
+//       titre: 'Rentrée des élèves',
+//       description: 'Accueil général des élèves et démarrage des cours.',
+//       dateDebut: new Date('2025-10-06'),
+//       type: 'RENTREE',
+//     },
+//     {
+//       titre: 'Vacances de Noël',
+//       description: 'Départ en vacances après les cours, reprise le matin du jour indiqué.',
+//       dateDebut: new Date('2025-12-24'),
+//       dateFin: new Date('2026-01-05'),
+//       type: 'VACANCES',
+//     },
+//     {
+//       titre: 'Journée sans école - Lundi de Pentecôte',
+//       description: 'Journée sans école prévue comme journée de solidarité dans le calendrier national.',
+//       dateDebut: new Date('2026-05-25'),
+//       type: 'FERIE',
+//     },
+//     {
+//       titre: 'Assemblée générale FOSCO',
+//       description: 'Lancement des activités sociales, culturelles, sportives et éducatives du foyer scolaire.',
+//       dateDebut: new Date('2026-02-14'),
+//       type: 'ACTIVITE_FOSCO',
+//     },
+//     {
+//       titre: 'Semaine culturelle et sportive',
+//       description: 'Activités FOSCO, clubs, génie en herbe, théâtre, sport et valorisation des talents.',
+//       dateDebut: new Date('2026-04-20'),
+//       dateFin: new Date('2026-04-25'),
+//       type: 'ACTIVITE_FOSCO',
+//     },
+//     {
+//       titre: 'Clôture administrative de l’année',
+//       description: 'Finalisation des dossiers, archives, bilans pédagogiques et préparation de l’année suivante.',
+//       dateDebut: new Date('2026-07-31'),
+//       type: 'AUTRE',
+//     },
+//   ];
 
-  const sectionEvents = [
-    {
-      sectionCode: 'MATERNELLE',
-      titre: 'Activités d’éveil et fête de la petite enfance',
-      description: 'Activités périscolaires adaptées à la maternelle : chants, dessins, motricité et exposition.',
-      dateDebut: new Date('2026-03-18'),
-      type: 'ACTIVITE_PERISCOLAIRE',
-    },
-    {
-      sectionCode: 'PRIMAIRE',
-      titre: 'Compositions du 1er semestre - Primaire',
-      description: 'Période de compositions du primaire et organisation des corrections.',
-      dateDebut: new Date('2026-01-20'),
-      dateFin: new Date('2026-02-06'),
-      type: 'COMPOSITION',
-    },
-    {
-      sectionCode: 'PRIMAIRE',
-      titre: 'Remise des bulletins - Primaire',
-      description: 'Communication des résultats aux familles après les compositions.',
-      dateDebut: new Date('2026-03-28'),
-      type: 'REMISE_BULLETINS',
-    },
-    {
-      sectionCode: 'PRIMAIRE',
-      titre: 'CFEE et entrée en 6ème - préparation',
-      description: 'Révisions dirigées, encadrement des candidats et organisation administrative.',
-      dateDebut: new Date('2026-05-18'),
-      dateFin: new Date('2026-06-12'),
-      type: 'EXAMEN',
-    },
-    {
-      sectionCode: 'COLLEGE',
-      titre: 'Compositions du 1er semestre - Collège',
-      description: 'Fenêtre des compositions, avec priorité d’organisation pour les classes d’examen.',
-      dateDebut: new Date('2026-01-20'),
-      dateFin: new Date('2026-02-20'),
-      type: 'COMPOSITION',
-    },
-    {
-      sectionCode: 'COLLEGE',
-      titre: 'Conseils de classe - Collège',
-      description: 'Bilan du travail et de la vie des classes, appréciations et décisions pédagogiques.',
-      dateDebut: new Date('2026-03-16'),
-      dateFin: new Date('2026-03-21'),
-      type: 'CONSEIL_CLASSE',
-    },
-    {
-      sectionCode: 'COLLEGE',
-      titre: 'BFEM - préparation',
-      description: 'Révisions, examens blancs et suivi des classes de troisième.',
-      dateDebut: new Date('2026-05-25'),
-      dateFin: new Date('2026-06-19'),
-      type: 'EXAMEN',
-    },
-    {
-      sectionCode: 'LYCEE',
-      titre: 'Compositions du 1er semestre - Lycée',
-      description: 'Compositions du lycée, transmission des notes et préparation des conseils.',
-      dateDebut: new Date('2026-01-20'),
-      dateFin: new Date('2026-02-20'),
-      type: 'COMPOSITION',
-    },
-    {
-      sectionCode: 'LYCEE',
-      titre: 'Conseils de classe - Lycée',
-      description: 'Bilan pédagogique, orientation et suivi des classes de première et terminale.',
-      dateDebut: new Date('2026-03-16'),
-      dateFin: new Date('2026-03-21'),
-      type: 'CONSEIL_CLASSE',
-    },
-    {
-      sectionCode: 'LYCEE',
-      titre: 'Baccalauréat - préparation',
-      description: 'Révisions, examens blancs et encadrement des candidats au baccalauréat.',
-      dateDebut: new Date('2026-05-25'),
-      dateFin: new Date('2026-06-26'),
-      type: 'EXAMEN',
-    },
-  ];
+//   const sectionEvents = [
+//     {
+//       sectionCode: 'MATERNELLE',
+//       titre: 'Activités d’éveil et fête de la petite enfance',
+//       description: 'Activités périscolaires adaptées à la maternelle : chants, dessins, motricité et exposition.',
+//       dateDebut: new Date('2026-03-18'),
+//       type: 'ACTIVITE_PERISCOLAIRE',
+//     },
+//     {
+//       sectionCode: 'PRIMAIRE',
+//       titre: 'Compositions du 1er semestre - Primaire',
+//       description: 'Période de compositions du primaire et organisation des corrections.',
+//       dateDebut: new Date('2026-01-20'),
+//       dateFin: new Date('2026-02-06'),
+//       type: 'COMPOSITION',
+//     },
+//     {
+//       sectionCode: 'PRIMAIRE',
+//       titre: 'Remise des bulletins - Primaire',
+//       description: 'Communication des résultats aux familles après les compositions.',
+//       dateDebut: new Date('2026-03-28'),
+//       type: 'REMISE_BULLETINS',
+//     },
+//     {
+//       sectionCode: 'PRIMAIRE',
+//       titre: 'CFEE et entrée en 6ème - préparation',
+//       description: 'Révisions dirigées, encadrement des candidats et organisation administrative.',
+//       dateDebut: new Date('2026-05-18'),
+//       dateFin: new Date('2026-06-12'),
+//       type: 'EXAMEN',
+//     },
+//     {
+//       sectionCode: 'COLLEGE',
+//       titre: 'Compositions du 1er semestre - Collège',
+//       description: 'Fenêtre des compositions, avec priorité d’organisation pour les classes d’examen.',
+//       dateDebut: new Date('2026-01-20'),
+//       dateFin: new Date('2026-02-20'),
+//       type: 'COMPOSITION',
+//     },
+//     {
+//       sectionCode: 'COLLEGE',
+//       titre: 'Conseils de classe - Collège',
+//       description: 'Bilan du travail et de la vie des classes, appréciations et décisions pédagogiques.',
+//       dateDebut: new Date('2026-03-16'),
+//       dateFin: new Date('2026-03-21'),
+//       type: 'CONSEIL_CLASSE',
+//     },
+//     {
+//       sectionCode: 'COLLEGE',
+//       titre: 'BFEM - préparation',
+//       description: 'Révisions, examens blancs et suivi des classes de troisième.',
+//       dateDebut: new Date('2026-05-25'),
+//       dateFin: new Date('2026-06-19'),
+//       type: 'EXAMEN',
+//     },
+//     {
+//       sectionCode: 'LYCEE',
+//       titre: 'Compositions du 1er semestre - Lycée',
+//       description: 'Compositions du lycée, transmission des notes et préparation des conseils.',
+//       dateDebut: new Date('2026-01-20'),
+//       dateFin: new Date('2026-02-20'),
+//       type: 'COMPOSITION',
+//     },
+//     {
+//       sectionCode: 'LYCEE',
+//       titre: 'Conseils de classe - Lycée',
+//       description: 'Bilan pédagogique, orientation et suivi des classes de première et terminale.',
+//       dateDebut: new Date('2026-03-16'),
+//       dateFin: new Date('2026-03-21'),
+//       type: 'CONSEIL_CLASSE',
+//     },
+//     {
+//       sectionCode: 'LYCEE',
+//       titre: 'Baccalauréat - préparation',
+//       description: 'Révisions, examens blancs et encadrement des candidats au baccalauréat.',
+//       dateDebut: new Date('2026-05-25'),
+//       dateFin: new Date('2026-06-26'),
+//       type: 'EXAMEN',
+//     },
+//   ];
 
-  const created = [];
-  for (const event of globalEvents) {
-    created.push(await upsertCalendrierEvent(tenantId, event));
-  }
-  for (const event of sectionEvents) {
-    const section = sectionByCode.get(event.sectionCode);
-    if (!section) continue;
-    created.push(await upsertCalendrierEvent(tenantId, {
-      ...event,
-      sectionId: section.id,
-    }));
-  }
+//   const created = [];
+//   for (const event of globalEvents) {
+//     created.push(await upsertCalendrierEvent(tenantId, event));
+//   }
+//   for (const event of sectionEvents) {
+//     const section = sectionByCode.get(event.sectionCode);
+//     if (!section) continue;
+//     created.push(await upsertCalendrierEvent(tenantId, {
+//       ...event,
+//       sectionId: section.id,
+//     }));
+//   }
 
-  return created;
-}
+//   return created;
+// }
 
-async function ensureActiveClasseStagiaire(tenantId, classeId, stagiaireId) {
-  const active = await prisma.classeStagiaire.findFirst({
-    where: { classeId, stagiaireId, actif: true, dateFin: null },
-  });
-  if (active) return active;
+// async function ensureActiveClasseStagiaire(tenantId, classeId, stagiaireId) {
+//   const active = await prisma.classeStagiaire.findFirst({
+//     where: { classeId, stagiaireId, actif: true, dateFin: null },
+//   });
+//   if (active) return active;
 
-  return prisma.classeStagiaire.create({
-    data: {
-      tenantId,
-      classeId,
-      stagiaireId,
-      dateDebut: new Date(),
-      actif: true,
-    },
-  });
-}
+//   return prisma.classeStagiaire.create({
+//     data: {
+//       tenantId,
+//       classeId,
+//       stagiaireId,
+//       dateDebut: new Date(),
+//       actif: true,
+//     },
+//   });
+// }
 
 async function upsertTenantUser(tenantId, user, passwordHash) {
   const email = user.email || emailFromName(user.prenom, user.nom);
@@ -473,180 +475,180 @@ async function upsertTenantUser(tenantId, user, passwordHash) {
   return prisma.user.create({ data: baseData });
 }
 
-async function upsertPlatformUser(user, passwordHash) {
-  const existing = await prisma.plateformeUtilisateur.findFirst({
-    where: { email: user.email },
-  });
+// async function upsertPlatformUser(user, passwordHash) {
+//   const existing = await prisma.plateformeUtilisateur.findFirst({
+//     where: { email: user.email },
+//   });
 
-  const data = {
-    nom: user.nom,
-    prenom: user.prenom,
-    email: user.email,
-    telephone: seedPhone(user.telephone),
-    motDePasse: passwordHash,
-    rolePlateforme: user.role,
-    actif: true,
-  };
+//   const data = {
+//     nom: user.nom,
+//     prenom: user.prenom,
+//     email: user.email,
+//     telephone: seedPhone(user.telephone),
+//     motDePasse: passwordHash,
+//     rolePlateforme: user.role,
+//     actif: true,
+//   };
 
-  if (existing) {
-    return prisma.plateformeUtilisateur.update({
-      where: { id: existing.id },
-      data,
-    });
-  }
+//   if (existing) {
+//     return prisma.plateformeUtilisateur.update({
+//       where: { id: existing.id },
+//       data,
+//     });
+//   }
 
-  return prisma.plateformeUtilisateur.create({ data });
-}
+//   return prisma.plateformeUtilisateur.create({ data });
+// }
 
-async function seedBulkEleves(tenantId, schoolYear, seededClasses, adminId, passwordHash) {
-  const classeByNom = new Map(seededClasses.map((c) => [c.nom, c]));
+// async function seedBulkEleves(tenantId, schoolYear, seededClasses, adminId, passwordHash) {
+//   const classeByNom = new Map(seededClasses.map((c) => [c.nom, c]));
 
-  // 66 students across all levels — (nom, prenom, genre, niveauNom, classeNom, dateNaissance)
-  const bulkEleves = [
-    // CI A (5 more besides the 3 already seeded)
-    { prenom: 'Moussa',   nom: 'Diop',    genre: 'M', classe: 'CI A', dob: '2015-03-12', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Fatou',    nom: 'Sow',     genre: 'F', classe: 'CI A', dob: '2015-07-22', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Omar',     nom: 'Faye',    genre: 'M', classe: 'CI A', dob: '2015-01-05', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Coumba',   nom: 'Ndiaye',  genre: 'F', classe: 'CI A', dob: '2015-09-18', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Aliou',    nom: 'Gueye',   genre: 'M', classe: 'CI A', dob: '2015-11-30', phone: SEED_PHONE_NUMBER },
-    // CP A
-    { prenom: 'Ibrahima', nom: 'Thiam',   genre: 'M', classe: 'CP A', dob: '2014-04-14', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Mariama',  nom: 'Fall',    genre: 'F', classe: 'CP A', dob: '2014-08-27', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Cheikh',   nom: 'Mbaye',   genre: 'M', classe: 'CP A', dob: '2014-02-03', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Adja',     nom: 'Sy',      genre: 'F', classe: 'CP A', dob: '2014-12-19', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Modou',    nom: 'Diouf',   genre: 'M', classe: 'CP A', dob: '2014-06-08', phone: SEED_PHONE_NUMBER },
-    // CE1 A
-    { prenom: 'Khady',    nom: 'Camara',  genre: 'F', classe: 'CE1 A', dob: '2013-05-21', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Babacar',  nom: 'Badji',   genre: 'M', classe: 'CE1 A', dob: '2013-10-10', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Seynabou', nom: 'Cisse',   genre: 'F', classe: 'CE1 A', dob: '2013-03-07', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Pape',     nom: 'Toure',   genre: 'M', classe: 'CE1 A', dob: '2013-08-15', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Yacine',   nom: 'Mboup',   genre: 'F', classe: 'CE1 A', dob: '2013-01-29', phone: SEED_PHONE_NUMBER },
-    // CE2 A
-    { prenom: 'Samba',    nom: 'Dione',   genre: 'M', classe: 'CE2 A', dob: '2012-07-04', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Rama',     nom: 'Mendy',   genre: 'F', classe: 'CE2 A', dob: '2012-11-17', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Alioune',  nom: 'Ndoye',   genre: 'M', classe: 'CE2 A', dob: '2012-04-25', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Penda',    nom: 'Samb',    genre: 'F', classe: 'CE2 A', dob: '2012-09-02', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Seydou',   nom: 'Niang',   genre: 'M', classe: 'CE2 A', dob: '2012-02-13', phone: SEED_PHONE_NUMBER },
-    // CM1 A
-    { prenom: 'Aminata',  nom: 'Coly',    genre: 'F', classe: 'CM1 A', dob: '2011-06-16', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Malick',   nom: 'Bassene', genre: 'M', classe: 'CM1 A', dob: '2011-10-28', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Sokhna',   nom: 'Diop',    genre: 'F', classe: 'CM1 A', dob: '2011-03-03', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Tapha',    nom: 'Fall',    genre: 'M', classe: 'CM1 A', dob: '2011-12-20', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Binta',    nom: 'Sow',     genre: 'F', classe: 'CM1 A', dob: '2011-07-09', phone: SEED_PHONE_NUMBER },
-    // CM2 A
-    { prenom: 'Thierno',  nom: 'Gueye',   genre: 'M', classe: 'CM2 A', dob: '2010-05-14', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Mame',     nom: 'Ndiaye',  genre: 'F', classe: 'CM2 A', dob: '2010-09-22', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Assane',   nom: 'Thiam',   genre: 'M', classe: 'CM2 A', dob: '2010-02-17', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Dior',     nom: 'Faye',    genre: 'F', classe: 'CM2 A', dob: '2010-11-05', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Boubacar', nom: 'Mbaye',   genre: 'M', classe: 'CM2 A', dob: '2010-04-30', phone: SEED_PHONE_NUMBER },
-    // 6ème A
-    { prenom: 'Ndiaga',   nom: 'Sarr',    genre: 'M', classe: '6ème A', dob: '2009-08-11', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Aissatou', nom: 'Kane',    genre: 'F', classe: '6ème A', dob: '2009-01-24', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Mor',      nom: 'Diouf',   genre: 'M', classe: '6ème A', dob: '2009-06-06', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Marème',   nom: 'Camara',  genre: 'F', classe: '6ème A', dob: '2009-12-15', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Lamine',   nom: 'Cisse',   genre: 'M', classe: '6ème A', dob: '2009-04-03', phone: SEED_PHONE_NUMBER },
-    // 5ème A
-    { prenom: 'Fatou',    nom: 'Toure',   genre: 'F', classe: '5ème A', dob: '2008-07-19', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Fallou',   nom: 'Ndoye',   genre: 'M', classe: '5ème A', dob: '2008-02-28', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Soda',     nom: 'Samb',    genre: 'F', classe: '5ème A', dob: '2008-10-07', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Saliou',   nom: 'Niang',   genre: 'M', classe: '5ème A', dob: '2008-05-12', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Fanta',    nom: 'Diop',    genre: 'F', classe: '5ème A', dob: '2008-09-23', phone: SEED_PHONE_NUMBER },
-    // 4ème A
-    { prenom: 'Momar',    nom: 'Sy',      genre: 'M', classe: '4ème A', dob: '2007-03-16', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Yaye',     nom: 'Gueye',   genre: 'F', classe: '4ème A', dob: '2007-11-04', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Biram',    nom: 'Fall',    genre: 'M', classe: '4ème A', dob: '2007-06-27', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Maty',     nom: 'Badji',   genre: 'F', classe: '4ème A', dob: '2007-01-09', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Idy',      nom: 'Mendy',   genre: 'M', classe: '4ème A', dob: '2007-08-21', phone: SEED_PHONE_NUMBER },
-    // 3ème A
-    { prenom: 'Rokhaya',  nom: 'Thiam',   genre: 'F', classe: '3ème A', dob: '2006-04-14', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Bocar',    nom: 'Mboup',   genre: 'M', classe: '3ème A', dob: '2006-10-30', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Ndéye',    nom: 'Dione',   genre: 'F', classe: '3ème A', dob: '2006-07-03', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Gora',     nom: 'Coly',    genre: 'M', classe: '3ème A', dob: '2006-02-18', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Mariama',  nom: 'Bassene', genre: 'F', classe: '3ème A', dob: '2006-12-08', phone: SEED_PHONE_NUMBER },
-    // Seconde A
-    { prenom: 'Serigne',  nom: 'Sarr',    genre: 'M', classe: 'Seconde A', dob: '2005-05-25', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Aminata',  nom: 'Ndiaye',  genre: 'F', classe: 'Seconde A', dob: '2005-09-14', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Bamba',    nom: 'Kane',    genre: 'M', classe: 'Seconde A', dob: '2005-03-07', phone: SEED_PHONE_NUMBER },
-    // Première A
-    { prenom: 'Coumba',   nom: 'Diallo',  genre: 'F', classe: 'Première A', dob: '2004-06-11', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Ousmane',  nom: 'Faye',    genre: 'M', classe: 'Première A', dob: '2004-11-02', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Khady',    nom: 'Toure',   genre: 'F', classe: 'Première A', dob: '2004-04-19', phone: SEED_PHONE_NUMBER },
-    // Terminale A
-    { prenom: 'Ibou',     nom: 'Diop',    genre: 'M', classe: 'Terminale A', dob: '2003-08-08', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Fatou',    nom: 'Sall',    genre: 'F', classe: 'Terminale A', dob: '2003-02-22', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Moussa',   nom: 'Camara',  genre: 'M', classe: 'Terminale A', dob: '2003-12-01', phone: SEED_PHONE_NUMBER },
-    // Petite Section A
-    { prenom: 'Lissa',    nom: 'Ndiaye',  genre: 'F', classe: 'Petite Section A', dob: '2021-04-10', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Elhadj',   nom: 'Sow',     genre: 'M', classe: 'Petite Section A', dob: '2021-07-15', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Nena',     nom: 'Gueye',   genre: 'F', classe: 'Petite Section A', dob: '2021-01-28', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Khadim',   nom: 'Fall',    genre: 'M', classe: 'Petite Section A', dob: '2021-10-05', phone: SEED_PHONE_NUMBER },
-    // Moyenne Section A
-    { prenom: 'Tida',     nom: 'Mbaye',   genre: 'F', classe: 'Moyenne Section A', dob: '2020-05-20', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Ousseynou',nom: 'Thiam',   genre: 'M', classe: 'Moyenne Section A', dob: '2020-09-03', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Rouba',    nom: 'Cisse',   genre: 'F', classe: 'Moyenne Section A', dob: '2020-03-17', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Mourtalla', nom: 'Diouf',  genre: 'M', classe: 'Moyenne Section A', dob: '2020-11-29', phone: SEED_PHONE_NUMBER },
-    // Grande Section A
-    { prenom: 'Ndéye',    nom: 'Camara',  genre: 'F', classe: 'Grande Section A', dob: '2019-06-08', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Seybatou', nom: 'Sarr',    genre: 'M', classe: 'Grande Section A', dob: '2019-02-14', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Fatoumata',nom: 'Kane',    genre: 'F', classe: 'Grande Section A', dob: '2019-10-22', phone: SEED_PHONE_NUMBER },
-    { prenom: 'Elton',    nom: 'Diallo',  genre: 'M', classe: 'Grande Section A', dob: '2019-07-31', phone: SEED_PHONE_NUMBER },
-  ];
+//   // 66 students across all levels — (nom, prenom, genre, niveauNom, classeNom, dateNaissance)
+//   const bulkEleves = [
+//     // CI A (5 more besides the 3 already seeded)
+//     { prenom: 'Moussa',   nom: 'Diop',    genre: 'M', classe: 'CI A', dob: '2015-03-12', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Fatou',    nom: 'Sow',     genre: 'F', classe: 'CI A', dob: '2015-07-22', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Omar',     nom: 'Faye',    genre: 'M', classe: 'CI A', dob: '2015-01-05', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Coumba',   nom: 'Ndiaye',  genre: 'F', classe: 'CI A', dob: '2015-09-18', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Aliou',    nom: 'Gueye',   genre: 'M', classe: 'CI A', dob: '2015-11-30', phone: SEED_PHONE_NUMBER },
+//     // CP A
+//     { prenom: 'Ibrahima', nom: 'Thiam',   genre: 'M', classe: 'CP A', dob: '2014-04-14', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Mariama',  nom: 'Fall',    genre: 'F', classe: 'CP A', dob: '2014-08-27', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Cheikh',   nom: 'Mbaye',   genre: 'M', classe: 'CP A', dob: '2014-02-03', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Adja',     nom: 'Sy',      genre: 'F', classe: 'CP A', dob: '2014-12-19', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Modou',    nom: 'Diouf',   genre: 'M', classe: 'CP A', dob: '2014-06-08', phone: SEED_PHONE_NUMBER },
+//     // CE1 A
+//     { prenom: 'Khady',    nom: 'Camara',  genre: 'F', classe: 'CE1 A', dob: '2013-05-21', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Babacar',  nom: 'Badji',   genre: 'M', classe: 'CE1 A', dob: '2013-10-10', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Seynabou', nom: 'Cisse',   genre: 'F', classe: 'CE1 A', dob: '2013-03-07', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Pape',     nom: 'Toure',   genre: 'M', classe: 'CE1 A', dob: '2013-08-15', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Yacine',   nom: 'Mboup',   genre: 'F', classe: 'CE1 A', dob: '2013-01-29', phone: SEED_PHONE_NUMBER },
+//     // CE2 A
+//     { prenom: 'Samba',    nom: 'Dione',   genre: 'M', classe: 'CE2 A', dob: '2012-07-04', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Rama',     nom: 'Mendy',   genre: 'F', classe: 'CE2 A', dob: '2012-11-17', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Alioune',  nom: 'Ndoye',   genre: 'M', classe: 'CE2 A', dob: '2012-04-25', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Penda',    nom: 'Samb',    genre: 'F', classe: 'CE2 A', dob: '2012-09-02', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Seydou',   nom: 'Niang',   genre: 'M', classe: 'CE2 A', dob: '2012-02-13', phone: SEED_PHONE_NUMBER },
+//     // CM1 A
+//     { prenom: 'Aminata',  nom: 'Coly',    genre: 'F', classe: 'CM1 A', dob: '2011-06-16', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Malick',   nom: 'Bassene', genre: 'M', classe: 'CM1 A', dob: '2011-10-28', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Sokhna',   nom: 'Diop',    genre: 'F', classe: 'CM1 A', dob: '2011-03-03', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Tapha',    nom: 'Fall',    genre: 'M', classe: 'CM1 A', dob: '2011-12-20', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Binta',    nom: 'Sow',     genre: 'F', classe: 'CM1 A', dob: '2011-07-09', phone: SEED_PHONE_NUMBER },
+//     // CM2 A
+//     { prenom: 'Thierno',  nom: 'Gueye',   genre: 'M', classe: 'CM2 A', dob: '2010-05-14', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Mame',     nom: 'Ndiaye',  genre: 'F', classe: 'CM2 A', dob: '2010-09-22', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Assane',   nom: 'Thiam',   genre: 'M', classe: 'CM2 A', dob: '2010-02-17', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Dior',     nom: 'Faye',    genre: 'F', classe: 'CM2 A', dob: '2010-11-05', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Boubacar', nom: 'Mbaye',   genre: 'M', classe: 'CM2 A', dob: '2010-04-30', phone: SEED_PHONE_NUMBER },
+//     // 6ème A
+//     { prenom: 'Ndiaga',   nom: 'Sarr',    genre: 'M', classe: '6ème A', dob: '2009-08-11', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Aissatou', nom: 'Kane',    genre: 'F', classe: '6ème A', dob: '2009-01-24', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Mor',      nom: 'Diouf',   genre: 'M', classe: '6ème A', dob: '2009-06-06', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Marème',   nom: 'Camara',  genre: 'F', classe: '6ème A', dob: '2009-12-15', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Lamine',   nom: 'Cisse',   genre: 'M', classe: '6ème A', dob: '2009-04-03', phone: SEED_PHONE_NUMBER },
+//     // 5ème A
+//     { prenom: 'Fatou',    nom: 'Toure',   genre: 'F', classe: '5ème A', dob: '2008-07-19', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Fallou',   nom: 'Ndoye',   genre: 'M', classe: '5ème A', dob: '2008-02-28', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Soda',     nom: 'Samb',    genre: 'F', classe: '5ème A', dob: '2008-10-07', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Saliou',   nom: 'Niang',   genre: 'M', classe: '5ème A', dob: '2008-05-12', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Fanta',    nom: 'Diop',    genre: 'F', classe: '5ème A', dob: '2008-09-23', phone: SEED_PHONE_NUMBER },
+//     // 4ème A
+//     { prenom: 'Momar',    nom: 'Sy',      genre: 'M', classe: '4ème A', dob: '2007-03-16', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Yaye',     nom: 'Gueye',   genre: 'F', classe: '4ème A', dob: '2007-11-04', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Biram',    nom: 'Fall',    genre: 'M', classe: '4ème A', dob: '2007-06-27', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Maty',     nom: 'Badji',   genre: 'F', classe: '4ème A', dob: '2007-01-09', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Idy',      nom: 'Mendy',   genre: 'M', classe: '4ème A', dob: '2007-08-21', phone: SEED_PHONE_NUMBER },
+//     // 3ème A
+//     { prenom: 'Rokhaya',  nom: 'Thiam',   genre: 'F', classe: '3ème A', dob: '2006-04-14', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Bocar',    nom: 'Mboup',   genre: 'M', classe: '3ème A', dob: '2006-10-30', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Ndéye',    nom: 'Dione',   genre: 'F', classe: '3ème A', dob: '2006-07-03', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Gora',     nom: 'Coly',    genre: 'M', classe: '3ème A', dob: '2006-02-18', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Mariama',  nom: 'Bassene', genre: 'F', classe: '3ème A', dob: '2006-12-08', phone: SEED_PHONE_NUMBER },
+//     // Seconde A
+//     { prenom: 'Serigne',  nom: 'Sarr',    genre: 'M', classe: 'Seconde A', dob: '2005-05-25', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Aminata',  nom: 'Ndiaye',  genre: 'F', classe: 'Seconde A', dob: '2005-09-14', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Bamba',    nom: 'Kane',    genre: 'M', classe: 'Seconde A', dob: '2005-03-07', phone: SEED_PHONE_NUMBER },
+//     // Première A
+//     { prenom: 'Coumba',   nom: 'Diallo',  genre: 'F', classe: 'Première A', dob: '2004-06-11', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Ousmane',  nom: 'Faye',    genre: 'M', classe: 'Première A', dob: '2004-11-02', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Khady',    nom: 'Toure',   genre: 'F', classe: 'Première A', dob: '2004-04-19', phone: SEED_PHONE_NUMBER },
+//     // Terminale A
+//     { prenom: 'Ibou',     nom: 'Diop',    genre: 'M', classe: 'Terminale A', dob: '2003-08-08', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Fatou',    nom: 'Sall',    genre: 'F', classe: 'Terminale A', dob: '2003-02-22', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Moussa',   nom: 'Camara',  genre: 'M', classe: 'Terminale A', dob: '2003-12-01', phone: SEED_PHONE_NUMBER },
+//     // Petite Section A
+//     { prenom: 'Lissa',    nom: 'Ndiaye',  genre: 'F', classe: 'Petite Section A', dob: '2021-04-10', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Elhadj',   nom: 'Sow',     genre: 'M', classe: 'Petite Section A', dob: '2021-07-15', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Nena',     nom: 'Gueye',   genre: 'F', classe: 'Petite Section A', dob: '2021-01-28', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Khadim',   nom: 'Fall',    genre: 'M', classe: 'Petite Section A', dob: '2021-10-05', phone: SEED_PHONE_NUMBER },
+//     // Moyenne Section A
+//     { prenom: 'Tida',     nom: 'Mbaye',   genre: 'F', classe: 'Moyenne Section A', dob: '2020-05-20', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Ousseynou',nom: 'Thiam',   genre: 'M', classe: 'Moyenne Section A', dob: '2020-09-03', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Rouba',    nom: 'Cisse',   genre: 'F', classe: 'Moyenne Section A', dob: '2020-03-17', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Mourtalla', nom: 'Diouf',  genre: 'M', classe: 'Moyenne Section A', dob: '2020-11-29', phone: SEED_PHONE_NUMBER },
+//     // Grande Section A
+//     { prenom: 'Ndéye',    nom: 'Camara',  genre: 'F', classe: 'Grande Section A', dob: '2019-06-08', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Seybatou', nom: 'Sarr',    genre: 'M', classe: 'Grande Section A', dob: '2019-02-14', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Fatoumata',nom: 'Kane',    genre: 'F', classe: 'Grande Section A', dob: '2019-10-22', phone: SEED_PHONE_NUMBER },
+//     { prenom: 'Elton',    nom: 'Diallo',  genre: 'M', classe: 'Grande Section A', dob: '2019-07-31', phone: SEED_PHONE_NUMBER },
+//   ];
 
-  let inscriptionCounter = 100;
-  const createdEleves = [];
+//   let inscriptionCounter = 100;
+//   const createdEleves = [];
 
-  for (const eleve of bulkEleves) {
-    const email = `${slugify(eleve.prenom)}.${slugify(eleve.nom)}.${inscriptionCounter}@demo.noura.sn`;
-    const username = `${slugify(eleve.prenom)}.${slugify(eleve.nom)}.${inscriptionCounter}`;
-    const classe = classeByNom.get(eleve.classe);
-    if (!classe) {
-      console.warn(`Classe not found: ${eleve.classe}`);
-      inscriptionCounter += 1;
-      continue;
-    }
+//   for (const eleve of bulkEleves) {
+//     const email = `${slugify(eleve.prenom)}.${slugify(eleve.nom)}.${inscriptionCounter}@demo.noura.sn`;
+//     const username = `${slugify(eleve.prenom)}.${slugify(eleve.nom)}.${inscriptionCounter}`;
+//     const classe = classeByNom.get(eleve.classe);
+//     if (!classe) {
+//       console.warn(`Classe not found: ${eleve.classe}`);
+//       inscriptionCounter += 1;
+//       continue;
+//     }
 
-    const user = await upsertTenantUser(tenantId, {
-      prenom: eleve.prenom,
-      nom: eleve.nom,
-      role: 'ELEVE',
-      telephone: seedPhone(eleve.phone),
-      email,
-      username,
-      matricule: `ELV-2025-${String(inscriptionCounter).padStart(4, '0')}`,
-      dateNaissance: new Date(eleve.dob),
-      genre: eleve.genre,
-      dateInscription: new Date('2025-10-07'),
-      classeId: classe.id,
-    }, passwordHash);
+//     const user = await upsertTenantUser(tenantId, {
+//       prenom: eleve.prenom,
+//       nom: eleve.nom,
+//       role: 'ELEVE',
+//       telephone: seedPhone(eleve.phone),
+//       email,
+//       username,
+//       matricule: `ELV-2025-${String(inscriptionCounter).padStart(4, '0')}`,
+//       dateNaissance: new Date(eleve.dob),
+//       genre: eleve.genre,
+//       dateInscription: new Date('2025-10-07'),
+//       classeId: classe.id,
+//     }, passwordHash);
 
-    await upsertById(
-      'inscription',
-      { numeroInscription: `INS-${SCHOOL_YEAR}-${String(inscriptionCounter).padStart(4, '0')}` },
-      {
-        tenantId,
-        numeroInscription: `INS-${SCHOOL_YEAR}-${String(inscriptionCounter).padStart(4, '0')}`,
-        eleveId: user.id,
-        classeId: classe.id,
-        anneeAcademiqueId: schoolYear.id,
-        statut: 'ACTIF',
-        creePar: adminId,
-      },
-      {
-        tenantId,
-        eleveId: user.id,
-        classeId: classe.id,
-        anneeAcademiqueId: schoolYear.id,
-        statut: 'ACTIF',
-        creePar: adminId,
-      },
-    );
+//     await upsertById(
+//       'inscription',
+//       { numeroInscription: `INS-${SCHOOL_YEAR}-${String(inscriptionCounter).padStart(4, '0')}` },
+//       {
+//         tenantId,
+//         numeroInscription: `INS-${SCHOOL_YEAR}-${String(inscriptionCounter).padStart(4, '0')}`,
+//         eleveId: user.id,
+//         classeId: classe.id,
+//         anneeAcademiqueId: schoolYear.id,
+//         statut: 'ACTIF',
+//         creePar: adminId,
+//       },
+//       {
+//         tenantId,
+//         eleveId: user.id,
+//         classeId: classe.id,
+//         anneeAcademiqueId: schoolYear.id,
+//         statut: 'ACTIF',
+//         creePar: adminId,
+//       },
+//     );
 
-    createdEleves.push(user);
-    inscriptionCounter += 1;
-  }
+//     createdEleves.push(user);
+//     inscriptionCounter += 1;
+//   }
 
-  return createdEleves;
-}
+//   return createdEleves;
+// }
 
 async function main() {
   const passwordHash = await bcrypt.hash(PASSWORD, 12);
@@ -679,6 +681,8 @@ async function main() {
     },
   );
 
+  /* ===== SEEDS DÉSACTIVÉS : structure académique, cycles, niveaux, année, salles, classes,
+     matières et comptes plateforme. On ne crée plus que le tenant et les utilisateurs liés. =====
   await seedDefaultAcademicStructure(tenant.id);
 
   const cycle = await upsertById(
@@ -940,9 +944,10 @@ async function main() {
     { role: 'GESTIONNAIRE', prenom: 'Mariam', nom: 'Sow', telephone: SEED_PHONE_NUMBER, email: 'mariam.sow@demo.noura.sn' },
     { role: 'GESTIONNAIRE', prenom: 'Cheikh', nom: 'Ndiaye', telephone: SEED_PHONE_NUMBER, email: 'cheikh.ndiaye@demo.noura.sn' },
   ];
+  ===== FIN SEEDS DÉSACTIVÉS (structure + comptes plateforme) ===== */
 
   const tenantUsers = [
-    { role: 'ADMIN', prenom: 'Khady', nom: 'Ba', telephone: SEED_PHONE_NUMBER, email: 'khady.ba@demo.noura.sn', username: 'khady.ba' },
+    { role: 'ADMIN', prenom: 'Khady', nom: 'Ba', telephone: SEED_PHONE_NUMBER, email: 'khady.ba@demo.noura.sn', username: '22113543' }, // Directeur — identifiant 22113543
     { role: 'ADMIN', prenom: 'Mamadou', nom: 'Fall', telephone: SEED_PHONE_NUMBER, email: 'mamadou.fall@demo.noura.sn', username: 'mamadou.fall' },
     { role: 'CAISSIER', prenom: 'Fatou', nom: 'Cisse', telephone: SEED_PHONE_NUMBER, email: 'fatou.cisse@demo.noura.sn', username: 'fatou.cisse' },
     { role: 'CAISSIER', prenom: 'Ibrahima', nom: 'Kane', telephone: SEED_PHONE_NUMBER, email: 'ibrahima.kane@demo.noura.sn', username: 'ibrahima.kane' },
@@ -950,9 +955,9 @@ async function main() {
     { role: 'SURVEILLANT', prenom: 'Pape', nom: 'Gaye', telephone: SEED_PHONE_NUMBER, email: 'pape.gaye@demo.noura.sn', username: 'pape.gaye' },
     { role: 'ENSEIGNANT', prenom: 'Ousmane', nom: 'Diouf', telephone: SEED_PHONE_NUMBER, email: 'ousmane.diouf@demo.noura.sn', username: 'ousmane.diouf', specialite: 'Mathematiques', dateEmbauche: new Date('2023-09-01') },
     { role: 'ENSEIGNANT', prenom: 'Adja', nom: 'Sarr', telephone: SEED_PHONE_NUMBER, email: 'adja.sarr@demo.noura.sn', username: 'adja.sarr', specialite: 'Francais', dateEmbauche: new Date('2024-10-01') },
-    { role: 'ELEVE', prenom: 'Amadou', nom: 'Kane', telephone: SEED_PHONE_NUMBER, email: 'amadou.kane@demo.noura.sn', username: 'amadou.kane', matricule: 'ELV-2025-0001', dateNaissance: new Date('2014-02-18'), genre: 'M', numeroUrgence: SEED_PHONE_NUMBER, dateInscription: new Date('2025-10-05'), classeId: classeCIA.id },
-    { role: 'ELEVE', prenom: 'Awa', nom: 'Diallo', telephone: SEED_PHONE_NUMBER, email: 'awa.diallo@demo.noura.sn', username: 'awa.diallo', matricule: 'ELV-2025-0002', dateNaissance: new Date('2014-06-09'), genre: 'F', numeroUrgence: SEED_PHONE_NUMBER, dateInscription: new Date('2025-10-05'), classeId: classeCIA.id },
-    { role: 'ELEVE', prenom: 'amadou', nom: 'Ba', telephone: SEED_PHONE_NUMBER, email: 'baamadou@gmail.com', username: 'amadou.ba', matricule: null, dateNaissance: new Date('2014-05-20'), genre: 'M', numeroUrgence: SEED_PHONE_NUMBER, dateInscription: new Date('2025-10-05'), classeId: classeCIA.id },
+    { role: 'ELEVE', prenom: 'Amadou', nom: 'Kane', telephone: SEED_PHONE_NUMBER, email: 'amadou.kane@demo.noura.sn', username: 'amadou.kane', matricule: 'ELV-2025-0001', dateNaissance: new Date('2014-02-18'), genre: 'M', numeroUrgence: SEED_PHONE_NUMBER, dateInscription: new Date('2025-10-05'), classeId: null },
+    { role: 'ELEVE', prenom: 'Awa', nom: 'Diallo', telephone: SEED_PHONE_NUMBER, email: 'awa.diallo@demo.noura.sn', username: 'awa.diallo', matricule: 'ELV-2025-0002', dateNaissance: new Date('2014-06-09'), genre: 'F', numeroUrgence: SEED_PHONE_NUMBER, dateInscription: new Date('2025-10-05'), classeId: null },
+    { role: 'ELEVE', prenom: 'amadou', nom: 'Ba', telephone: SEED_PHONE_NUMBER, email: 'baamadou@gmail.com', username: 'amadou.ba', matricule: null, dateNaissance: new Date('2014-05-20'), genre: 'M', numeroUrgence: SEED_PHONE_NUMBER, dateInscription: new Date('2025-10-05'), classeId: null },
     { role: 'PARENT', prenom: 'Mamadou', nom: 'Ndiaye', telephone: SEED_PHONE_NUMBER, email: 'mamadou.ndiaye@demo.noura.sn', username: 'mamadou.ndiaye', profession: 'Commercant', lieuTravail: 'Sandaga', telephoneTravail: SEED_PHONE_NUMBER, lienParente: 'PERE' },
     { role: 'PARENT', prenom: 'Aminata', nom: 'Ba', telephone: SEED_PHONE_NUMBER, email: 'aminata.ba@demo.noura.sn', username: 'aminata.ba', profession: 'Assistante de direction', lieuTravail: 'Plateau', telephoneTravail: SEED_PHONE_NUMBER, lienParente: 'MERE' },
     { role: 'PARENT', prenom: 'Ibrahima', nom: 'Ba', telephone: SEED_PHONE_NUMBER, email: 'ibrahima.ba@demo.noura.sn', username: 'ibrahima.ba', profession: 'Fonctionnaire', lieuTravail: 'Dakar', telephoneTravail: SEED_PHONE_NUMBER, lienParente: 'PERE' },
@@ -960,16 +965,19 @@ async function main() {
     { role: 'RH', prenom: 'Khadim', nom: 'Thiam', telephone: SEED_PHONE_NUMBER, email: 'khadim.thiam@demo.noura.sn', username: 'khadim.thiam' },
   ];
 
-  const platformRecords = [];
-  for (const user of platformUsers) {
-    platformRecords.push(await upsertPlatformUser(user, passwordHash));
-  }
+  // ===== Comptes plateforme désactivés (sans tenantId) =====
+  // const platformRecords = [];
+  // for (const user of platformUsers) {
+  //   platformRecords.push(await upsertPlatformUser(user, passwordHash));
+  // }
 
   const tenantRecords = [];
   for (const user of tenantUsers) {
     tenantRecords.push(await upsertTenantUser(tenant.id, user, passwordHash));
   }
 
+  /* ===== POST-TRAITEMENTS DÉSACTIVÉS : affectations profs, personnel, absences, surveillants,
+     inscriptions, notes, liens parents, réclamations, EDT/cours, calendrier, élèves en masse. =====
   const recordsByEmail = new Map(tenantRecords.map((record) => [record.email, record]));
   const teacherOusmane = recordsByEmail.get('ousmane.diouf@demo.noura.sn');
   const teacherAdja = recordsByEmail.get('adja.sarr@demo.noura.sn');
@@ -1036,10 +1044,10 @@ async function main() {
         classe: { niveau: { cycle: { code: { notIn: ['MATERNELLE', 'PRIMAIRE'] } } } },
       },
     });
-    await prisma.emploiDuTemps.deleteMany({ where: { tenantId: tenant.id, classeId: classeCIA.id } });
+    await prisma.emploiDuTemps.deleteMany({ where: { tenantId: tenant.id, classeId: null } });
 
     // 4. Supprimer les stagiaires (pas de sens pour cycle simple)
-    await prisma.classeStagiaire.deleteMany({ where: { classeId: classeCIA.id } });
+    await prisma.classeStagiaire.deleteMany({ where: { classeId: null } });
     await prisma.classeStagiaire.deleteMany({ where: { classeId: classeCPA.id } });
   }
 
@@ -1202,7 +1210,7 @@ async function main() {
         tenantId: tenant.id,
         numeroInscription: `INS-${SCHOOL_YEAR}-${String(index + 1).padStart(4, '0')}`,
         eleveId: student.id,
-        classeId: classeCIA.id,
+        classeId: null,
         anneeAcademiqueId: schoolYear.id,
         statut: 'ACTIF',
         creePar: adminKhady.id,
@@ -1210,7 +1218,7 @@ async function main() {
       {
         tenantId: tenant.id,
         eleveId: student.id,
-        classeId: classeCIA.id,
+        classeId: null,
         anneeAcademiqueId: schoolYear.id,
         statut: 'ACTIF',
         creePar: adminKhady.id,
@@ -1306,7 +1314,7 @@ async function main() {
         tenantId: tenant.id,
         numeroInscription: `INS-${SCHOOL_YEAR}-0003`,
         eleveId: eleveAmadouBa.id,
-        classeId: classeCIA.id,
+        classeId: null,
         anneeAcademiqueId: schoolYear.id,
         statut: 'ACTIF',
         creePar: adminKhady.id,
@@ -1314,7 +1322,7 @@ async function main() {
       {
         tenantId: tenant.id,
         eleveId: eleveAmadouBa.id,
-        classeId: classeCIA.id,
+        classeId: null,
         anneeAcademiqueId: schoolYear.id,
         statut: 'ACTIF',
         creePar: adminKhady.id,
@@ -1475,9 +1483,9 @@ async function main() {
 
   // ── EDT pour CI A (primaire : matières sur créneaux fixes) ─────────
   if (teacherAdja) {
-    await prisma.emploiDuTemps.deleteMany({ where: { tenantId: tenant.id, classeId: classeCIA.id } });
+    await prisma.emploiDuTemps.deleteMany({ where: { tenantId: tenant.id, classeId: null } });
     const existingGeneral = await prisma.cours.findMany({
-      where: { tenantId: tenant.id, classeId: classeCIA.id, enseignantId: teacherAdja.id, matiereId: matiereCoursGeneral.id },
+      where: { tenantId: tenant.id, classeId: null, enseignantId: teacherAdja.id, matiereId: matiereCoursGeneral.id },
       select: { id: true },
     });
     if (existingGeneral.length) {
@@ -1485,7 +1493,7 @@ async function main() {
       await prisma.cours.deleteMany({ where: { id: { in: existingGeneral.map((c) => c.id) } } });
     }
     await prisma.matiereClasse.deleteMany({
-      where: { tenantId: tenant.id, classeId: classeCIA.id, enseignantId: teacherAdja.id, matiereId: matiereCoursGeneral.id },
+      where: { tenantId: tenant.id, classeId: null, enseignantId: teacherAdja.id, matiereId: matiereCoursGeneral.id },
     });
 
     const coursFrancaisPrimaire = await upsertCours(matiereFrancais.id, teacherAdja.id, classeCIA.id, 6, 2);
@@ -1655,6 +1663,20 @@ async function main() {
     console.log(`- Eleve amadou Ba: ID=${eleveAmadouBa.id} | email=baamadou@gmail.com | classe=CI A | 18 notes (moy=15.5)`);
   }
   console.log(`- Bulk eleves created: ${bulkElevesCreated.length} students across all classes`);
+  ===== FIN POST-TRAITEMENTS DÉSACTIVÉS ===== */
+
+  console.log(`Tenant: ${tenant.nom} (${tenant.slug})`);
+  console.log(`Tenant ID: ${tenant.id}`);
+  console.log(`Password utilisé pour tous les comptes: ${PASSWORD}`);
+  console.log('');
+  console.log('Comptes (utilisateurs liés au tenant)');
+  for (const user of tenantRecords) {
+    const parts = [`- ${user.firstName} ${user.lastName}`, `role=${user.role}`];
+    if (user.username) parts.push(`identifiant=${user.username}`);
+    if (user.email) parts.push(`email=${user.email}`);
+    parts.push(`password=${PASSWORD}`);
+    console.log(parts.join(' | '));
+  }
 }
 
 main()
