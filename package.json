@@ -15,6 +15,7 @@
     "test:cov": "jest --coverage",
     "setup:seed": "npx prisma generate && npx prisma db push && npm run seed",
     "seed": "node scripts/seed.cjs",
+    "db:clear": "node scripts/clear-db.cjs",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio"
