@@ -26,33 +26,55 @@ export class ParentController {
   }
 
   @Get('enfants/:eleveId/profil')
-  enfantProfil(@Headers('x-tenant-id') tenantId: string, @Param('eleveId') eleveId: string) {
-    return this.crud.findOne(this.crud.v1Config('eleves'), tenantId, eleveId);
+  async enfantProfil(@CurrentUser() user: JwtUser, @Param('eleveId') eleveId: string) {
+    await this.domain.assertParentChild(user.sub, eleveId);
+    return this.domain.studentProfil(eleveId);
   }
 
   @Get('enfants/:eleveId/notes')
-  enfantNotes(@Headers('x-tenant-id') tenantId: string, @Param('eleveId') eleveId: string, @Query() query: QueryParams) {
-    return this.crud.findAll(this.crud.v1Config('notes'), tenantId, { ...query, eleveId });
+  async enfantNotes(
+    @Headers('x-tenant-id') tenantId: string,
+    @CurrentUser() user: JwtUser,
+    @Param('eleveId') eleveId: string,
+    @Query() query: QueryParams,
+  ) {
+    await this.domain.assertParentChild(user.sub, eleveId);
+    return this.domain.studentNotes(tenantId, eleveId, typeof query.trimestre === 'string' ? query.trimestre : undefined);
   }
 
   @Get('enfants/:eleveId/bulletins')
-  enfantBulletins(@Headers('x-tenant-id') tenantId: string, @Param('eleveId') eleveId: string, @Query() query: QueryParams) {
-    return this.crud.findAll(this.crud.v1Config('bulletins'), tenantId, { ...query, eleveId });
+  async enfantBulletins(
+    @Headers('x-tenant-id') tenantId: string,
+    @CurrentUser() user: JwtUser,
+    @Param('eleveId') eleveId: string,
+  ) {
+    await this.domain.assertParentChild(user.sub, eleveId);
+    return this.domain.studentBulletins(tenantId, eleveId);
   }
 
   @Get('enfants/:eleveId/emploi-du-temps')
-  enfantEmploiDuTemps(@Headers('x-tenant-id') tenantId: string, @Query() query: QueryParams) {
-    return this.crud.findAll(this.crud.v1Config('emplois-du-temps'), tenantId, query);
+  async enfantEmploiDuTemps(
+    @Headers('x-tenant-id') tenantId: string,
+    @CurrentUser() user: JwtUser,
+    @Param('eleveId') eleveId: string,
+  ) {
+    await this.domain.assertParentChild(user.sub, eleveId);
+    return this.domain.studentEmploiDuTemps(tenantId, eleveId);
   }
 
   @Get('enfants/:eleveId/absences')
-  enfantAbsences(@Headers('x-tenant-id') tenantId: string, @Param('eleveId') eleveId: string, @Query() query: QueryParams) {
-    return this.crud.findAll(this.crud.v1Config('absences-eleves'), tenantId, { ...query, eleveId });
+  async enfantAbsences(
+    @Headers('x-tenant-id') tenantId: string,
+    @CurrentUser() user: JwtUser,
+    @Param('eleveId') eleveId: string,
+  ) {
+    await this.domain.assertParentChild(user.sub, eleveId);
+    return this.domain.studentAbsences(tenantId, eleveId);
   }
 
   @Get('paiements')
-  paiements(@Headers('x-tenant-id') tenantId: string, @CurrentUser() user?: JwtUser, @Query() query?: QueryParams) {
-    return this.crud.findAll(this.crud.v1Config('paiements'), tenantId, { ...(query ?? {}), parentId: user?.sub });
+  paiements(@Headers('x-tenant-id') tenantId: string, @CurrentUser() user?: JwtUser) {
+    return user ? this.domain.parentPaiements(tenantId, user.sub) : [];
   }
 
   @Get('notifications')

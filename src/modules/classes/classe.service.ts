@@ -77,16 +77,14 @@ export class ClasseService {
   async getTeacherClasses(tenantId: string, enseignantId: string) {
     await this.assertTenantExists(tenantId);
 
-    const SIMPLE_CYCLES = ['MATERNELLE', 'PRIMAIRE'];
-
-    // Fetch all candidate classes
-    const allClasses = await this.prisma.classe.findMany({
+    const classes = await this.prisma.classe.findMany({
       where: {
         tenantId,
         actif: true,
         OR: [
           { professeurResponsableId: enseignantId },
           { matiereClasses: { some: { enseignantId } } },
+          { cours: { some: { enseignantId } } },
         ],
       },
       include: {
@@ -100,17 +98,7 @@ export class ClasseService {
       orderBy: [{ niveau: { ordre: 'asc' } }, { nom: 'asc' }],
     });
 
-    // For MATERNELLE/PRIMAIRE: only keep the class where the teacher is professeurResponsable
-    // For COLLEGE/LYCEE: keep all classes where the teacher has cours assigned
-    const filtered = allClasses.filter((c) => {
-      const cycleCode = (c.niveau as any)?.cycle?.code ?? '';
-      if (SIMPLE_CYCLES.includes(cycleCode)) {
-        return c.professeurResponsableId === enseignantId;
-      }
-      return true;
-    });
-
-    return filtered.map(this.toResponse);
+    return classes.map(this.toResponse);
   }
 
   async assertTeacherClasseAccess(tenantId: string, enseignantId: string, classeId: string): Promise<void> {
@@ -121,6 +109,7 @@ export class ClasseService {
         OR: [
           { professeurResponsableId: enseignantId },
           { matiereClasses: { some: { enseignantId } } },
+          { cours: { some: { enseignantId } } },
         ],
       },
       select: { id: true },
@@ -145,7 +134,13 @@ export class ClasseService {
       where: { tenantId, classeId, matiereId, enseignantId },
       select: { id: true },
     });
-    if (!affectation) throw new BadRequestException('Matière non autorisée pour ce professeur dans cette classe');
+    if (affectation) return;
+
+    const cours = await this.prisma.cours.findFirst({
+      where: { tenantId, classeId, matiereId, enseignantId },
+      select: { id: true },
+    });
+    if (!cours) throw new BadRequestException('Matière non autorisée pour ce professeur dans cette classe');
   }
 
   async saveEleveComportement(
@@ -475,8 +470,18 @@ export class ClasseService {
   }
 
   async getClasseCours(tenantId: string, classeId: string, enseignantId: string) {
+    const classe = await this.prisma.classe.findFirst({
+      where: { id: classeId, tenantId },
+      select: { professeurResponsableId: true },
+    });
+    if (!classe) throw new NotFoundException('Classe introuvable');
+
     const cours = await this.prisma.cours.findMany({
-      where: { tenantId, classeId, enseignantId },
+      where: {
+        tenantId,
+        classeId,
+        ...(classe.professeurResponsableId === enseignantId ? {} : { enseignantId }),
+      },
       include: {
         matiere: { select: { id: true, libelle: true, code: true } },
         emploisDuTemps: {
@@ -675,7 +680,12 @@ export class ClasseService {
       if (!eleveIds.length) return [];
 
       const isResponsable = classe.professeurResponsableId === enseignantId;
-      const matiereIds = classe.matiereClasses.map((matiereClasse) => matiereClasse.matiereId);
+      const matiereIds = [
+        ...new Set([
+          ...classe.matiereClasses.map((matiereClasse) => matiereClasse.matiereId),
+          ...classe.cours.map((cours) => cours.matiereId),
+        ]),
+      ];
       if (!isResponsable && !matiereIds.length) return [];
 
       return [
@@ -851,11 +861,19 @@ export class ClasseService {
     const isResponsable = classe.professeurResponsableId === enseignantId;
     const matieresAutorisees = isResponsable
       ? []
-      : await this.prisma.matiereClasse.findMany({
-          where: { tenantId, classeId, enseignantId },
-          select: { matiereId: true },
-        });
-    const allowedMatiereIds = matieresAutorisees.map((matiere) => matiere.matiereId);
+      : await Promise.all([
+          this.prisma.matiereClasse.findMany({
+            where: { tenantId, classeId, enseignantId },
+            select: { matiereId: true },
+          }),
+          this.prisma.cours.findMany({
+            where: { tenantId, classeId, enseignantId },
+            select: { matiereId: true },
+          }),
+        ]);
+    const allowedMatiereIds = isResponsable
+      ? []
+      : [...new Set(matieresAutorisees.flat().map((matiere) => matiere.matiereId))];
 
     const [eleves, notes] = await Promise.all([
       this.prisma.user.findMany({
@@ -936,6 +954,7 @@ export class ClasseService {
         OR: [
           { professeurResponsableId: enseignantId },
           { matiereClasses: { some: { enseignantId } } },
+          { cours: { some: { enseignantId } } },
         ],
       },
       select: { id: true },
@@ -1019,6 +1038,7 @@ export class ClasseService {
         OR: [
           { professeurResponsableId: enseignantId },
           { matiereClasses: { some: { enseignantId } } },
+          { cours: { some: { enseignantId } } },
         ],
       },
       select: { id: true },
@@ -1449,6 +1469,7 @@ export class ClasseService {
         OR: [
           { professeurResponsableId: enseignantId },
           { matiereClasses: { some: { enseignantId } } },
+          { cours: { some: { enseignantId } } },
         ],
       },
       select: {
@@ -1462,18 +1483,15 @@ export class ClasseService {
           where: { enseignantId },
           select: { matiereId: true },
         },
+        cours: {
+          where: { enseignantId },
+          select: { matiereId: true },
+        },
       },
       orderBy: { nom: 'asc' },
     });
 
-    const simpleCycles = ['MATERNELLE', 'PRIMAIRE'];
-    return classes.filter((classe) => {
-      const cycleCode = classe.niveau?.cycle?.code?.toUpperCase() ?? '';
-      if (simpleCycles.includes(cycleCode)) {
-        return classe.professeurResponsableId === enseignantId;
-      }
-      return true;
-    });
+    return classes;
   }
 
   private teacherNoteFilters(query: TeacherQueryParams): Record<string, unknown> {

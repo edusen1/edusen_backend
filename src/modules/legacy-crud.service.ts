@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '@/config/prisma.service';
@@ -232,6 +232,8 @@ export class LegacyCrudService {
         },
         orderBy: { ordre: 'asc' },
       },
+    } : config.model === 'matiere' ? {
+      _count: { select: { cours: true } },
     } : config.model === 'bulletin' ? {
       classe: { select: { id: true, nom: true } },
     } : config.model === 'absenceEleve' ? {
@@ -247,28 +249,6 @@ export class LegacyCrudService {
         include: {
           classe: { select: { id: true, nom: true } },
           anneeAcademique: { select: { id: true, libelle: true } },
-          eleve: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              matricule: true,
-              telephone: true,
-              elevParents: {
-                select: {
-                  parent: {
-                    select: {
-                      id: true,
-                      firstName: true,
-                      lastName: true,
-                      telephone: true,
-                      lienParente: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
         },
       },
     } : undefined;
@@ -363,6 +343,8 @@ export class LegacyCrudService {
         },
         orderBy: { ordre: 'asc' },
       },
+    } : config.model === 'matiere' ? {
+      _count: { select: { cours: true } },
     } : config.model === 'bulletin' ? {
       classe: { select: { id: true, nom: true } },
     } : config.model === 'absenceEleve' ? {
@@ -390,6 +372,108 @@ export class LegacyCrudService {
     if (!entity) throw new NotFoundException('Ressource introuvable');
     const [hydrated] = await this.attachEleveIfNeeded(config.model, [entity], tenantId);
     return this.sanitizeEntity(config.model, hydrated);
+  }
+
+  async createMatiereWithAssignments(
+    tenantId: string,
+    body: {
+      code?: unknown;
+      libelle?: unknown;
+      description?: unknown;
+      actif?: unknown;
+      affectations?: unknown;
+    },
+  ) {
+    const code = String(body.code ?? '').trim().toUpperCase();
+    const libelle = String(body.libelle ?? '').trim();
+    const description = String(body.description ?? '').trim() || null;
+    if (!code || !libelle) {
+      throw new BadRequestException('Le code et le libellé de la matière sont obligatoires');
+    }
+
+    const existing = await this.prisma.matiere.findFirst({ where: { tenantId, code } });
+    if (existing) throw new ConflictException('Une matière avec ce code existe déjà');
+
+    const rawAssignments = Array.isArray(body.affectations) ? body.affectations : [];
+    const assignments = rawAssignments.map((raw, index) => {
+      const item = (raw ?? {}) as Record<string, unknown>;
+      const classeId = this.assertUuid(String(item.classeId ?? ''), `affectations[${index}].classeId`);
+      const enseignantId = this.assertUuid(String(item.enseignantId ?? ''), `affectations[${index}].enseignantId`);
+      const coefficient = Number(item.coefficient ?? 1);
+      const volumeHoraireHebdo = item.volumeHoraireHebdo === null
+        || item.volumeHoraireHebdo === undefined
+        || item.volumeHoraireHebdo === ''
+        ? null
+        : Number(item.volumeHoraireHebdo);
+
+      if (!Number.isFinite(coefficient) || coefficient < 0.5) {
+        throw new BadRequestException(`Coefficient invalide pour l'affectation ${index + 1}`);
+      }
+      if (volumeHoraireHebdo !== null && (!Number.isFinite(volumeHoraireHebdo) || volumeHoraireHebdo < 0)) {
+        throw new BadRequestException(`Volume horaire invalide pour l'affectation ${index + 1}`);
+      }
+      return { classeId, enseignantId, coefficient, volumeHoraireHebdo };
+    });
+
+    const uniqueClasseIds = new Set(assignments.map((assignment) => assignment.classeId));
+    if (uniqueClasseIds.size !== assignments.length) {
+      throw new BadRequestException('Une classe ne peut être affectée qu’une seule fois à la même matière');
+    }
+
+    const [classes, enseignants] = await Promise.all([
+      this.prisma.classe.findMany({
+        where: { tenantId, id: { in: [...uniqueClasseIds] } },
+        select: { id: true, anneeAcademiqueId: true },
+      }),
+      this.prisma.user.findMany({
+        where: {
+          tenantId,
+          role: 'ENSEIGNANT',
+          id: { in: [...new Set(assignments.map((assignment) => assignment.enseignantId))] },
+        },
+        select: { id: true },
+      }),
+    ]);
+    if (classes.length !== uniqueClasseIds.size) {
+      throw new BadRequestException('Une ou plusieurs classes sont introuvables pour cet établissement');
+    }
+    const teacherIds = new Set(enseignants.map((enseignant) => enseignant.id));
+    if (assignments.some((assignment) => !teacherIds.has(assignment.enseignantId))) {
+      throw new BadRequestException('Un ou plusieurs enseignants sont introuvables pour cet établissement');
+    }
+    const classById = new Map(classes.map((classe) => [classe.id, classe]));
+
+    return this.prisma.$transaction(async (tx) => {
+      const matiere = await tx.matiere.create({
+        data: {
+          tenantId,
+          code,
+          libelle,
+          description,
+          actif: body.actif !== false,
+        },
+      });
+
+      const cours = await Promise.all(assignments.map((assignment) => {
+        const classe = classById.get(assignment.classeId)!;
+        return tx.cours.create({
+          data: {
+            tenantId,
+            matiereId: matiere.id,
+            classeId: assignment.classeId,
+            enseignantId: assignment.enseignantId,
+            anneeAcademiqueId: classe.anneeAcademiqueId,
+            coefficient: assignment.coefficient,
+            volumeHoraireHebdo: assignment.volumeHoraireHebdo,
+          },
+          include: {
+            classe: { select: { id: true, nom: true } },
+          },
+        });
+      }));
+
+      return { ...matiere, cours, _count: { cours: cours.length } };
+    });
   }
 
   async create(config: CrudConfig, tenantId: string | undefined, body: Payload, userOrId?: string | JwtUser) {
@@ -1749,6 +1833,7 @@ export class LegacyCrudService {
     if (model === 'bulletin' || model === 'absenceEleve' || model === 'reclamation') {
       return this.attachEleveById(rows);
     }
+    if (model === 'paiement') return this.attachEleveById(rows);
     if (model === 'cours') return this.attachEnseignantById(rows);
     if (model === 'pointage') return this.attachPointagePersonnel(rows);
     if (model === 'note') {

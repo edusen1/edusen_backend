@@ -122,6 +122,18 @@ export class AdminController {
     return this.resolveTenantId(tenantId, user).then((tid) => this.classeService.addStagiaire(tid!, classeId, stagiaireId));
   }
 
+  @Roles('ADMIN')
+  @Post('matieres/avec-affectations')
+  createMatiereWithAssignments(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.resolveTenantId(tenantId, user).then((tid) =>
+      this.crud.createMatiereWithAssignments(tid!, body),
+    );
+  }
+
   @Delete('classes/:id/stagiaires/:stagiaireId')
   removeStagiaire(
     @Headers('x-tenant-id') tenantId: string | undefined,

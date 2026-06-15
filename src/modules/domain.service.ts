@@ -6,6 +6,33 @@ import { normalizePhoneForCountry } from "@/common/utils/phone.util";
 
 @Injectable()
 export class DomainService {
+  private readonly userProfileSelect = {
+    id: true,
+    username: true,
+    email: true,
+    firstName: true,
+    lastName: true,
+    telephone: true,
+    numeroIdentificationNational: true,
+    adresse: true,
+    role: true,
+    actif: true,
+    matricule: true,
+    dateNaissance: true,
+    lieuNaissance: true,
+    genre: true,
+    numeroUrgence: true,
+    dateInscription: true,
+    photoUrl: true,
+    classeId: true,
+    specialite: true,
+    dateEmbauche: true,
+    profession: true,
+    lieuTravail: true,
+    telephoneTravail: true,
+    lienParente: true,
+  } as const;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly whatsapp: WhatsappService,
@@ -48,7 +75,10 @@ export class DomainService {
   }
 
   teacherProfil(userId: string) {
-    return this.prisma.user.findUnique({ where: { id: userId } });
+    return this.prisma.user.findUnique({
+      where: { id: userId },
+      select: this.userProfileSelect,
+    });
   }
   teacherNotes(tenantId: string) {
     return this.prisma.note.findMany({ where: { tenantId } });
@@ -113,7 +143,10 @@ export class DomainService {
   }
 
   studentProfil(userId: string) {
-    return this.prisma.user.findUnique({ where: { id: userId } });
+    return this.prisma.user.findUnique({
+      where: { id: userId },
+      select: this.userProfileSelect,
+    });
   }
   async studentUpdateProfil(userId: string, data: { telephone?: string }) {
     const user = await this.prisma.user.findUnique({
@@ -135,6 +168,7 @@ export class DomainService {
             ? normalizePhoneForCountry(data.telephone, config?.pays ?? "SN") ?? null
             : undefined,
       },
+      select: this.userProfileSelect,
     });
   }
   studentNotes(tenantId: string, eleveId: string, trimestre?: string) {
@@ -375,18 +409,34 @@ export class DomainService {
     }
   }
 
-  parentPaiements(tenantId: string) {
-    return this.prisma.paiement.findMany({
-      where: { tenantId },
-      include: {
-        inscription: {
-          include: {
-            classe: { select: { id: true, nom: true } },
-            anneeAcademique: { select: { id: true, libelle: true } },
-          },
-        },
-      },
+  async assertParentChild(parentId: string, eleveId: string): Promise<void> {
+    const link = await this.prisma.eleveParent.findUnique({
+      where: { eleveId_parentId: { eleveId, parentId } },
+      select: { eleveId: true },
     });
+    if (!link) {
+      throw new NotFoundException("Élève introuvable");
+    }
+  }
+
+  async parentPaiements(tenantId: string, parentId: string) {
+    const links = await this.prisma.eleveParent.findMany({
+      where: { parentId },
+      select: { eleveId: true },
+    });
+    const eleveIds = links.map((link) => link.eleveId);
+    const rows = await this.prisma.paiement.findMany({
+      where: {
+        tenantId,
+        OR: [
+          { parentId },
+          ...(eleveIds.length ? [{ eleveId: { in: eleveIds } }] : []),
+        ],
+      },
+      include: this.paiementInclude,
+      orderBy: { createdAt: "desc" },
+    });
+    return this.attachEleveToPaiements(rows);
   }
   // ─── CAISSE ────────────────────────────────────────────────────────────────
 
