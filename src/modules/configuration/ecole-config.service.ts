@@ -3,6 +3,7 @@ import { PrismaService } from '@/config/prisma.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
 import { UpdateEcoleConfigDto } from './dto/update-ecole-config.dto';
 import { UpdateApparenceDto } from './dto/update-apparence.dto';
+import { SaveApparencePaletteDto } from './dto/save-apparence-palette.dto';
 
 export interface EcoleConfigResponse {
   nom: string;
@@ -27,7 +28,30 @@ export interface ApparenceResponse {
   themeColor: string;
   sidebarMode: string;
   displayMode: string;
+  primaryColor: string;
+  secondaryColor: string;
+  backgroundColor: string;
+  textColor: string;
 }
+
+export interface ApparencePaletteResponse {
+  id: string;
+  libelle: string;
+  primaryColor: string;
+  secondaryColor: string;
+  backgroundColor: string;
+  textColor: string;
+}
+
+const DEFAULT_APPARENCE: ApparenceResponse = {
+  themeColor: 'blue',
+  sidebarMode: 'light',
+  displayMode: 'light',
+  primaryColor: '#03a9f3',
+  secondaryColor: '#16a34a',
+  backgroundColor: '#2f7d6f',
+  textColor: '#1f2937',
+};
 
 @Injectable()
 export class EcoleConfigService {
@@ -150,21 +174,37 @@ export class EcoleConfigService {
   async getApparence(tenantId: string): Promise<ApparenceResponse> {
     const config = await this.prisma.ecoleConfig.findUnique({
       where: { tenantId },
-      select: { themeColor: true, sidebarMode: true, displayMode: true },
+      select: {
+        themeColor: true,
+        sidebarMode: true,
+        displayMode: true,
+        primaryColor: true,
+        secondaryColor: true,
+        backgroundColor: true,
+        textColor: true,
+      },
     });
 
     return {
-      themeColor: config?.themeColor ?? 'blue',
-      sidebarMode: config?.sidebarMode ?? 'light',
-      displayMode: config?.displayMode ?? 'light',
+      themeColor: config?.themeColor ?? DEFAULT_APPARENCE.themeColor,
+      sidebarMode: config?.sidebarMode ?? DEFAULT_APPARENCE.sidebarMode,
+      displayMode: config?.displayMode ?? DEFAULT_APPARENCE.displayMode,
+      primaryColor: config?.primaryColor ?? DEFAULT_APPARENCE.primaryColor,
+      secondaryColor: config?.secondaryColor ?? DEFAULT_APPARENCE.secondaryColor,
+      backgroundColor: config?.backgroundColor ?? DEFAULT_APPARENCE.backgroundColor,
+      textColor: config?.textColor ?? DEFAULT_APPARENCE.textColor,
     };
   }
 
   async updateApparence(tenantId: string, dto: UpdateApparenceDto): Promise<ApparenceResponse> {
     const apparenceData = {
-      themeColor: dto.themeColor,
-      sidebarMode: dto.sidebarMode,
-      displayMode: dto.displayMode,
+      themeColor: dto.reset ? DEFAULT_APPARENCE.themeColor : dto.themeColor,
+      sidebarMode: dto.reset ? DEFAULT_APPARENCE.sidebarMode : dto.sidebarMode,
+      displayMode: dto.reset ? DEFAULT_APPARENCE.displayMode : dto.displayMode,
+      primaryColor: this.normalizeHex(dto.reset ? DEFAULT_APPARENCE.primaryColor : dto.primaryColor ?? DEFAULT_APPARENCE.primaryColor),
+      secondaryColor: this.normalizeHex(dto.reset ? DEFAULT_APPARENCE.secondaryColor : dto.secondaryColor ?? DEFAULT_APPARENCE.secondaryColor),
+      backgroundColor: this.normalizeHex(dto.reset ? DEFAULT_APPARENCE.backgroundColor : dto.backgroundColor ?? DEFAULT_APPARENCE.backgroundColor),
+      textColor: this.normalizeHex(dto.reset ? DEFAULT_APPARENCE.textColor : dto.textColor ?? DEFAULT_APPARENCE.textColor),
     };
 
     const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId } });
@@ -187,6 +227,88 @@ export class EcoleConfigService {
     });
 
     return apparenceData;
+  }
+
+  async getApparencePalettes(tenantId: string): Promise<ApparencePaletteResponse[]> {
+    const palettes = await this.prisma.ecolePaletteConfig.findMany({
+      where: { tenantId, actif: true },
+      orderBy: [{ createdAt: 'asc' }, { libelle: 'asc' }],
+      select: {
+        id: true,
+        libelle: true,
+        primaryColor: true,
+        secondaryColor: true,
+        backgroundColor: true,
+        textColor: true,
+      },
+    });
+
+    return palettes.map((palette) => this.toPaletteResponse(palette));
+  }
+
+  async saveApparencePalette(tenantId: string, dto: SaveApparencePaletteDto): Promise<ApparencePaletteResponse> {
+    const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true } });
+    if (!tenant) throw new NotFoundException('Tenant introuvable');
+
+    const data = {
+      libelle: dto.libelle.trim(),
+      primaryColor: this.normalizeHex(dto.primaryColor),
+      secondaryColor: this.normalizeHex(dto.secondaryColor),
+      backgroundColor: this.normalizeHex(dto.backgroundColor),
+      textColor: this.normalizeHex(dto.textColor),
+      actif: true,
+    };
+
+    if (dto.id?.trim()) {
+      const existing = await this.prisma.ecolePaletteConfig.findFirst({
+        where: { id: dto.id.trim(), tenantId, actif: true },
+        select: { id: true },
+      });
+      if (!existing) throw new NotFoundException('Palette introuvable');
+
+      const updated = await this.prisma.ecolePaletteConfig.update({
+        where: { id: existing.id },
+        data,
+      });
+      return this.toPaletteResponse(updated);
+    }
+
+    const created = await this.prisma.ecolePaletteConfig.create({
+      data: { tenantId, ...data },
+    });
+    return this.toPaletteResponse(created);
+  }
+
+  async deleteApparencePalette(tenantId: string, paletteId: string): Promise<void> {
+    const result = await this.prisma.ecolePaletteConfig.updateMany({
+      where: { id: paletteId, tenantId, actif: true },
+      data: { actif: false },
+    });
+    if (result.count === 0) {
+      throw new NotFoundException('Palette introuvable');
+    }
+  }
+
+  private normalizeHex(value: string): string {
+    return value.trim().toLowerCase();
+  }
+
+  private toPaletteResponse(palette: {
+    id: string;
+    libelle: string;
+    primaryColor: string;
+    secondaryColor: string;
+    backgroundColor: string;
+    textColor: string;
+  }): ApparencePaletteResponse {
+    return {
+      id: palette.id,
+      libelle: palette.libelle,
+      primaryColor: palette.primaryColor,
+      secondaryColor: palette.secondaryColor,
+      backgroundColor: palette.backgroundColor,
+      textColor: palette.textColor,
+    };
   }
 
   private toResponse(config: {

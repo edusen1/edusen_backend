@@ -34,7 +34,11 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Connexion utilisateur par identifiants' })
   login(@Body() dto: LoginDto) {
-    return this.authService.login({ login: dto.telephone, password: dto.password });
+    const login = (dto.login ?? dto.telephone ?? '').trim();
+    if (!login) {
+      throw new BadRequestException('Identifiant requis');
+    }
+    return this.authService.login({ login, password: dto.password });
   }
 
   @Public()

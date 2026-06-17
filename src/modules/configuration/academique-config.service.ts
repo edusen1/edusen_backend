@@ -1,9 +1,11 @@
-import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@/config/prisma.service';
 import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 import { SaveFraisDto, FraisNiveauItemDto } from './dto/save-frais.dto';
 
 export interface FraisNiveauResponse {
+  id?: string;
+  sectionId?: string;
   section: string;
   niveau: string;
   inscription: number;
@@ -74,6 +76,12 @@ type NiveauRow = {
   };
 };
 
+type NiveauFraisInfo = {
+  id: string;
+  sectionId: string;
+  moyennePassage: number;
+};
+
 type AnneeRow = {
   id: string;
   libelle: string;
@@ -82,49 +90,6 @@ type AnneeRow = {
   estCourante: boolean;
   actif: boolean;
 };
-
-const DEFAULT_STRUCTURE = [
-  {
-    code: 'MATERNELLE',
-    nom: 'Maternelle',
-    niveaux: [
-      { code: 'PS', nom: 'Petite Section', ordre: 1 },
-      { code: 'MS', nom: 'Moyenne Section', ordre: 2 },
-      { code: 'GS', nom: 'Grande Section', ordre: 3 },
-    ],
-  },
-  {
-    code: 'PRIMAIRE',
-    nom: 'Primaire',
-    niveaux: [
-      { code: 'CI', nom: 'CI', ordre: 10 },
-      { code: 'CP', nom: 'CP', ordre: 11 },
-      { code: 'CE1', nom: 'CE1', ordre: 12 },
-      { code: 'CE2', nom: 'CE2', ordre: 13 },
-      { code: 'CM1', nom: 'CM1', ordre: 14 },
-      { code: 'CM2', nom: 'CM2', ordre: 15 },
-    ],
-  },
-  {
-    code: 'COLLEGE',
-    nom: 'Collège',
-    niveaux: [
-      { code: '6E', nom: '6ème', ordre: 20 },
-      { code: '5E', nom: '5ème', ordre: 21 },
-      { code: '4E', nom: '4ème', ordre: 22 },
-      { code: '3E', nom: '3ème', ordre: 23 },
-    ],
-  },
-  {
-    code: 'LYCEE',
-    nom: 'Lycée',
-    niveaux: [
-      { code: '2NDE', nom: 'Seconde', ordre: 30 },
-      { code: '1ERE', nom: 'Première', ordre: 31 },
-      { code: 'TLE', nom: 'Terminale', ordre: 32 },
-    ],
-  },
-] as const;
 
 @Injectable()
 export class AcademiqueConfigService {
@@ -141,7 +106,6 @@ export class AcademiqueConfigService {
 
   async getFrais(tenantId: string): Promise<FraisNiveauResponse[]> {
     await this.assertTenantExists(tenantId);
-    await this.ensureDefaultAcademicSetup(tenantId);
     const rows = await this.prisma.fraisNiveauConfig.findMany({
       where: { tenantId },
       orderBy: [{ section: 'asc' }, { niveau: 'asc' }],
@@ -150,11 +114,44 @@ export class AcademiqueConfigService {
       where: { tenantId },
       include: { cycle: { select: { libelle: true } } },
     });
-    const moyenneByKey = new Map(
-      niveaux.map((niveau) => [this.fraisKey(niveau.cycle.libelle, niveau.libelle), niveau.moyennePassage ?? 10]),
+    const niveauByKey = new Map<string, NiveauFraisInfo>(
+      niveaux.map((niveau) => [
+        this.fraisKey(niveau.cycle.libelle, niveau.libelle),
+        {
+          id: niveau.id,
+          sectionId: niveau.cycleId,
+          moyennePassage: niveau.moyennePassage ?? 10,
+        },
+      ]),
     );
 
-    return rows.map((row) => this.toFraisResponse(row, moyenneByKey.get(this.fraisKey(row.section, row.niveau)) ?? 10));
+    const seenKeys = new Set<string>();
+    const responses = rows.map((row) => {
+      const key = this.fraisKey(row.section, row.niveau);
+      seenKeys.add(key);
+      return this.toFraisResponse(row, niveauByKey.get(key));
+    });
+
+    for (const niveau of niveaux) {
+      const key = this.fraisKey(niveau.cycle.libelle, niveau.libelle);
+      if (seenKeys.has(key)) continue;
+      responses.push(this.toFraisResponse({
+        section: niveau.cycle.libelle,
+        niveau: niveau.libelle,
+        inscription: 0,
+        mensualite: 0,
+        nbMois: 9,
+        moisDebut: 10,
+        moisFin: 6,
+        actif: niveau.actif,
+      }, {
+        id: niveau.id,
+        sectionId: niveau.cycleId,
+        moyennePassage: niveau.moyennePassage ?? 10,
+      }));
+    }
+
+    return responses.sort((a, b) => a.section.localeCompare(b.section) || a.niveau.localeCompare(b.niveau));
   }
 
   async saveFrais(tenantId: string, dto: SaveFraisDto): Promise<FraisNiveauResponse[]> {
@@ -202,7 +199,6 @@ export class AcademiqueConfigService {
 
   async getSections(tenantId: string): Promise<SectionResponse[]> {
     await this.assertTenantExists(tenantId);
-    await this.ensureDefaultAcademicSetup(tenantId);
     const cycles = (await this.prisma.cycle.findMany({
       where: { tenantId },
       orderBy: { libelle: 'asc' },
@@ -213,6 +209,8 @@ export class AcademiqueConfigService {
   async createSection(tenantId: string, nom: string): Promise<SectionResponse> {
     await this.assertTenantExists(tenantId);
     const code = this.slugCode(nom);
+    const duplicate = await this.prisma.cycle.findFirst({ where: { tenantId, code }, select: { id: true } });
+    if (duplicate) throw new ConflictException('Cette section existe déjà');
     const created = await this.prisma.cycle.create({
       data: { tenantId, code, libelle: nom.trim(), actif: true },
     });
@@ -224,14 +222,63 @@ export class AcademiqueConfigService {
     const existing = await this.prisma.cycle.findFirst({ where: { id, tenantId } });
     if (!existing) throw new NotFoundException('Section introuvable');
 
-    const updated = await this.prisma.cycle.update({
-      where: { id },
-      data: {
-        ...(dto.nom ? { libelle: dto.nom.trim(), code: this.slugCode(dto.nom) } : {}),
-        ...(dto.actif !== undefined ? { actif: dto.actif } : {}),
-      },
+    const nextNom = dto.nom?.trim();
+    if (nextNom) {
+      const nextCode = this.slugCode(nextNom);
+      const duplicate = await this.prisma.cycle.findFirst({
+        where: { tenantId, code: nextCode, id: { not: id } },
+        select: { id: true },
+      });
+      if (duplicate) throw new ConflictException('Cette section existe déjà');
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const section = await tx.cycle.update({
+        where: { id },
+        data: {
+          ...(nextNom ? { libelle: nextNom, code: this.slugCode(nextNom) } : {}),
+          ...(dto.actif !== undefined ? { actif: dto.actif } : {}),
+        },
+      });
+
+      if (nextNom && nextNom !== existing.libelle) {
+        await tx.fraisNiveauConfig.updateMany({
+          where: { tenantId, section: existing.libelle },
+          data: { section: nextNom },
+        });
+      }
+
+      return section;
     });
     return { id: updated.id, code: updated.code, nom: updated.libelle, actif: updated.actif };
+  }
+
+  async deleteSection(tenantId: string, id: string): Promise<{ deleted: true }> {
+    await this.assertTenantExists(tenantId);
+    const existing = await this.prisma.cycle.findFirst({ where: { id, tenantId }, select: { id: true, libelle: true } });
+    if (!existing) throw new NotFoundException('Section introuvable');
+
+    const niveauxCount = await this.prisma.niveau.count({ where: { tenantId, cycleId: id } });
+    if (niveauxCount > 0) {
+      throw new BadRequestException(`Impossible de supprimer cette section car elle contient ${niveauxCount} niveau${niveauxCount > 1 ? 'x' : ''}.`);
+    }
+
+    const calendriersCount = await this.prisma.calendrierScolaire.count({ where: { tenantId, sectionId: id } });
+    if (calendriersCount > 0) {
+      throw new BadRequestException(`Impossible de supprimer cette section car elle contient ${calendriersCount} événement${calendriersCount > 1 ? 's' : ''} du calendrier.`);
+    }
+
+    const surveillantsCount = await this.prisma.surveillantCycle.count({ where: { tenantId, cycleId: id } });
+    if (surveillantsCount > 0) {
+      throw new BadRequestException(`Impossible de supprimer cette section car elle est liée à ${surveillantsCount} surveillant${surveillantsCount > 1 ? 's' : ''}.`);
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.fraisNiveauConfig.deleteMany({ where: { tenantId, section: existing.libelle } }),
+      this.prisma.cycle.delete({ where: { id } }),
+    ]);
+
+    return { deleted: true };
   }
 
   // ----------------------------------------------------------------
@@ -240,7 +287,6 @@ export class AcademiqueConfigService {
 
   async getNiveaux(tenantId: string, sectionId?: string): Promise<NiveauResponse[]> {
     await this.assertTenantExists(tenantId);
-    await this.ensureDefaultAcademicSetup(tenantId);
     const rows = (await this.prisma.niveau.findMany({
       where: { tenantId, ...(sectionId ? { cycleId: sectionId } : {}) },
       include: { cycle: { select: { id: true, libelle: true } } },
@@ -276,6 +322,21 @@ export class AcademiqueConfigService {
       },
       include: { cycle: { select: { id: true, libelle: true } } },
     });
+    await this.prisma.fraisNiveauConfig.upsert({
+      where: { tenantId_section_niveau: { tenantId, section: created.cycle.libelle, niveau: created.libelle } },
+      create: {
+        tenantId,
+        section: created.cycle.libelle,
+        niveau: created.libelle,
+        inscription: 0,
+        mensualite: 0,
+        nbMois: 9,
+        moisDebut: 10,
+        moisFin: 6,
+        actif: true,
+      },
+      update: {},
+    });
     return {
       id: created.id,
       sectionId: created.cycleId,
@@ -288,20 +349,57 @@ export class AcademiqueConfigService {
     };
   }
 
-  async updateNiveau(tenantId: string, id: string, dto: Partial<{ nom: string; ordre: number; moyennePassage: number; actif: boolean }>): Promise<NiveauResponse> {
+  async updateNiveau(tenantId: string, id: string, dto: Partial<{ sectionId: string; nom: string; ordre: number; moyennePassage: number; actif: boolean }>): Promise<NiveauResponse> {
     await this.assertTenantExists(tenantId);
-    const existing = await this.prisma.niveau.findFirst({ where: { id, tenantId } });
+    const existing = await this.prisma.niveau.findFirst({
+      where: { id, tenantId },
+      include: { cycle: { select: { id: true, libelle: true } } },
+    });
     if (!existing) throw new NotFoundException('Niveau introuvable');
 
-    const updated = await this.prisma.niveau.update({
-      where: { id },
-      data: {
-        ...(dto.nom ? { libelle: dto.nom.trim(), code: this.slugCode(dto.nom) } : {}),
-        ...(dto.ordre !== undefined ? { ordre: dto.ordre } : {}),
-        ...(dto.moyennePassage !== undefined ? { moyennePassage: dto.moyennePassage } : {}),
-        ...(dto.actif !== undefined ? { actif: dto.actif } : {}),
-      },
-      include: { cycle: { select: { id: true, libelle: true } } },
+    let nextSection = existing.cycle;
+    if (dto.sectionId && dto.sectionId !== existing.cycleId) {
+      const section = await this.prisma.cycle.findFirst({
+        where: { id: dto.sectionId, tenantId },
+        select: { id: true, libelle: true },
+      });
+      if (!section) throw new NotFoundException('Section introuvable');
+      nextSection = section;
+    }
+
+    const nextNom = dto.nom?.trim();
+    if (nextNom) {
+      const nextCode = this.slugCode(nextNom);
+      const duplicate = await this.prisma.niveau.findFirst({
+        where: { tenantId, code: nextCode, id: { not: id } },
+        select: { id: true },
+      });
+      if (duplicate) throw new ConflictException('Ce niveau existe déjà');
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const niveau = await tx.niveau.update({
+        where: { id },
+        data: {
+          ...(dto.sectionId ? { cycleId: dto.sectionId } : {}),
+          ...(nextNom ? { libelle: nextNom, code: this.slugCode(nextNom) } : {}),
+          ...(dto.ordre !== undefined ? { ordre: dto.ordre } : {}),
+          ...(dto.moyennePassage !== undefined ? { moyennePassage: dto.moyennePassage } : {}),
+          ...(dto.actif !== undefined ? { actif: dto.actif } : {}),
+        },
+        include: { cycle: { select: { id: true, libelle: true } } },
+      });
+
+      const targetSection = nextSection.libelle;
+      const targetNiveau = nextNom || existing.libelle;
+      if (targetSection !== existing.cycle.libelle || targetNiveau !== existing.libelle) {
+        await tx.fraisNiveauConfig.updateMany({
+          where: { tenantId, section: existing.cycle.libelle, niveau: existing.libelle },
+          data: { section: targetSection, niveau: targetNiveau },
+        });
+      }
+
+      return niveau;
     });
     return {
       id: updated.id,
@@ -315,13 +413,40 @@ export class AcademiqueConfigService {
     };
   }
 
+  async deleteNiveau(tenantId: string, id: string): Promise<{ deleted: true }> {
+    await this.assertTenantExists(tenantId);
+    const existing = await this.prisma.niveau.findFirst({
+      where: { id, tenantId },
+      include: { cycle: { select: { libelle: true } } },
+    });
+    if (!existing) throw new NotFoundException('Niveau introuvable');
+
+    const classesCount = await this.prisma.classe.count({ where: { tenantId, niveauId: id } });
+    if (classesCount > 0) {
+      throw new BadRequestException(`Impossible de supprimer ce niveau car il contient ${classesCount} classe${classesCount > 1 ? 's' : ''}.`);
+    }
+
+    const personnelsCount = await this.prisma.personnelNiveauAffectation.count({ where: { tenantId, niveauId: id } });
+    if (personnelsCount > 0) {
+      throw new BadRequestException(`Impossible de supprimer ce niveau car il est lié à ${personnelsCount} affectation${personnelsCount > 1 ? 's' : ''} du personnel.`);
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.fraisNiveauConfig.deleteMany({
+        where: { tenantId, section: existing.cycle.libelle, niveau: existing.libelle },
+      }),
+      this.prisma.niveau.delete({ where: { id } }),
+    ]);
+
+    return { deleted: true };
+  }
+
   // ----------------------------------------------------------------
   // Calendrier scolaire
   // ----------------------------------------------------------------
 
   async getCalendrier(tenantId: string, sectionId?: string): Promise<CalendrierScolaireResponse[]> {
     await this.assertTenantExists(tenantId);
-    await this.ensureDefaultAcademicSetup(tenantId);
     const rows = await this.prisma.calendrierScolaire.findMany({
       where: { tenantId, ...(sectionId ? { sectionId } : {}) },
       include: { section: { select: { libelle: true } } },
@@ -523,52 +648,6 @@ export class AcademiqueConfigService {
     if (!section) throw new NotFoundException('Section introuvable');
   }
 
-  private async ensureDefaultAcademicSetup(tenantId: string): Promise<void> {
-    for (const section of DEFAULT_STRUCTURE) {
-      const cycle = await this.prisma.cycle.upsert({
-        where: { tenantId_code: { tenantId, code: section.code } },
-        create: { tenantId, code: section.code, libelle: section.nom, actif: true },
-        update: { libelle: section.nom },
-      });
-
-      for (const niveau of section.niveaux) {
-        await this.prisma.niveau.upsert({
-          where: { tenantId_code: { tenantId, code: niveau.code } },
-          create: {
-            tenantId,
-            cycleId: cycle.id,
-            code: niveau.code,
-            libelle: niveau.nom,
-            ordre: niveau.ordre,
-            moyennePassage: 10,
-            actif: true,
-          },
-          update: {
-            cycleId: cycle.id,
-            libelle: niveau.nom,
-            ordre: niveau.ordre,
-          },
-        });
-
-        await this.prisma.fraisNiveauConfig.upsert({
-          where: { tenantId_section_niveau: { tenantId, section: section.nom, niveau: niveau.nom } },
-          create: {
-            tenantId,
-            section: section.nom,
-            niveau: niveau.nom,
-            inscription: 0,
-            mensualite: 0,
-            nbMois: 9,
-            moisDebut: 10,
-            moisFin: 6,
-            actif: true,
-          },
-          update: {},
-        });
-      }
-    }
-  }
-
   private async duplicateClassesOnceForYear(tenantId: string, targetAnneeId: string): Promise<void> {
     const targetAnnee = await this.prisma.anneeAcademique.findFirst({
       where: { id: targetAnneeId, tenantId },
@@ -664,8 +743,10 @@ export class AcademiqueConfigService {
     moisDebut: number | null;
     moisFin: number | null;
     actif: boolean;
-  }, moyennePassage: number): FraisNiveauResponse {
+  }, niveauInfo?: NiveauFraisInfo): FraisNiveauResponse {
     return {
+      id: niveauInfo?.id,
+      sectionId: niveauInfo?.sectionId,
       section: row.section,
       niveau: row.niveau,
       inscription: row.inscription,
@@ -673,7 +754,7 @@ export class AcademiqueConfigService {
       nbMois: row.nbMois,
       moisDebut: row.moisDebut ?? undefined,
       moisFin: row.moisFin ?? undefined,
-      moyennePassage,
+      moyennePassage: niveauInfo?.moyennePassage ?? 10,
       actif: row.actif,
     };
   }

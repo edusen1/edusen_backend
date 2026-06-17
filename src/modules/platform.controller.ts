@@ -1,4 +1,5 @@
-﻿import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
+﻿import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req } from '@nestjs/common';
+import type { FastifyRequest } from 'fastify';
 import { Roles } from '@/common/decorators/roles.decorator';
 import { PlatformService } from '@/modules/platform/platform.service';
 import { CreateTenantDto } from '@/modules/platform/dto/create-tenant.dto';
@@ -33,8 +34,30 @@ export class PlatformController {
   reactivateTenant(@Param('id') id: string) { return this.platformService.reactivateTenant(id); }
 
   @Post('tenants/:id/logo')
-  uploadLogo(@Param('id') id: string, @Body() body: { logoUrl?: string }) {
-    return this.platformService.updateTenant(id, { logoUrl: body.logoUrl });
+  async uploadLogo(@Param('id') id: string, @Req() req: FastifyRequest, @Body() body?: { logoUrl?: string }) {
+    if (req.isMultipart()) {
+      const file = await req.file();
+      if (!file) throw new BadRequestException('Aucun logo fourni');
+
+      const allowed = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'];
+      if (!allowed.includes(file.mimetype)) {
+        throw new BadRequestException('Format invalide. PNG, JPEG, WebP ou SVG uniquement.');
+      }
+
+      const buffer = await file.toBuffer();
+      if (buffer.byteLength > 2 * 1024 * 1024) {
+        throw new BadRequestException('Logo trop lourd. Maximum 2 Mo.');
+      }
+
+      return this.platformService.uploadTenantLogo(id, buffer, file.mimetype, file.filename);
+    }
+
+    if (body?.logoUrl !== undefined) {
+      const tenant = await this.platformService.updateTenant(id, { logoUrl: body.logoUrl });
+      return { logoUrl: tenant.logoUrl };
+    }
+
+    throw new BadRequestException('Aucun logo fourni');
   }
 
   @Roles('SUPER_ADMIN')
@@ -62,5 +85,12 @@ export class PlatformController {
   stats() { return this.platformService.stats(); }
 
   @Get('audit-logs')
-  auditLogs() { return this.platformService.auditLogs(); }
+  auditLogs(
+    @Query('page') page?: string,
+    @Query('size') size?: string,
+    @Query('action') action?: string,
+    @Query('tenantId') tenantId?: string,
+  ) {
+    return this.platformService.auditLogs(Number(page ?? 0), Number(size ?? 20), { action, tenantId });
+  }
 }

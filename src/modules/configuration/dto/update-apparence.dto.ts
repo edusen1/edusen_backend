@@ -1,4 +1,4 @@
-import { IsIn } from 'class-validator';
+import { IsBoolean, IsHexColor, IsIn, IsOptional } from 'class-validator';
 
 const THEME_COLORS = [
   'white',
@@ -26,4 +26,24 @@ export class UpdateApparenceDto {
 
   @IsIn(MODES, { message: "Mode d'affichage invalide. Valeurs : light, dark" })
   displayMode!: (typeof MODES)[number];
+
+  @IsOptional()
+  @IsHexColor({ message: 'Couleur principale invalide' })
+  primaryColor?: string;
+
+  @IsOptional()
+  @IsHexColor({ message: 'Couleur secondaire invalide' })
+  secondaryColor?: string;
+
+  @IsOptional()
+  @IsHexColor({ message: 'Couleur de fond invalide' })
+  backgroundColor?: string;
+
+  @IsOptional()
+  @IsHexColor({ message: 'Couleur de texte invalide' })
+  textColor?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  reset?: boolean;
 }

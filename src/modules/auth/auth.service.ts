@@ -121,9 +121,12 @@ export class AuthService {
 
     await this.redis.del(lockoutKey);
 
-    const payload: JwtUser = {
+    const payload: JwtUser & { userId: string; accountType: 'TENANT'; groups: string[] } = {
       sub: user.id,
+      userId: user.id,
       role: user.role,
+      groups: [user.role],
+      accountType: 'TENANT',
       tenantId: user.tenantId,
       email: user.email ?? undefined,
       telephone: user.telephone ?? undefined,
@@ -154,7 +157,7 @@ export class AuthService {
     const pu = await this.prisma.plateformeUtilisateur.findFirst({
       where: {
         OR: [
-          { email: normalizedLogin },
+          { email: { equals: normalizedLogin, mode: Prisma.QueryMode.insensitive } },
           ...phoneVariants.map((telephone) => ({ telephone })),
         ],
       },
@@ -180,9 +183,12 @@ export class AuthService {
 
     await this.redis.del(lockoutKey);
 
-    const payload: JwtUser = {
+    const payload: JwtUser & { userId: string; accountType: 'PLATFORM'; groups: string[] } = {
       sub: pu.id,
+      userId: pu.id,
       role: pu.rolePlateforme as 'SUPER_ADMIN' | 'GESTIONNAIRE',
+      groups: [pu.rolePlateforme],
+      accountType: 'PLATFORM',
       email: pu.email,
       isPlatform: true,
     };
@@ -250,10 +256,10 @@ export class AuthService {
     if (user.isPlatform) {
       const pu = await this.prisma.plateformeUtilisateur.findUnique({
         where: { id: user.sub },
-        select: { id: true, email: true, nom: true, prenom: true, rolePlateforme: true, actif: true },
+        select: { id: true, email: true, telephone: true, nom: true, prenom: true, rolePlateforme: true, actif: true },
       });
       if (!pu) throw new UnauthorizedException('Utilisateur introuvable');
-      return { ...pu, role: pu.rolePlateforme, isPlatform: true };
+      return { ...pu, role: pu.rolePlateforme, isPlatform: true, accountType: 'PLATFORM', groups: [pu.rolePlateforme] };
     }
 
     const dbUser = await this.prisma.user.findUnique({
@@ -275,12 +281,14 @@ export class AuthService {
     if (!dbUser) throw new UnauthorizedException('Utilisateur introuvable');
 
     let cycles: string[] = [];
+    let surveillantScope: 'GENERAL' | 'CYCLES' | null = null;
     if (dbUser.role === 'SURVEILLANT') {
       const sc = await this.prisma.surveillantCycle.findMany({
         where: { surveillantId: user.sub },
         include: { cycle: true },
       });
       cycles = sc.map((s: { cycle: { code: string } }) => s.cycle.code);
+      surveillantScope = cycles.length ? 'CYCLES' : 'GENERAL';
     }
 
     return {
@@ -297,6 +305,7 @@ export class AuthService {
       telephone: dbUser.telephone,
       photoUrl: this.storage.resolveUrl(dbUser.photoUrl),
       cycles,
+      surveillantScope,
     };
   }
 

@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '@/config/prisma.service';
 import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
+import { formatMru } from '@/common/utils/currency.util';
 
 /** Days after month start before declaring a payment overdue */
 const OVERDUE_DAYS = 10;
@@ -184,14 +185,14 @@ export class MensualitesSchedulerService implements OnModuleInit {
     }).catch(() => [] as any[]);
 
     const nomEleve = `${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim();
-    const montantStr = Number(montant).toLocaleString('fr-FR');
+    const montantStr = formatMru(montant);
     const emoji = isOverdue ? '🔴' : '🔔';
     const verb = isOverdue ? 'est en retard' : 'arrive bientôt';
 
     const studentMsg =
       `${emoji} *Mensualité scolaire — ${periodeLabel}*\n` +
       `Bonjour ${eleve.firstName ?? ''},\n` +
-      `Votre mensualité de *${montantStr} FCFA* (${anneeScolaire}) ${verb}.\n` +
+      `Votre mensualité de *${montantStr}* (${anneeScolaire}) ${verb}.\n` +
       (isOverdue
         ? `⚠️ Veuillez régulariser au plus vite auprès de la caisse de l'école.`
         : `Pensez à régler votre mensualité avant la fin du mois.`);
@@ -206,7 +207,7 @@ export class MensualitesSchedulerService implements OnModuleInit {
       const parentMsg =
         `${emoji} *Mensualité de ${nomEleve} — ${periodeLabel}*\n` +
         `Bonjour ${parent.firstName ?? ''},\n` +
-        `La mensualité scolaire de *${nomEleve}* (${montantStr} FCFA) ${verb}.\n` +
+        `La mensualité scolaire de *${nomEleve}* (${montantStr}) ${verb}.\n` +
         (isOverdue
           ? `⚠️ Merci de régulariser au plus vite à la caisse de l'école.`
           : `Merci de vous assurer du règlement avant la fin du mois.`);

@@ -234,6 +234,13 @@ export class LegacyCrudService {
       },
     } : config.model === 'matiere' ? {
       _count: { select: { cours: true } },
+      cours: {
+        include: {
+          classe: { select: { id: true, nom: true } },
+          anneeAcademique: { select: { id: true, libelle: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      },
     } : config.model === 'bulletin' ? {
       classe: { select: { id: true, nom: true } },
     } : config.model === 'absenceEleve' ? {
@@ -345,6 +352,13 @@ export class LegacyCrudService {
       },
     } : config.model === 'matiere' ? {
       _count: { select: { cours: true } },
+      cours: {
+        include: {
+          classe: { select: { id: true, nom: true } },
+          anneeAcademique: { select: { id: true, libelle: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      },
     } : config.model === 'bulletin' ? {
       classe: { select: { id: true, nom: true } },
     } : config.model === 'absenceEleve' ? {
@@ -423,7 +437,11 @@ export class LegacyCrudService {
     const [classes, enseignants] = await Promise.all([
       this.prisma.classe.findMany({
         where: { tenantId, id: { in: [...uniqueClasseIds] } },
-        select: { id: true, anneeAcademiqueId: true },
+        select: {
+          id: true,
+          anneeAcademiqueId: true,
+          anneeAcademique: { select: { id: true, libelle: true } },
+        },
       }),
       this.prisma.user.findMany({
         where: {
@@ -442,8 +460,11 @@ export class LegacyCrudService {
       throw new BadRequestException('Un ou plusieurs enseignants sont introuvables pour cet établissement');
     }
     const classById = new Map(classes.map((classe) => [classe.id, classe]));
+    const fallbackAcademicYear = classes.some((classe) => !classe.anneeAcademiqueId)
+      ? await this.ensureCurrentAcademicYear(tenantId)
+      : null;
 
-    return this.prisma.$transaction(async (tx) => {
+    const createdId = await this.prisma.$transaction(async (tx) => {
       const matiere = await tx.matiere.create({
         data: {
           tenantId,
@@ -456,24 +477,298 @@ export class LegacyCrudService {
 
       const cours = await Promise.all(assignments.map((assignment) => {
         const classe = classById.get(assignment.classeId)!;
+        const annee = classe.anneeAcademique ?? fallbackAcademicYear;
+        if (!annee?.id) {
+          throw new BadRequestException('Aucune année académique disponible pour affecter cette matière');
+        }
+
         return tx.cours.create({
           data: {
             tenantId,
             matiereId: matiere.id,
             classeId: assignment.classeId,
             enseignantId: assignment.enseignantId,
-            anneeAcademiqueId: classe.anneeAcademiqueId,
+            anneeAcademiqueId: annee.id,
             coefficient: assignment.coefficient,
             volumeHoraireHebdo: assignment.volumeHoraireHebdo,
           },
           include: {
             classe: { select: { id: true, nom: true } },
           },
+        }).then(async (createdCours) => {
+          await tx.matiereClasse.upsert({
+            where: {
+              matiereId_classeId_enseignantId_anneeAcademiqueId: {
+                matiereId: matiere.id,
+                classeId: assignment.classeId,
+                enseignantId: assignment.enseignantId,
+                anneeAcademiqueId: annee.id,
+              },
+            },
+            update: {
+              anneeScolaire: annee.libelle,
+              volumeHoraire: assignment.volumeHoraireHebdo,
+            },
+            create: {
+              tenantId,
+              matiereId: matiere.id,
+              classeId: assignment.classeId,
+              enseignantId: assignment.enseignantId,
+              anneeAcademiqueId: annee.id,
+              anneeScolaire: annee.libelle,
+              volumeHoraire: assignment.volumeHoraireHebdo,
+            },
+          });
+          return createdCours;
         });
       }));
 
-      return { ...matiere, cours, _count: { cours: cours.length } };
+      await this.rebuildMatiereClasseForMatiere(tx, tenantId, matiere.id);
+      return matiere.id;
     });
+
+    return this.hydrateMatiereForAdmin(tenantId, createdId);
+  }
+
+  async updateMatiereWithAssignments(
+    tenantId: string,
+    id: string,
+    body: {
+      code?: unknown;
+      libelle?: unknown;
+      description?: unknown;
+      actif?: unknown;
+      affectations?: unknown;
+    },
+  ) {
+    const matiereId = this.assertUuid(id, 'id');
+    const existing = await this.prisma.matiere.findFirst({ where: { tenantId, id: matiereId } });
+    if (!existing) throw new NotFoundException('Matière introuvable');
+
+    const code = body.code !== undefined ? String(body.code ?? '').trim().toUpperCase() : existing.code;
+    const libelle = body.libelle !== undefined ? String(body.libelle ?? '').trim() : existing.libelle;
+    const description = body.description !== undefined ? String(body.description ?? '').trim() || null : existing.description;
+    const actif = body.actif !== undefined ? body.actif !== false : existing.actif;
+    if (!code || !libelle) {
+      throw new BadRequestException('Le code et le libellé de la matière sont obligatoires');
+    }
+
+    if (code !== existing.code) {
+      const duplicate = await this.prisma.matiere.findFirst({ where: { tenantId, code, id: { not: matiereId } } });
+      if (duplicate) throw new ConflictException('Une matière avec ce code existe déjà');
+    }
+
+    const shouldSyncAssignments = Array.isArray(body.affectations);
+    const assignments = shouldSyncAssignments
+      ? (body.affectations as unknown[]).map((raw, index) => {
+          const item = (raw ?? {}) as Record<string, unknown>;
+          const coursId = item.id || item.coursId ? this.assertUuid(String(item.id ?? item.coursId), `affectations[${index}].id`) : null;
+          const classeId = this.assertUuid(String(item.classeId ?? ''), `affectations[${index}].classeId`);
+          const enseignantId = this.assertUuid(String(item.enseignantId ?? ''), `affectations[${index}].enseignantId`);
+          const coefficient = Number(item.coefficient ?? 1);
+          const volumeHoraireHebdo = item.volumeHoraireHebdo === null
+            || item.volumeHoraireHebdo === undefined
+            || item.volumeHoraireHebdo === ''
+            ? null
+            : Number(item.volumeHoraireHebdo);
+
+          if (!Number.isFinite(coefficient) || coefficient < 0.5) {
+            throw new BadRequestException(`Coefficient invalide pour l'affectation ${index + 1}`);
+          }
+          if (volumeHoraireHebdo !== null && (!Number.isFinite(volumeHoraireHebdo) || volumeHoraireHebdo < 0)) {
+            throw new BadRequestException(`Volume horaire invalide pour l'affectation ${index + 1}`);
+          }
+          return { coursId, classeId, enseignantId, coefficient, volumeHoraireHebdo };
+        })
+      : [];
+
+    if (shouldSyncAssignments) {
+      const uniqueClasseIds = new Set(assignments.map((assignment) => assignment.classeId));
+      if (uniqueClasseIds.size !== assignments.length) {
+        throw new BadRequestException('Une classe ne peut être affectée qu’une seule fois à la même matière');
+      }
+
+      const [classes, enseignants] = await Promise.all([
+        this.prisma.classe.findMany({
+          where: { tenantId, id: { in: [...uniqueClasseIds] } },
+          select: {
+            id: true,
+            anneeAcademiqueId: true,
+            anneeAcademique: { select: { id: true, libelle: true } },
+          },
+        }),
+        this.prisma.user.findMany({
+          where: {
+            tenantId,
+            role: 'ENSEIGNANT',
+            id: { in: [...new Set(assignments.map((assignment) => assignment.enseignantId))] },
+          },
+          select: { id: true },
+        }),
+      ]);
+      if (classes.length !== uniqueClasseIds.size) {
+        throw new BadRequestException('Une ou plusieurs classes sont introuvables pour cet établissement');
+      }
+      const teacherIds = new Set(enseignants.map((enseignant) => enseignant.id));
+      if (assignments.some((assignment) => !teacherIds.has(assignment.enseignantId))) {
+        throw new BadRequestException('Un ou plusieurs enseignants sont introuvables pour cet établissement');
+      }
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.matiere.update({
+        where: { id: matiereId },
+        data: { code, libelle, description, actif },
+      });
+
+      if (!shouldSyncAssignments) return;
+
+      const classRows = await tx.classe.findMany({
+        where: { tenantId, id: { in: [...new Set(assignments.map((assignment) => assignment.classeId))] } },
+        select: {
+          id: true,
+          anneeAcademiqueId: true,
+          anneeAcademique: { select: { id: true, libelle: true } },
+        },
+      });
+      const classById = new Map(classRows.map((classe) => [classe.id, classe]));
+      const fallbackAcademicYear = classRows.some((classe) => !classe.anneeAcademiqueId)
+        ? await this.ensureCurrentAcademicYear(tenantId)
+        : null;
+
+      const existingCourses = await tx.cours.findMany({
+        where: { tenantId, matiereId },
+        include: {
+          _count: { select: { emploisDuTemps: true, appels: true, cahiersTexte: true } },
+        },
+      });
+      const existingById = new Map(existingCourses.map((cours) => [cours.id, cours]));
+      const keptCourseIds = new Set<string>();
+
+      for (const assignment of assignments) {
+        const classe = classById.get(assignment.classeId);
+        const annee = classe?.anneeAcademique ?? fallbackAcademicYear;
+        if (!annee?.id) {
+          throw new BadRequestException('Aucune année académique disponible pour affecter cette matière');
+        }
+
+        const data = {
+          tenantId,
+          matiereId,
+          classeId: assignment.classeId,
+          enseignantId: assignment.enseignantId,
+          anneeAcademiqueId: annee.id,
+          coefficient: assignment.coefficient,
+          volumeHoraireHebdo: assignment.volumeHoraireHebdo === null ? null : Math.trunc(assignment.volumeHoraireHebdo),
+        };
+
+        if (assignment.coursId && !existingById.has(assignment.coursId)) {
+          throw new BadRequestException('Une affectation ne correspond pas à cette matière');
+        }
+
+        const cours = assignment.coursId
+          ? await tx.cours.update({
+              where: { id: assignment.coursId },
+              data,
+            })
+          : await tx.cours.upsert({
+              where: {
+                matiereId_enseignantId_classeId_anneeAcademiqueId: {
+                  matiereId,
+                  enseignantId: assignment.enseignantId,
+                  classeId: assignment.classeId,
+                  anneeAcademiqueId: annee.id,
+                },
+              },
+              update: {
+                coefficient: assignment.coefficient,
+                volumeHoraireHebdo: assignment.volumeHoraireHebdo === null ? null : Math.trunc(assignment.volumeHoraireHebdo),
+              },
+              create: data,
+            });
+
+        keptCourseIds.add(cours.id);
+      }
+
+      const obsoleteCourses = existingCourses.filter((cours) => !keptCourseIds.has(cours.id));
+      const blocked = obsoleteCourses.find((cours) =>
+        cours._count.emploisDuTemps > 0 || cours._count.appels > 0 || cours._count.cahiersTexte > 0,
+      );
+      if (blocked) {
+        throw new BadRequestException('Impossible de retirer une affectation déjà utilisée dans un emploi du temps, un appel ou un cahier de texte');
+      }
+      if (obsoleteCourses.length) {
+        await tx.cours.deleteMany({ where: { id: { in: obsoleteCourses.map((cours) => cours.id) } } });
+      }
+
+      await this.rebuildMatiereClasseForMatiere(tx, tenantId, matiereId);
+    });
+
+    return this.hydrateMatiereForAdmin(tenantId, matiereId);
+  }
+
+  private async rebuildMatiereClasseForMatiere(client: any, tenantId: string, matiereId: string): Promise<void> {
+    const coursRows = await client.cours.findMany({
+      where: { tenantId, matiereId },
+      include: {
+        anneeAcademique: { select: { id: true, libelle: true } },
+        classe: {
+          select: {
+            anneeAcademiqueId: true,
+            anneeAcademique: { select: { id: true, libelle: true } },
+          },
+        },
+      },
+    });
+    const fallbackAcademicYear = coursRows.some((cours: any) => !cours.anneeAcademique && !cours.classe?.anneeAcademique)
+      ? await this.ensureCurrentAcademicYear(tenantId)
+      : null;
+
+    await client.matiereClasse.deleteMany({ where: { tenantId, matiereId } });
+    const rows = [];
+    for (const cours of coursRows) {
+      const annee = cours.anneeAcademique ?? cours.classe?.anneeAcademique ?? fallbackAcademicYear;
+      if (!annee?.id) {
+        throw new BadRequestException('Aucune année académique disponible pour affecter cette matière');
+      }
+      if (cours.anneeAcademiqueId !== annee.id) {
+        await client.cours.update({ where: { id: cours.id }, data: { anneeAcademiqueId: annee.id } });
+      }
+      rows.push({
+        tenantId,
+        matiereId: cours.matiereId,
+        classeId: cours.classeId,
+        enseignantId: cours.enseignantId,
+        anneeAcademiqueId: annee.id,
+        anneeScolaire: annee.libelle,
+        volumeHoraire: cours.volumeHoraireHebdo === null || cours.volumeHoraireHebdo === undefined
+          ? null
+          : Math.trunc(Number(cours.volumeHoraireHebdo)),
+      });
+    }
+
+    if (rows.length) {
+      await client.matiereClasse.createMany({ data: rows, skipDuplicates: true });
+    }
+  }
+
+  private async hydrateMatiereForAdmin(tenantId: string, matiereId: string): Promise<Payload> {
+    const matiere = await this.prisma.matiere.findFirst({
+      where: { tenantId, id: matiereId },
+      include: {
+        _count: { select: { cours: true } },
+        cours: {
+          include: {
+            classe: { select: { id: true, nom: true } },
+            anneeAcademique: { select: { id: true, libelle: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+    if (!matiere) throw new NotFoundException('Matière introuvable');
+    const cours = await this.attachEnseignantById((matiere.cours ?? []) as unknown as Payload[]);
+    return { ...matiere, cours };
   }
 
   async create(config: CrudConfig, tenantId: string | undefined, body: Payload, userOrId?: string | JwtUser) {
@@ -530,6 +825,11 @@ export class LegacyCrudService {
       await this.refreshBulletinsForNote(tenantId, created.eleveId, created.trimestre, created.anneeScolaire);
     }
 
+    if (config.model === 'cours') {
+      await this.rebuildMatiereClasseForMatiere(this.prisma, tenantId ?? String(created.tenantId ?? ''), created.matiereId);
+      return this.findOne(config, tenantId, created.id);
+    }
+
     if (config.model === 'bulletin') {
       return this.attachBulletinPdf(tenantId, created);
     }
@@ -571,6 +871,9 @@ export class LegacyCrudService {
     const stagiaireIds = config.model === 'classe' && Array.isArray(body.stagiaireIds)
       ? body.stagiaireIds.map(String).map((id, index) => this.assertUuid(id, `stagiaireIds[${index}]`))
       : undefined;
+    const previousCours = config.model === 'cours'
+      ? await this.prisma.cours.findFirst({ where: { id, ...this.fixedWhere(config, tenantId) } })
+      : null;
 
     const data = await this.prepareData(config, tenantId, body, false);
     delete data.__tempPasswordForNotification;
@@ -588,6 +891,15 @@ export class LegacyCrudService {
 
     if (config.model === 'note') {
       await this.refreshBulletinsForNote(tenantId, updated.eleveId, updated.trimestre, updated.anneeScolaire);
+    }
+
+    if (config.model === 'cours') {
+      const resolvedTenantId = tenantId ?? String(updated.tenantId ?? previousCours?.tenantId ?? '');
+      if (previousCours?.matiereId && previousCours.matiereId !== updated.matiereId) {
+        await this.rebuildMatiereClasseForMatiere(this.prisma, resolvedTenantId, previousCours.matiereId);
+      }
+      await this.rebuildMatiereClasseForMatiere(this.prisma, resolvedTenantId, updated.matiereId);
+      return this.findOne(config, tenantId, id);
     }
 
     if (config.model === 'bulletin') {
@@ -625,7 +937,13 @@ export class LegacyCrudService {
       throw new BadRequestException('SUPPRESSION_INSCRIPTION_INTERDITE: désactivez l’inscription au lieu de la supprimer');
     }
     await this.findOne(config, tenantId, id);
+    const coursToDelete = config.model === 'cours'
+      ? await this.prisma.cours.findFirst({ where: { id, ...this.fixedWhere(config, tenantId) } })
+      : null;
     await this.delegate(config.model).delete({ where: { id } });
+    if (coursToDelete) {
+      await this.rebuildMatiereClasseForMatiere(this.prisma, tenantId ?? coursToDelete.tenantId, coursToDelete.matiereId);
+    }
   }
 
   findCurrentAnnee(tenantId: string | undefined) {
@@ -1514,21 +1832,87 @@ export class LegacyCrudService {
     }
 
     const search = this.first(query.search)?.trim();
-    if (search && config.model === 'user') {
-      where.OR = [
-        { firstName: { contains: search, mode: 'insensitive' } },
-        { lastName: { contains: search, mode: 'insensitive' } },
-        { username: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { telephone: { contains: search, mode: 'insensitive' } },
-        { adresse: { contains: search, mode: 'insensitive' } },
-        { profession: { contains: search, mode: 'insensitive' } },
-        { lieuTravail: { contains: search, mode: 'insensitive' } },
-        { telephoneTravail: { contains: search, mode: 'insensitive' } },
-      ];
+    if (search) {
+      const searchConditions = this.buildSearchConditions(config.model, search);
+      if (searchConditions.length) where.OR = searchConditions;
     }
     await this.applyModelSpecificFilters(where, config, tenantId, query);
     return where;
+  }
+
+  private buildSearchConditions(model: string, search: string): Payload[] {
+    const contains = { contains: search, mode: 'insensitive' };
+    const byFields = (fields: string[]) => fields.map((field) => ({ [field]: contains }));
+
+    switch (model) {
+      case 'user':
+        return byFields([
+          'firstName',
+          'lastName',
+          'username',
+          'email',
+          'telephone',
+          'adresse',
+          'profession',
+          'lieuTravail',
+          'telephoneTravail',
+          'matricule',
+          'numeroIdentificationNational',
+          'lieuNaissance',
+        ]);
+      case 'cycle':
+      case 'niveau':
+        return byFields(['code', 'libelle']);
+      case 'anneeAcademique':
+        return byFields(['libelle']);
+      case 'batiment':
+        return byFields(['nom', 'description']);
+      case 'salle':
+        return byFields(['nom', 'typeSalle']);
+      case 'classe':
+        return [
+          ...byFields(['nom']),
+          { niveau: { is: { OR: byFields(['code', 'libelle']) } } },
+          { anneeAcademique: { is: { libelle: contains } } },
+        ];
+      case 'matiere':
+        return byFields(['code', 'libelle', 'description']);
+      case 'personnel':
+        return [
+          ...byFields(['numeroMatricule']),
+          {
+            utilisateur: {
+              is: {
+                OR: byFields(['firstName', 'lastName', 'username', 'email', 'telephone', 'adresse', 'specialite', 'matricule']),
+              },
+            },
+          },
+        ];
+      case 'paiement':
+        return byFields(['reference', 'transactionId', 'anneeScolaire', 'trimestre', 'description']);
+      case 'absenceEleve':
+        return byFields(['motif', 'documentUrl']);
+      case 'emploiDuTemps':
+        return byFields(['jourSemaine', 'heureDebut', 'heureFin', 'anneeScolaire']);
+      case 'cahierTexte':
+        return byFields(['contenuTraite', 'observations', 'etapeProgramme']);
+      case 'convocation':
+        return byFields(['motif', 'statut', 'compteRendu']);
+      case 'notification':
+        return byFields(['titre', 'contenu']);
+      case 'annonce':
+        return byFields(['titre', 'contenu']);
+      case 'note':
+        return byFields(['trimestre', 'anneeScolaire', 'commentaire']);
+      case 'bulletin':
+        return byFields(['trimestre', 'anneeScolaire', 'appreciation']);
+      case 'reclamation':
+        return byFields(['motif', 'reponse']);
+      case 'calendrierScolaire':
+        return byFields(['titre', 'description', 'type']);
+      default:
+        return [];
+    }
   }
 
   private normalizeQueryValue(key: string, value: string | undefined) {
@@ -1587,6 +1971,9 @@ export class LegacyCrudService {
         if (data[field] !== undefined) {
           data[field] = normalizePhoneForCountry(data[field], phoneCountry) ?? null;
         }
+      }
+      if (create && data.role === 'ENSEIGNANT' && !data.telephone) {
+        throw new BadRequestException('telephone est requis pour créer un professeur');
       }
       if (data.numeroIdentificationNational !== undefined) {
         const nin = String(data.numeroIdentificationNational ?? '').trim();
@@ -2255,6 +2642,40 @@ export class LegacyCrudService {
       }
     }
 
+    if (!data.matiereId && create) {
+      throw new BadRequestException('Veuillez sélectionner une matière pour ce cours');
+    }
+    if (!data.classeId && create) {
+      throw new BadRequestException('Veuillez sélectionner une classe pour ce cours');
+    }
+
+    if (data.matiereId !== undefined && data.matiereId !== null && data.matiereId !== '') {
+      const matiereId = this.assertUuid(String(data.matiereId), 'matiereId');
+      const matiere = await this.prisma.matiere.findFirst({
+        where: { id: matiereId, tenantId },
+        select: { id: true },
+      });
+      if (!matiere) throw new BadRequestException('Matière introuvable pour cet établissement');
+      data.matiereId = matiereId;
+    }
+
+    if (data.classeId !== undefined && data.classeId !== null && data.classeId !== '') {
+      const classeId = this.assertUuid(String(data.classeId), 'classeId');
+      const classe = await this.prisma.classe.findFirst({
+        where: { id: classeId, tenantId },
+        select: {
+          id: true,
+          anneeAcademiqueId: true,
+          anneeAcademique: { select: { id: true } },
+        },
+      });
+      if (!classe) throw new BadRequestException('Classe introuvable pour cet établissement');
+      data.classeId = classeId;
+      if (!data.anneeAcademiqueId) {
+        data.anneeAcademiqueId = classe.anneeAcademiqueId ?? (await this.ensureCurrentAcademicYear(tenantId)).id;
+      }
+    }
+
     if (data.heures !== undefined && data.volumeHoraireHebdo === undefined) {
       data.volumeHoraireHebdo = data.heures;
     }
@@ -2295,6 +2716,15 @@ export class LegacyCrudService {
     // Année académique : rattacher à l'année courante par défaut
     if (create && !data.anneeAcademiqueId) {
       data.anneeAcademiqueId = (await this.ensureCurrentAcademicYear(tenantId)).id;
+    }
+    if (data.anneeAcademiqueId !== undefined && data.anneeAcademiqueId !== null && data.anneeAcademiqueId !== '') {
+      const anneeAcademiqueId = this.assertUuid(String(data.anneeAcademiqueId), 'anneeAcademiqueId');
+      const annee = await this.prisma.anneeAcademique.findFirst({
+        where: { id: anneeAcademiqueId, tenantId },
+        select: { id: true },
+      });
+      if (!annee) throw new BadRequestException('Année académique introuvable pour cet établissement');
+      data.anneeAcademiqueId = anneeAcademiqueId;
     }
 
     // `description` n'existe pas sur le modèle Cours -> on l'écarte toujours

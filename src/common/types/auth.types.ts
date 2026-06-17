@@ -18,6 +18,9 @@ export interface JwtUser {
   email?: string | null;
   telephone?: string | null;
   isPlatform?: boolean;
+  accountType?: 'PLATFORM' | 'TENANT';
+  groups?: UserRole[];
+  userId?: string;
   iat?: number;
   exp?: number;
 }

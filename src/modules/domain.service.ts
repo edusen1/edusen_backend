@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { PrismaService } from "@/config/prisma.service";
 import { WhatsappService } from "@/modules/whatsapp/whatsapp.service";
 import { normalizePhoneForCountry } from "@/common/utils/phone.util";
+import { formatMru } from "@/common/utils/currency.util";
 
 @Injectable()
 export class DomainService {
@@ -627,7 +628,7 @@ export class DomainService {
       select: { firstName: true, lastName: true, telephone: true },
     });
     if (eleve?.telephone) {
-      const msg = `✅ *Paiement confirmé*\nBonjour ${eleve.firstName ?? ''},\nVotre paiement de *${Number(paiement.montant).toLocaleString('fr-FR')} FCFA* (${paiement.typePaiement}) a été validé.\nRéférence : ${paiement.reference}`;
+      const msg = `✅ *Paiement confirmé*\nBonjour ${eleve.firstName ?? ''},\nVotre paiement de *${formatMru(paiement.montant)}* (${paiement.typePaiement}) a été validé.\nRéférence : ${paiement.reference}`;
       this.whatsapp.sendMessage(paiement.tenantId, eleve.telephone, msg).catch(() => {});
     }
     return updated;

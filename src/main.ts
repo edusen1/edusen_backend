@@ -59,14 +59,19 @@ async function bootstrap(): Promise<void> {
   const defaultAllowedOrigins = [
     'http://localhost:4200',
     'http://127.0.0.1:4200',
+    'http://localhost:4300',
+    'http://127.0.0.1:4300',
     'https://noura-school.assanediallo.com',
     'https://nouraschool.assanediallo.com',
+    'https://nouraschool-plateforme.assanediallo.com',
+    'https://noura-school-plateforme.assanediallo.com',
   ];
   const normalizeOrigin = (origin: string) => origin.trim().replace(/\/$/, '').toLowerCase();
   const allowedOrigins = new Set(
     [
       ...defaultAllowedOrigins,
       ...(process.env.ALLOWED_ORIGINS ?? '').split(','),
+      ...(process.env.CORS_ORIGINS ?? '').split(','),
     ]
       .map(normalizeOrigin)
       .filter(Boolean),

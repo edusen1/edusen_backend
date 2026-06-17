@@ -19,6 +19,7 @@ import { LegacyCrudService } from '@/modules/legacy-crud.service';
 import { EcoleConfigService } from '@/modules/configuration/ecole-config.service';
 import { UpdateEcoleConfigDto } from '@/modules/configuration/dto/update-ecole-config.dto';
 import { UpdateApparenceDto } from '@/modules/configuration/dto/update-apparence.dto';
+import { SaveApparencePaletteDto } from '@/modules/configuration/dto/save-apparence-palette.dto';
 import { AcademiqueConfigService } from '@/modules/configuration/academique-config.service';
 import { SaveFraisDto } from '@/modules/configuration/dto/save-frais.dto';
 import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
@@ -131,6 +132,20 @@ export class AdminController {
   ) {
     return this.resolveTenantId(tenantId, user).then((tid) =>
       this.crud.createMatiereWithAssignments(tid!, body),
+    );
+  }
+
+  @Roles('ADMIN')
+  @Put('matieres/:id/avec-affectations')
+  @Patch('matieres/:id/avec-affectations')
+  updateMatiereWithAssignments(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.resolveTenantId(tenantId, user).then((tid) =>
+      this.crud.updateMatiereWithAssignments(tid!, id, body),
     );
   }
 
@@ -339,6 +354,39 @@ export class AdminController {
     return this.ecoleConfig.updateApparence(tid!, dto);
   }
 
+  @Roles('ADMIN')
+  @Get('configuration/apparence-palettes')
+  getApparencePalettes(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = tenantId?.trim() || user?.tenantId;
+    return this.ecoleConfig.getApparencePalettes(tid!);
+  }
+
+  @Roles('ADMIN')
+  @Post('configuration/apparence-palettes')
+  saveApparencePalette(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() dto: SaveApparencePaletteDto,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = tenantId?.trim() || user?.tenantId;
+    return this.ecoleConfig.saveApparencePalette(tid!, dto);
+  }
+
+  @Roles('ADMIN')
+  @Delete('configuration/apparence-palettes/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  deleteApparencePalette(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = tenantId?.trim() || user?.tenantId;
+    return this.ecoleConfig.deleteApparencePalette(tid!, id);
+  }
+
   // ----------------------------------------------------------------
   // Configuration académique — ADMIN uniquement
   // ----------------------------------------------------------------
@@ -425,6 +473,17 @@ export class AdminController {
   }
 
   @Roles('ADMIN')
+  @Delete('configuration/sections/:id')
+  deleteSection(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = tenantId?.trim() || user?.tenantId;
+    return this.academiqueConfig.deleteSection(tid!, id);
+  }
+
+  @Roles('ADMIN')
   @Get('configuration/niveaux')
   getNiveaux(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -461,11 +520,23 @@ export class AdminController {
   ) {
     const tid = tenantId?.trim() || user?.tenantId;
     return this.academiqueConfig.updateNiveau(tid!, id, {
+      sectionId: body.sectionId !== undefined ? String(body.sectionId) : undefined,
       nom: body.nom !== undefined || body.libelle !== undefined ? String(body.nom ?? body.libelle) : undefined,
       ordre: body.ordre !== undefined ? Number(body.ordre) : undefined,
       moyennePassage: body.moyennePassage !== undefined ? Number(body.moyennePassage) : undefined,
       actif: body.actif !== undefined ? Boolean(body.actif) : undefined,
     });
+  }
+
+  @Roles('ADMIN')
+  @Delete('configuration/niveaux/:id')
+  deleteNiveau(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = tenantId?.trim() || user?.tenantId;
+    return this.academiqueConfig.deleteNiveau(tid!, id);
   }
 
   @Roles('ADMIN')

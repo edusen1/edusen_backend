@@ -6,12 +6,26 @@ import { CreateTenantDto } from '@/modules/platform/dto/create-tenant.dto';
 import { CreateUserDto } from '@/modules/platform/dto/create-user.dto';
 import { rethrowServiceError } from '@/common/utils/service-error.util';
 import { StorageService } from '@/infrastructure/storage/storage.service';
+import { MailService } from '@/infrastructure/mail/mail.service';
+
+const PLATFORM_USER_SELECT = {
+  id: true,
+  nom: true,
+  prenom: true,
+  email: true,
+  telephone: true,
+  rolePlateforme: true,
+  actif: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
 
 @Injectable()
 export class PlatformService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly mailService: MailService,
   ) {}
 
   async findTenants() {
@@ -42,13 +56,13 @@ export class PlatformService {
         this.generateUniqueCode('codeAccesSurveillant'),
         this.generateUniqueCode('codeAccesRh'),
       ]);
-      return await this.prisma.tenant.create({
+      const tenant = await this.prisma.tenant.create({
         data: {
           slug,
-          nom: dto.nom,
-          emailContact: dto.emailContact,
-          telephone: dto.telephone,
-          adresse: dto.adresse,
+          nom: dto.nom.trim(),
+          emailContact: this.cleanEmail(dto.emailContact),
+          telephone: this.clean(dto.telephone),
+          adresse: this.clean(dto.adresse),
           logoUrl: dto.logoUrl,
           plan: dto.plan ?? 'TRIAL',
           dateExpiration,
@@ -61,6 +75,13 @@ export class PlatformService {
           codeAccesRh,
         } as any,
       });
+
+      const initialAdmin = await this.createInitialTenantAdmin(tenant.id, tenant.nom, dto);
+      return {
+        ...tenant,
+        logoUrl: this.storage.resolveUrl(tenant.logoUrl) ?? tenant.logoUrl,
+        ...(initialAdmin ? { initialAdmin } : {}),
+      };
     } catch (error) {
       rethrowServiceError(error, 'création tenant');
     }
@@ -78,10 +99,10 @@ export class PlatformService {
       where: { id },
       data: {
         slug,
-        nom: dto.nom,
-        emailContact: dto.emailContact,
-        telephone: dto.telephone,
-        adresse: dto.adresse,
+        nom: dto.nom?.trim(),
+        emailContact: this.cleanEmail(dto.emailContact),
+        telephone: this.clean(dto.telephone),
+        adresse: this.clean(dto.adresse),
         logoUrl: dto.logoUrl,
         plan: dto.plan,
         actif: dto.actif,
@@ -93,23 +114,44 @@ export class PlatformService {
   reactivateTenant(id: string) { return this.prisma.tenant.update({ where: { id }, data: { actif: true } }); }
   deleteTenant(id: string) { return this.prisma.tenant.delete({ where: { id } }); }
 
-  listUsers() { return this.prisma.plateformeUtilisateur.findMany({ orderBy: { createdAt: 'desc' } }); }
-  getUser(id: string) { return this.prisma.plateformeUtilisateur.findUnique({ where: { id } }); }
+  async uploadTenantLogo(id: string, buffer: Buffer, contentType: string, filename?: string) {
+    const key = this.storage.buildKey('logos/tenants', id, filename || 'logo');
+    const stored = await this.storage.upload(key, buffer, contentType);
+    const tenant = await this.updateTenant(id, { logoUrl: stored });
+    return { logoUrl: tenant.logoUrl };
+  }
+
+  listUsers() {
+    return this.prisma.plateformeUtilisateur.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: PLATFORM_USER_SELECT,
+    });
+  }
+
+  getUser(id: string) {
+    return this.prisma.plateformeUtilisateur.findUnique({
+      where: { id },
+      select: PLATFORM_USER_SELECT,
+    });
+  }
 
   async createUser(dto: CreateUserDto) {
     try {
-      const password = dto.password ?? Math.random().toString(36).slice(2, 14);
+      const password = dto.password ?? this.generateTempPassword();
       const motDePasse = await bcrypt.hash(password, 12);
-      return await this.prisma.plateformeUtilisateur.create({
+      const user = await this.prisma.plateformeUtilisateur.create({
         data: {
-          nom: dto.nom,
-          prenom: dto.prenom,
-          email: dto.email,
-          telephone: dto.telephone,
+          nom: dto.nom.trim(),
+          prenom: dto.prenom.trim(),
+          email: dto.email.trim().toLowerCase(),
+          telephone: this.clean(dto.telephone),
           rolePlateforme: dto.rolePlateforme ?? 'GESTIONNAIRE',
           motDePasse,
         },
+        select: PLATFORM_USER_SELECT,
       });
+      this.mailService.sendCompteCree(user.email, user.prenom, user.nom, password);
+      return { ...user, temporaryPassword: password };
     } catch (error) {
       rethrowServiceError(error, 'création utilisateur plateforme');
     }
@@ -164,6 +206,10 @@ export class PlatformService {
       users: totalUsers,
       utilisateurs: totalUsers,
       utilisateursPlateforme,
+      nbTenants: totalTenants,
+      nbTenantsActifs: tenantActifs,
+      nbUtilisateurs: totalUsers,
+      nbPlateformeUtilisateurs: utilisateursPlateforme,
       inscriptions: totalInscriptions,
       paiements: totalPaiements,
       parPlan: tenantParPlan.map((p) => ({ plan: p.plan, count: p._count._all })),
@@ -172,8 +218,87 @@ export class PlatformService {
     };
   }
 
-  auditLogs() {
-    return this.prisma.auditLog.findMany({ orderBy: { createdAt: 'desc' }, take: 200 });
+  async auditLogs(page = 0, size = 20, filters?: { action?: string; tenantId?: string }) {
+    const safePage = Math.max(0, Number(page) || 0);
+    const safeSize = Math.min(100, Math.max(1, Number(size) || 20));
+    const where = {
+      ...(filters?.action ? { action: { contains: filters.action, mode: 'insensitive' as const } } : {}),
+      ...(filters?.tenantId ? { tenantId: filters.tenantId } : {}),
+    };
+    const [content, totalElements] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: safePage * safeSize,
+        take: safeSize,
+      }),
+      this.prisma.auditLog.count({ where }),
+    ]);
+    const totalPages = Math.ceil(totalElements / safeSize);
+    return {
+      content,
+      page: safePage,
+      size: safeSize,
+      totalElements,
+      totalPages,
+      first: safePage === 0,
+      last: totalPages === 0 || safePage >= totalPages - 1,
+    };
+  }
+
+  private async createInitialTenantAdmin(tenantId: string, tenantName: string, dto: CreateTenantDto) {
+    const email = this.cleanEmail(dto.initialAdminEmail);
+    if (!email) {
+      return null;
+    }
+
+    const password = process.env.TENANT_INITIAL_ADMIN_PASSWORD || this.generateTempPassword();
+    const passwordHash = await bcrypt.hash(password, 12);
+    const names = this.splitAdminName(tenantName);
+    const admin = await this.prisma.user.upsert({
+      where: { tenantId_email: { tenantId, email } },
+      create: {
+        tenantId,
+        email,
+        telephone: this.clean(dto.initialAdminTelephone),
+        username: email,
+        firstName: names.firstName,
+        lastName: names.lastName,
+        passwordHash,
+        role: 'ADMIN',
+        actif: true,
+        mustChangePwd: true,
+      },
+      update: {
+        telephone: this.clean(dto.initialAdminTelephone),
+        role: 'ADMIN',
+        actif: true,
+      },
+      select: { id: true, email: true, telephone: true, firstName: true, lastName: true, role: true },
+    });
+    this.mailService.sendCompteCree(admin.email ?? email, admin.firstName, admin.lastName, password, tenantName);
+    return { ...admin, temporaryPassword: password };
+  }
+
+  private clean(value?: string | null): string | undefined {
+    const cleanValue = value?.trim();
+    return cleanValue || undefined;
+  }
+
+  private cleanEmail(value?: string | null): string | undefined {
+    const cleanValue = value?.trim().toLowerCase();
+    return cleanValue || undefined;
+  }
+
+  private generateTempPassword(): string {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@$!';
+    const bytes = randomBytes(14);
+    return Array.from(bytes, (byte) => chars[byte % chars.length]).join('');
+  }
+
+  private splitAdminName(tenantName: string): { firstName: string; lastName: string } {
+    const cleanName = tenantName.trim() || 'Ecole';
+    return { firstName: 'Admin', lastName: cleanName.slice(0, 100) };
   }
 
   private schoolCode(value: string): string {
