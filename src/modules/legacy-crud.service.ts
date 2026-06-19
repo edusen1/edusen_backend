@@ -2210,6 +2210,9 @@ export class LegacyCrudService {
       if (eleveClasse && !safeEntity.classe) {
         safeEntity.classe = eleveClasse;
       }
+      if ((safeEntity.classe || eleveClasse) && !safeEntity.eleveClasse) {
+        safeEntity.eleveClasse = (safeEntity.classe ?? eleveClasse) as Payload;
+      }
       return safeEntity;
     }
     // Resolve photo URLs nested in personnel.utilisateur
@@ -2223,6 +2226,7 @@ export class LegacyCrudService {
   }
 
   private async attachEleveIfNeeded<T extends Payload>(model: string, rows: T[], tenantId?: string): Promise<T[]> {
+    if (model === 'user') return this.attachCurrentClasseForStudents(rows, tenantId);
     if (model === 'inscription') return this.attachInscriptionEleves(rows);
     if (model === 'bulletin' || model === 'absenceEleve' || model === 'reclamation') {
       return this.attachEleveById(rows);
@@ -2236,6 +2240,55 @@ export class LegacyCrudService {
     }
     if (model === 'convocation') return this.attachEleveById(rows);
     return rows;
+  }
+
+  private async attachCurrentClasseForStudents<T extends Payload>(rows: T[], tenantId?: string): Promise<T[]> {
+    if (!tenantId || rows.length === 0) return rows;
+    const eleveIds = rows
+      .filter((row) => String(row.role ?? '').toUpperCase() === 'ELEVE')
+      .map((row) => String(row.id ?? ''))
+      .filter(Boolean);
+    if (eleveIds.length === 0) return rows;
+
+    const inscriptions = await this.prisma.inscription.findMany({
+      where: { tenantId, eleveId: { in: [...new Set(eleveIds)] }, statut: 'ACTIF' },
+      include: {
+        classe: { select: { id: true, nom: true } },
+        anneeAcademique: { select: { id: true, libelle: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    const inscriptionByEleve = new Map<string, (typeof inscriptions)[number]>();
+    for (const inscription of inscriptions) {
+      if (!inscriptionByEleve.has(inscription.eleveId)) {
+        inscriptionByEleve.set(inscription.eleveId, inscription);
+      }
+    }
+
+    return rows.map((row) => {
+      if (String(row.role ?? '').toUpperCase() !== 'ELEVE') return row;
+      const inscription = inscriptionByEleve.get(String(row.id ?? ''));
+      const classe = (row.classe as Payload | undefined) ?? (row.eleveClasse as Payload | undefined) ?? inscription?.classe ?? null;
+      return {
+        ...row,
+        classeId: row.classeId ?? inscription?.classeId ?? classe?.id ?? null,
+        classe,
+        eleveClasse: classe,
+        anneeAcademique: row.anneeAcademique ?? inscription?.anneeAcademique?.libelle ?? null,
+        anneeAcademiqueId: row.anneeAcademiqueId ?? inscription?.anneeAcademiqueId ?? null,
+        inscription: inscription
+          ? {
+              id: inscription.id,
+              numeroInscription: inscription.numeroInscription,
+              statut: inscription.statut,
+              classeId: inscription.classeId,
+              anneeAcademiqueId: inscription.anneeAcademiqueId,
+              classe: inscription.classe,
+              anneeAcademique: inscription.anneeAcademique,
+            }
+          : row.inscription ?? null,
+      };
+    });
   }
 
   private async attachEnseignantById<T extends Payload>(rows: T[]): Promise<T[]> {

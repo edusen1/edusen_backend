@@ -252,11 +252,52 @@ export class DomainService {
     });
   }
 
-  studentProfil(userId: string) {
-    return this.prisma.user.findUnique({
+  async studentProfil(userId: string) {
+    const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: this.userProfileSelect,
+      select: {
+        ...this.userProfileSelect,
+        tenantId: true,
+        eleveClasse: { select: { id: true, nom: true } },
+      },
     });
+    if (!user) return null;
+
+    const { tenantId, eleveClasse, ...profile } = user;
+    if (profile.role !== "ELEVE") {
+      return { ...profile, classe: eleveClasse ?? null, eleveClasse: eleveClasse ?? null };
+    }
+
+    const inscription = await this.prisma.inscription.findFirst({
+      where: { tenantId, eleveId: profile.id, statut: "ACTIF" },
+      include: {
+        classe: { select: { id: true, nom: true } },
+        anneeAcademique: { select: { id: true, libelle: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    const classe = inscription?.classe ?? eleveClasse ?? null;
+
+    return {
+      ...profile,
+      classeId: inscription?.classeId ?? profile.classeId ?? classe?.id ?? null,
+      classe,
+      eleveClasse: classe,
+      anneeAcademique: inscription?.anneeAcademique?.libelle ?? null,
+      anneeAcademiqueId: inscription?.anneeAcademiqueId ?? null,
+      statut: inscription?.statut ?? null,
+      inscription: inscription
+        ? {
+            id: inscription.id,
+            numeroInscription: inscription.numeroInscription,
+            statut: inscription.statut,
+            classeId: inscription.classeId,
+            anneeAcademiqueId: inscription.anneeAcademiqueId,
+            classe: inscription.classe,
+            anneeAcademique: inscription.anneeAcademique,
+          }
+        : null,
+    };
   }
   async studentUpdateProfil(userId: string, data: { telephone?: string }) {
     const user = await this.prisma.user.findUnique({
@@ -270,7 +311,7 @@ export class DomainService {
       select: { pays: true },
     });
 
-    return this.prisma.user.update({
+    await this.prisma.user.update({
       where: { id: userId },
       data: {
         telephone:
@@ -278,8 +319,8 @@ export class DomainService {
             ? normalizePhoneForCountry(data.telephone, config?.pays ?? "SN") ?? null
             : undefined,
       },
-      select: this.userProfileSelect,
     });
+    return this.studentProfil(userId);
   }
   studentNotes(tenantId: string, eleveId: string, trimestre?: string) {
     return this.prisma.note.findMany({
