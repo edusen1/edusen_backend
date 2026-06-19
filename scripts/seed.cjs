@@ -655,7 +655,17 @@ async function main() {
 
   const tenant = await upsertById(
     'tenant',
-    { slug: TENANT_SLUG },
+    {
+      OR: [
+        { slug: TENANT_SLUG },
+        { codeAccesEleve: TENANT_CODE_ELEVE },
+        { codeAccesEnseignant: TENANT_CODE_ENSEIGNANT },
+        { codeAccesCaissier: TENANT_CODE_CAISSIER },
+        { codeAccesAdmin: TENANT_CODE_ADMIN },
+        { codeAccesSurveillant: TENANT_CODE_SURVEILLANT },
+        { codeAccesRh: TENANT_CODE_RH },
+      ],
+    },
     {
       slug: TENANT_SLUG,
       codeAccesEleve:       TENANT_CODE_ELEVE,
