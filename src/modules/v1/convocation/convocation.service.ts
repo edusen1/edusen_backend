@@ -8,7 +8,9 @@ export interface CreateConvocationDto {
   parentId: string;
   eleveId: string;
   motif: string;
+  type?: string;
   dateConvocation: string;
+  observations?: string | null;
 }
 
 @Injectable()
@@ -26,7 +28,9 @@ export class ConvocationService {
           parentId: dto.parentId,
           eleveId: dto.eleveId,
           motif: dto.motif,
+          type: this.normalizeType(dto.type),
           dateConvocation: new Date(dto.dateConvocation),
+          observations: dto.observations || null,
           statut: 'EN_ATTENTE',
           creePar,
         },
@@ -100,5 +104,10 @@ export class ConvocationService {
   async delete(tenantId: string, id: string): Promise<void> {
     await this.findOne(tenantId, id);
     await this.prisma.convocation.delete({ where: { id } });
+  }
+
+  private normalizeType(value?: string): string {
+    const type = String(value ?? '').trim().toUpperCase();
+    return ['DISCIPLINAIRE', 'ACADEMIQUE', 'ADMINISTRATIF'].includes(type) ? type : 'DISCIPLINAIRE';
   }
 }

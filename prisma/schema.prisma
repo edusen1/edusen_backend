@@ -837,8 +837,10 @@ model Convocation {
   parentId        String   @db.Uuid
   eleveId         String   @db.Uuid
   motif           String
+  type            String   @default("DISCIPLINAIRE") @db.VarChar(40)
   dateConvocation DateTime
   statut          String   @default("EN_ATTENTE") @db.VarChar(20)
+  observations    String?
   compteRendu     String?
   creePar         String?  @db.Uuid
   createdAt       DateTime @default(now())

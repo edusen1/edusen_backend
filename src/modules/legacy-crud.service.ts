@@ -2892,9 +2892,10 @@ export class LegacyCrudService {
       data.dateConvocation = new Date();
     }
     if (!data.creePar && userId) data.creePar = userId;
-    // Champs absents du modèle Convocation
-    delete data.type;
-    delete data.observations;
+    const allowedTypes = new Set(['DISCIPLINAIRE', 'ACADEMIQUE', 'ADMINISTRATIF']);
+    const type = String(data.type ?? '').trim().toUpperCase();
+    data.type = allowedTypes.has(type) ? type : 'DISCIPLINAIRE';
+    if (data.observations === '') data.observations = null;
   }
 
   private normalizeAnnonceData(data: Payload, create: boolean): void {
@@ -2937,6 +2938,9 @@ export class LegacyCrudService {
 
     if (data.heureArrivee === '') data.heureArrivee = null;
     if (data.heureDepart === '') data.heureDepart = null;
+    if (data.methode !== undefined && data.methode !== null) {
+      data.methode = String(data.methode).trim().toUpperCase() || null;
+    }
     if (data.observations === '') data.observations = null;
     if (create && data.date == null) data.date = new Date();
   }
