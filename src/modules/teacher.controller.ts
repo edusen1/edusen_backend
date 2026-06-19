@@ -203,20 +203,36 @@ export class TeacherController {
   @Post('notes')
   createNote(
     @Headers('x-tenant-id') tenantId: string,
-    @Body() body: { eleveId: string; coursId?: string; matiereId?: string; valeur?: number; note?: number; typeEval?: string },
+    @Body() body: {
+      eleveId: string;
+      coursId?: string;
+      matiereId?: string;
+      valeur?: number;
+      note?: number;
+      noteSur?: number;
+      typeEval?: string;
+      typeEvaluation?: string;
+      trimestre?: string;
+      anneeScolaire?: string;
+      commentaire?: string | null;
+    },
   ) {
     return this.domain.teacherCreateNote(tenantId, {
       eleveId: body.eleveId,
       coursId: body.coursId,
       matiereId: body.matiereId,
       valeur: body.note ?? body.valeur ?? 0,
-      typeEval: body.typeEval,
+      typeEval: body.typeEval ?? body.typeEvaluation,
+      trimestre: body.trimestre,
+      anneeScolaire: body.anneeScolaire,
+      noteSur: body.noteSur,
+      commentaire: body.commentaire,
     });
   }
 
   @Put('notes/:noteId')
-  updateNote(@Param('noteId') noteId: string, @Body() body: { valeur?: number; note?: number }) {
-    return this.domain.teacherUpdateNote(noteId, body.note ?? body.valeur ?? 0);
+  updateNote(@Param('noteId') noteId: string, @Body() body: { valeur?: number; note?: number; commentaire?: string | null }) {
+    return this.domain.teacherUpdateNote(noteId, body.note ?? body.valeur ?? 0, body.commentaire);
   }
 
   @Get('absences')

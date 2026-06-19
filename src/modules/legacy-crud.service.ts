@@ -807,6 +807,10 @@ export class LegacyCrudService {
       if (!data.creePar && userId) data.creePar = userId;
     }
 
+    if (config.model === 'note') {
+      await this.applyNoteEvaluationRules(tenantId ?? String(data.tenantId ?? ''), data);
+    }
+
     const created = await this.delegate(config.model).create({ data });
 
     if (config.model === 'user' && data.role === 'ELEVE' && parentIds.length > 0) {
@@ -883,6 +887,9 @@ export class LegacyCrudService {
     delete data.__personnelSectionId;
     delete data.__personnelAffectationType;
     delete data.__personnelAffectationOrdre;
+    if (config.model === 'note') {
+      await this.applyNoteEvaluationRules(tenantId ?? String(data.tenantId ?? ''), data, id);
+    }
     const updated = await this.delegate(config.model).update({ where: { id }, data });
 
     if (config.model === 'inscription') {
@@ -3106,6 +3113,153 @@ export class LegacyCrudService {
     delete data.dateModification;
     delete data.coefficient;
     delete data.classeId;
+  }
+
+  private async applyNoteEvaluationRules(tenantId: string, data: Payload, currentNoteId?: string): Promise<void> {
+    if (!tenantId) throw new BadRequestException('tenantId requis pour enregistrer une note');
+
+    const current = currentNoteId
+      ? await this.prisma.note.findFirst({
+          where: { id: currentNoteId, tenantId },
+          select: {
+            eleveId: true,
+            matiereId: true,
+            typeEvaluation: true,
+            trimestre: true,
+            anneeScolaire: true,
+            commentaire: true,
+          },
+        })
+      : null;
+
+    const eleveId = String(data.eleveId ?? current?.eleveId ?? '').trim();
+    const matiereId = String(data.matiereId ?? current?.matiereId ?? '').trim();
+    const trimestre = String(data.trimestre ?? current?.trimestre ?? '').trim();
+    const anneeScolaire = String(data.anneeScolaire ?? current?.anneeScolaire ?? '').trim();
+    const typeEvaluation = String(data.typeEvaluation ?? current?.typeEvaluation ?? 'DEVOIR').trim().toUpperCase();
+    const allowed = new Set(['DEVOIR', 'INTERROGATION', 'EXAMEN', 'COMPOSITION', 'CONTROLE', 'TP', 'ORAL']);
+
+    if (!allowed.has(typeEvaluation)) {
+      throw new BadRequestException(`Type d'évaluation invalide: ${typeEvaluation}`);
+    }
+    if (!eleveId || !matiereId || !trimestre || !anneeScolaire) {
+      throw new BadRequestException('eleveId, matiereId, trimestre et anneeScolaire sont requis pour une note');
+    }
+
+    data.eleveId = eleveId;
+    data.matiereId = matiereId;
+    data.trimestre = trimestre;
+    data.anneeScolaire = anneeScolaire;
+    data.typeEvaluation = typeEvaluation;
+
+    if (typeEvaluation === 'DEVOIR') {
+      data.commentaire = await this.resolveDevoirCommentaire(tenantId, {
+        eleveId,
+        matiereId,
+        trimestre,
+        anneeScolaire,
+        commentaire: data.commentaire !== undefined ? data.commentaire : current?.commentaire,
+        currentNoteId,
+      });
+      return;
+    }
+
+    if (typeEvaluation === 'COMPOSITION') {
+      const duplicate = await this.prisma.note.findFirst({
+        where: {
+          tenantId,
+          eleveId,
+          matiereId,
+          trimestre,
+          anneeScolaire,
+          typeEvaluation: 'COMPOSITION',
+          ...(currentNoteId ? { id: { not: currentNoteId } } : {}),
+        },
+        select: { id: true },
+      });
+      if (duplicate) {
+        throw new ConflictException('Une composition existe déjà pour cet élève, cette matière et cette période.');
+      }
+      data.commentaire = this.cleanNoteCommentaire(data.commentaire !== undefined ? data.commentaire : current?.commentaire) || 'Composition';
+    }
+  }
+
+  private async resolveDevoirCommentaire(
+    tenantId: string,
+    scope: {
+      eleveId: string;
+      matiereId: string;
+      trimestre: string;
+      anneeScolaire: string;
+      commentaire: unknown;
+      currentNoteId?: string;
+    },
+  ): Promise<string> {
+    const existing = await this.prisma.note.findMany({
+      where: {
+        tenantId,
+        eleveId: scope.eleveId,
+        matiereId: scope.matiereId,
+        trimestre: scope.trimestre,
+        anneeScolaire: scope.anneeScolaire,
+        typeEvaluation: 'DEVOIR',
+        ...(scope.currentNoteId ? { id: { not: scope.currentNoteId } } : {}),
+      },
+      select: { id: true, commentaire: true, dateEvaluation: true, createdAt: true },
+      orderBy: [{ dateEvaluation: 'asc' }, { createdAt: 'asc' }],
+    });
+    const occupied = this.occupiedDevoirSlots(existing);
+    const requestedSlot = this.devoirSlot(scope.commentaire);
+
+    if (requestedSlot) {
+      if (occupied.has(requestedSlot)) {
+        throw new ConflictException(`Le Devoir ${requestedSlot} existe déjà pour cet élève, cette matière et cette période.`);
+      }
+      return `Devoir ${requestedSlot}`;
+    }
+
+    const nextSlot = this.nextDevoirSlot(occupied);
+    if (!nextSlot) {
+      throw new BadRequestException('Un élève ne peut pas avoir plus de 3 notes de devoir par matière et période.');
+    }
+    return `Devoir ${nextSlot}`;
+  }
+
+  private occupiedDevoirSlots(notes: Array<{ commentaire: string | null }>): Set<number> {
+    const occupied = new Set<number>();
+    const unlabeled = notes.filter((note) => !this.devoirSlot(note.commentaire));
+
+    for (const note of notes) {
+      const slot = this.devoirSlot(note.commentaire);
+      if (slot) occupied.add(slot);
+    }
+    for (const _note of unlabeled) {
+      const slot = this.nextDevoirSlot(occupied);
+      if (slot) occupied.add(slot);
+    }
+    return occupied;
+  }
+
+  private devoirSlot(value: unknown): number | null {
+    const normalized = String(value ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLowerCase();
+    const match = normalized.match(/^(?:devoir|dev|d)\s*([123])$/);
+    return match ? Number(match[1]) : null;
+  }
+
+  private nextDevoirSlot(occupied: Set<number>): number | null {
+    for (const slot of [1, 2, 3]) {
+      if (!occupied.has(slot)) return slot;
+    }
+    return null;
+  }
+
+  private cleanNoteCommentaire(value: unknown): string | null {
+    const commentaire = String(value ?? '').trim();
+    return commentaire || null;
   }
 
   private async normalizeBulletinData(tenantId: string, data: Payload, userId?: string): Promise<void> {

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@/config/prisma.service';
 import { buildPageResult, PageResult, PaginationQueryDto } from '@/shared/dto/pagination-query.dto';
 import { Prisma, TypeEvaluation } from '@prisma/client';
@@ -22,19 +22,10 @@ export class NoteService {
 
   async create(tenantId: string, dto: CreateNoteDto): Promise<unknown> {
     try {
+      const data = this.toCreateData(tenantId, dto);
+      await this.applyEvaluationRules(tenantId, data);
       const created = await this.prisma.note.create({
-        data: {
-          tenantId,
-          eleveId: dto.eleveId,
-          matiereId: dto.matiereId,
-          typeEvaluation: dto.typeEvaluation,
-          note: dto.note,
-          noteSur: dto.noteSur ?? 20,
-          trimestre: dto.trimestre,
-          anneeScolaire: dto.anneeScolaire,
-          dateEvaluation: dto.dateEvaluation ? new Date(dto.dateEvaluation) : undefined,
-          commentaire: dto.commentaire,
-        },
+        data,
         include: { matiere: { select: { id: true, code: true, libelle: true } } },
       });
       return this.attachCoefficient(tenantId, created);
@@ -45,24 +36,15 @@ export class NoteService {
 
   async createMany(tenantId: string, notes: CreateNoteDto[]): Promise<unknown> {
     try {
-      return await this.prisma.$transaction(
-        notes.map((dto) =>
-          this.prisma.note.create({
-            data: {
-              tenantId,
-              eleveId: dto.eleveId,
-              matiereId: dto.matiereId,
-              typeEvaluation: dto.typeEvaluation,
-              note: dto.note,
-              noteSur: dto.noteSur ?? 20,
-              trimestre: dto.trimestre,
-              anneeScolaire: dto.anneeScolaire,
-              dateEvaluation: dto.dateEvaluation ? new Date(dto.dateEvaluation) : undefined,
-              commentaire: dto.commentaire,
-            },
-          }),
-        ),
-      );
+      return await this.prisma.$transaction(async (tx) => {
+        const created = [];
+        for (const dto of notes) {
+          const data = this.toCreateData(tenantId, dto);
+          await this.applyEvaluationRules(tenantId, data, undefined, tx);
+          created.push(await tx.note.create({ data }));
+        }
+        return created;
+      });
     } catch (error) {
       rethrowServiceError(error, 'création multiple de notes');
     }
@@ -107,15 +89,19 @@ export class NoteService {
 
   async update(tenantId: string, id: string, dto: Partial<CreateNoteDto>): Promise<unknown> {
     await this.findOne(tenantId, id);
+    const data = {
+      ...(dto.note !== undefined ? { note: dto.note } : {}),
+      ...(dto.noteSur !== undefined ? { noteSur: dto.noteSur } : {}),
+      ...(dto.typeEvaluation ? { typeEvaluation: dto.typeEvaluation } : {}),
+      ...(dto.commentaire !== undefined ? { commentaire: dto.commentaire } : {}),
+      ...(dto.dateEvaluation ? { dateEvaluation: new Date(dto.dateEvaluation) } : {}),
+    };
+    if (dto.typeEvaluation || dto.commentaire !== undefined) {
+      await this.applyEvaluationRules(tenantId, data, id);
+    }
     const updated = await this.prisma.note.update({
       where: { id },
-      data: {
-        ...(dto.note !== undefined ? { note: dto.note } : {}),
-        ...(dto.noteSur !== undefined ? { noteSur: dto.noteSur } : {}),
-        ...(dto.typeEvaluation ? { typeEvaluation: dto.typeEvaluation } : {}),
-        ...(dto.commentaire !== undefined ? { commentaire: dto.commentaire } : {}),
-        ...(dto.dateEvaluation ? { dateEvaluation: new Date(dto.dateEvaluation) } : {}),
-      },
+      data,
       include: { matiere: { select: { id: true, code: true, libelle: true } } },
     });
     return this.attachCoefficient(tenantId, updated);
@@ -244,5 +230,159 @@ export class NoteService {
     });
 
     return new Map(cours.map((row) => [row.matiereId, row.coefficient ?? 1]));
+  }
+
+  private toCreateData(tenantId: string, dto: CreateNoteDto): Prisma.NoteUncheckedCreateInput {
+    return {
+      tenantId,
+      eleveId: dto.eleveId,
+      matiereId: dto.matiereId,
+      typeEvaluation: dto.typeEvaluation,
+      note: dto.note,
+      noteSur: dto.noteSur ?? 20,
+      trimestre: dto.trimestre,
+      anneeScolaire: dto.anneeScolaire,
+      dateEvaluation: dto.dateEvaluation ? new Date(dto.dateEvaluation) : undefined,
+      commentaire: dto.commentaire,
+    };
+  }
+
+  private async applyEvaluationRules(
+    tenantId: string,
+    data: Record<string, any>,
+    currentNoteId?: string,
+    client: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<void> {
+    const current = currentNoteId
+      ? await client.note.findFirst({
+          where: { id: currentNoteId, tenantId },
+          select: {
+            eleveId: true,
+            matiereId: true,
+            typeEvaluation: true,
+            trimestre: true,
+            anneeScolaire: true,
+            commentaire: true,
+          },
+        })
+      : null;
+
+    const eleveId = String(data.eleveId ?? current?.eleveId ?? '').trim();
+    const matiereId = String(data.matiereId ?? current?.matiereId ?? '').trim();
+    const trimestre = String(data.trimestre ?? current?.trimestre ?? '').trim();
+    const anneeScolaire = String(data.anneeScolaire ?? current?.anneeScolaire ?? '').trim();
+    const typeEvaluation = String(data.typeEvaluation ?? current?.typeEvaluation ?? 'DEVOIR').trim().toUpperCase();
+    const allowed = new Set(['DEVOIR', 'INTERROGATION', 'EXAMEN', 'COMPOSITION', 'CONTROLE', 'TP', 'ORAL']);
+
+    if (!allowed.has(typeEvaluation)) {
+      throw new BadRequestException(`Type d'évaluation invalide: ${typeEvaluation}`);
+    }
+    if (!eleveId || !matiereId || !trimestre || !anneeScolaire) {
+      throw new BadRequestException('eleveId, matiereId, trimestre et anneeScolaire sont requis pour une note');
+    }
+
+    data.eleveId = eleveId;
+    data.matiereId = matiereId;
+    data.trimestre = trimestre;
+    data.anneeScolaire = anneeScolaire;
+    data.typeEvaluation = typeEvaluation;
+
+    if (typeEvaluation === 'DEVOIR') {
+      data.commentaire = data.commentaire !== undefined ? data.commentaire : current?.commentaire;
+      data.commentaire = await this.resolveDevoirCommentaire(tenantId, data, currentNoteId, client);
+      return;
+    }
+
+    if (typeEvaluation === 'COMPOSITION') {
+      const duplicate = await client.note.findFirst({
+        where: {
+          tenantId,
+          eleveId,
+          matiereId,
+          trimestre,
+          anneeScolaire,
+          typeEvaluation: 'COMPOSITION',
+          ...(currentNoteId ? { id: { not: currentNoteId } } : {}),
+        },
+        select: { id: true },
+      });
+      if (duplicate) {
+        throw new ConflictException('Une composition existe déjà pour cet élève, cette matière et cette période.');
+      }
+      data.commentaire = this.cleanCommentaire(data.commentaire !== undefined ? data.commentaire : current?.commentaire) || 'Composition';
+    }
+  }
+
+  private async resolveDevoirCommentaire(
+    tenantId: string,
+    data: Record<string, any>,
+    currentNoteId: string | undefined,
+    client: Prisma.TransactionClient | PrismaService,
+  ): Promise<string> {
+    const existing = await client.note.findMany({
+      where: {
+        tenantId,
+        eleveId: String(data.eleveId),
+        matiereId: String(data.matiereId),
+        trimestre: String(data.trimestre),
+        anneeScolaire: String(data.anneeScolaire),
+        typeEvaluation: 'DEVOIR',
+        ...(currentNoteId ? { id: { not: currentNoteId } } : {}),
+      },
+      select: { commentaire: true, dateEvaluation: true, createdAt: true },
+      orderBy: [{ dateEvaluation: 'asc' }, { createdAt: 'asc' }],
+    });
+    const occupied = this.occupiedDevoirSlots(existing);
+    const requestedSlot = this.devoirSlot(data.commentaire);
+
+    if (requestedSlot) {
+      if (occupied.has(requestedSlot)) {
+        throw new ConflictException(`Le Devoir ${requestedSlot} existe déjà pour cet élève, cette matière et cette période.`);
+      }
+      return `Devoir ${requestedSlot}`;
+    }
+
+    const nextSlot = this.nextDevoirSlot(occupied);
+    if (!nextSlot) {
+      throw new BadRequestException('Un élève ne peut pas avoir plus de 3 notes de devoir par matière et période.');
+    }
+    return `Devoir ${nextSlot}`;
+  }
+
+  private occupiedDevoirSlots(notes: Array<{ commentaire: string | null }>): Set<number> {
+    const occupied = new Set<number>();
+    const unlabeled = notes.filter((note) => !this.devoirSlot(note.commentaire));
+
+    for (const note of notes) {
+      const slot = this.devoirSlot(note.commentaire);
+      if (slot) occupied.add(slot);
+    }
+    for (const _note of unlabeled) {
+      const slot = this.nextDevoirSlot(occupied);
+      if (slot) occupied.add(slot);
+    }
+    return occupied;
+  }
+
+  private devoirSlot(value: unknown): number | null {
+    const normalized = String(value ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLowerCase();
+    const match = normalized.match(/^(?:devoir|dev|d)\s*([123])$/);
+    return match ? Number(match[1]) : null;
+  }
+
+  private nextDevoirSlot(occupied: Set<number>): number | null {
+    for (const slot of [1, 2, 3]) {
+      if (!occupied.has(slot)) return slot;
+    }
+    return null;
+  }
+
+  private cleanCommentaire(value: unknown): string | null {
+    const commentaire = String(value ?? '').trim();
+    return commentaire || null;
   }
 }

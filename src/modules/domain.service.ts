@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { PrismaService } from "@/config/prisma.service";
 import { WhatsappService } from "@/modules/whatsapp/whatsapp.service";
@@ -92,6 +92,10 @@ export class DomainService {
       coursId?: string;
       valeur: number;
       typeEval?: string;
+      trimestre?: string;
+      anneeScolaire?: string;
+      noteSur?: number;
+      commentaire?: string | null;
     },
   ) {
     let matiereId = data.matiereId;
@@ -105,34 +109,139 @@ export class DomainService {
     if (!matiereId) {
       throw new BadRequestException("matiereId (ou coursId valide) est requis");
     }
-    const note = await this.prisma.note.create({
-      data: {
-        tenantId,
-        eleveId: data.eleveId,
-        matiereId,
-        typeEvaluation:
-          (data.typeEval as
-            | "DEVOIR"
-            | "INTERROGATION"
-            | "EXAMEN"
-            | "COMPOSITION"
-            | "CONTROLE"
-            | "TP"
-            | "ORAL") ?? "DEVOIR",
-        note: data.valeur,
-        trimestre: "TRIMESTRE_1",
-        anneeScolaire: new Date().getFullYear().toString(),
-      },
-    });
+    const createData = {
+      tenantId,
+      eleveId: data.eleveId,
+      matiereId,
+      typeEvaluation:
+        (data.typeEval as
+          | "DEVOIR"
+          | "INTERROGATION"
+          | "EXAMEN"
+          | "COMPOSITION"
+          | "CONTROLE"
+          | "TP"
+          | "ORAL") ?? "DEVOIR",
+      note: data.valeur,
+      noteSur: data.noteSur ?? 20,
+      trimestre: data.trimestre ?? "TRIMESTRE_1",
+      anneeScolaire: data.anneeScolaire ?? new Date().getFullYear().toString(),
+      commentaire: data.commentaire ?? undefined,
+    };
+    await this.applyNoteEvaluationRules(tenantId, createData);
+    const note = await this.prisma.note.create({ data: createData });
 
     void this.notifyNoteCreated(tenantId, note.eleveId, note.id).catch(() => {});
     return note;
   }
-  teacherUpdateNote(noteId: string, valeur: number) {
+  async teacherUpdateNote(noteId: string, valeur: number, commentaire?: string | null) {
+    const data: { note: number; commentaire?: string | null } = { note: valeur };
+    if (commentaire !== undefined) data.commentaire = commentaire;
     return this.prisma.note.update({
       where: { id: noteId },
-      data: { note: valeur },
+      data,
     });
+  }
+
+  private async applyNoteEvaluationRules(tenantId: string, data: Record<string, any>): Promise<void> {
+    const eleveId = String(data.eleveId ?? '').trim();
+    const matiereId = String(data.matiereId ?? '').trim();
+    const trimestre = String(data.trimestre ?? '').trim();
+    const anneeScolaire = String(data.anneeScolaire ?? '').trim();
+    const typeEvaluation = String(data.typeEvaluation ?? 'DEVOIR').trim().toUpperCase();
+    const allowed = new Set(['DEVOIR', 'INTERROGATION', 'EXAMEN', 'COMPOSITION', 'CONTROLE', 'TP', 'ORAL']);
+
+    if (!allowed.has(typeEvaluation)) {
+      throw new BadRequestException(`Type d'évaluation invalide: ${typeEvaluation}`);
+    }
+    if (!eleveId || !matiereId || !trimestre || !anneeScolaire) {
+      throw new BadRequestException('eleveId, matiereId, trimestre et anneeScolaire sont requis pour une note');
+    }
+
+    data.typeEvaluation = typeEvaluation;
+
+    if (typeEvaluation === 'DEVOIR') {
+      data.commentaire = await this.resolveDevoirCommentaire(tenantId, data);
+      return;
+    }
+
+    if (typeEvaluation === 'COMPOSITION') {
+      const duplicate = await this.prisma.note.findFirst({
+        where: { tenantId, eleveId, matiereId, trimestre, anneeScolaire, typeEvaluation: 'COMPOSITION' },
+        select: { id: true },
+      });
+      if (duplicate) {
+        throw new ConflictException('Une composition existe déjà pour cet élève, cette matière et cette période.');
+      }
+      data.commentaire = this.cleanNoteCommentaire(data.commentaire) || 'Composition';
+    }
+  }
+
+  private async resolveDevoirCommentaire(tenantId: string, data: Record<string, any>): Promise<string> {
+    const existing = await this.prisma.note.findMany({
+      where: {
+        tenantId,
+        eleveId: String(data.eleveId),
+        matiereId: String(data.matiereId),
+        trimestre: String(data.trimestre),
+        anneeScolaire: String(data.anneeScolaire),
+        typeEvaluation: 'DEVOIR',
+      },
+      select: { commentaire: true, dateEvaluation: true, createdAt: true },
+      orderBy: [{ dateEvaluation: 'asc' }, { createdAt: 'asc' }],
+    });
+    const occupied = this.occupiedDevoirSlots(existing);
+    const requestedSlot = this.devoirSlot(data.commentaire);
+
+    if (requestedSlot) {
+      if (occupied.has(requestedSlot)) {
+        throw new ConflictException(`Le Devoir ${requestedSlot} existe déjà pour cet élève, cette matière et cette période.`);
+      }
+      return `Devoir ${requestedSlot}`;
+    }
+
+    const nextSlot = this.nextDevoirSlot(occupied);
+    if (!nextSlot) {
+      throw new BadRequestException('Un élève ne peut pas avoir plus de 3 notes de devoir par matière et période.');
+    }
+    return `Devoir ${nextSlot}`;
+  }
+
+  private occupiedDevoirSlots(notes: Array<{ commentaire: string | null }>): Set<number> {
+    const occupied = new Set<number>();
+    const unlabeled = notes.filter((note) => !this.devoirSlot(note.commentaire));
+
+    for (const note of notes) {
+      const slot = this.devoirSlot(note.commentaire);
+      if (slot) occupied.add(slot);
+    }
+    for (const _note of unlabeled) {
+      const slot = this.nextDevoirSlot(occupied);
+      if (slot) occupied.add(slot);
+    }
+    return occupied;
+  }
+
+  private devoirSlot(value: unknown): number | null {
+    const normalized = String(value ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLowerCase();
+    const match = normalized.match(/^(?:devoir|dev|d)\s*([123])$/);
+    return match ? Number(match[1]) : null;
+  }
+
+  private nextDevoirSlot(occupied: Set<number>): number | null {
+    for (const slot of [1, 2, 3]) {
+      if (!occupied.has(slot)) return slot;
+    }
+    return null;
+  }
+
+  private cleanNoteCommentaire(value: unknown): string | null {
+    const commentaire = String(value ?? '').trim();
+    return commentaire || null;
   }
   teacherCreateAbsence(
     tenantId: string,
