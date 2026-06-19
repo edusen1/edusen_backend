@@ -185,6 +185,12 @@ export class LegacyCrudService {
           },
         },
       },
+    } : config.model === 'user' && config.role === 'ENSEIGNANT' ? {
+      matieresEnseignees: {
+        select: {
+          matiere: { select: { id: true, code: true, libelle: true } },
+        },
+      },
     } : config.model === 'classe' ? {
       niveau: { include: { cycle: true } },
       anneeAcademique: true,
@@ -301,6 +307,12 @@ export class LegacyCrudService {
               lienParente: true,
             },
           },
+        },
+      },
+    } : config.model === 'user' && config.role === 'ENSEIGNANT' ? {
+      matieresEnseignees: {
+        select: {
+          matiere: { select: { id: true, code: true, libelle: true } },
         },
       },
     } : config.model === 'classe' ? {
@@ -779,6 +791,9 @@ export class LegacyCrudService {
     const stagiaireIds = config.model === 'classe' && Array.isArray(body.stagiaireIds)
       ? body.stagiaireIds.map(String).map((id, index) => this.assertUuid(id, `stagiaireIds[${index}]`))
       : undefined;
+    const professeurMatiereIds = config.model === 'user' && config.role === 'ENSEIGNANT' && Array.isArray(body.matiereIds)
+      ? [...new Set(body.matiereIds.map(String).map((id, index) => this.assertUuid(id, `matiereIds[${index}]`)))]
+      : null;
 
     const data = await this.prepareData(config, tenantId, body, true, userId);
     const tempPassword = typeof data.__tempPasswordForNotification === 'string'
@@ -787,11 +802,13 @@ export class LegacyCrudService {
     const personnelNiveauId = typeof data.__personnelNiveauId === 'string' ? data.__personnelNiveauId : null;
     const personnelSectionId = typeof data.__personnelSectionId === 'string' ? data.__personnelSectionId : null;
     const personnelAffectationType = typeof data.__personnelAffectationType === 'string' ? data.__personnelAffectationType : null;
+    const personnelAllCycles = data.__personnelAllCycles === true;
     const personnelAffectationOrdre = typeof data.__personnelAffectationOrdre === 'number' ? data.__personnelAffectationOrdre : 1;
     delete data.__tempPasswordForNotification;
     delete data.__personnelNiveauId;
     delete data.__personnelSectionId;
     delete data.__personnelAffectationType;
+    delete data.__personnelAllCycles;
     delete data.__personnelAffectationOrdre;
 
     if (config.model === 'inscription') {
@@ -857,8 +874,17 @@ export class LegacyCrudService {
       void this.sendUserCredentials(tenantId, created, tempPassword);
     }
 
+    if (config.model === 'user' && config.role === 'ENSEIGNANT') {
+      if (professeurMatiereIds !== null) {
+        await this.replaceProfesseurMatieres(tenantId ?? String(created.tenantId ?? ''), created.id, professeurMatiereIds);
+      }
+      return this.findOne(config, tenantId, created.id);
+    }
+
     if (config.model === 'personnel') {
-      if (personnelSectionId && (personnelAffectationType === 'SURVEILLANT' || personnelAffectationType === 'SECRETAIRE_SURVEILLANT')) {
+      if (personnelAllCycles && personnelAffectationType === 'SURVEILLANT_GENERAL') {
+        await this.replaceSurveillantForAllCycles(tenantId ?? String(data.tenantId ?? ''), String(created.utilisateurId));
+      } else if (personnelSectionId && (personnelAffectationType === 'SURVEILLANT' || personnelAffectationType === 'SECRETAIRE_SURVEILLANT')) {
         await this.replaceSurveillantForCycle(tenantId ?? String(data.tenantId ?? ''), personnelSectionId, String(created.utilisateurId));
       }
 
@@ -875,6 +901,9 @@ export class LegacyCrudService {
     const stagiaireIds = config.model === 'classe' && Array.isArray(body.stagiaireIds)
       ? body.stagiaireIds.map(String).map((id, index) => this.assertUuid(id, `stagiaireIds[${index}]`))
       : undefined;
+    const professeurMatiereIds = config.model === 'user' && config.role === 'ENSEIGNANT' && Array.isArray(body.matiereIds)
+      ? [...new Set(body.matiereIds.map(String).map((matiereId, index) => this.assertUuid(matiereId, `matiereIds[${index}]`)))]
+      : null;
     const previousCours = config.model === 'cours'
       ? await this.prisma.cours.findFirst({ where: { id, ...this.fixedWhere(config, tenantId) } })
       : null;
@@ -884,8 +913,10 @@ export class LegacyCrudService {
     delete data.__personnelNiveauId;
     const personnelUpdateSectionId = typeof data.__personnelSectionId === 'string' ? data.__personnelSectionId : null;
     const personnelUpdateAffectationType = typeof data.__personnelAffectationType === 'string' ? data.__personnelAffectationType : null;
+    const personnelUpdateAllCycles = data.__personnelAllCycles === true;
     delete data.__personnelSectionId;
     delete data.__personnelAffectationType;
+    delete data.__personnelAllCycles;
     delete data.__personnelAffectationOrdre;
     if (config.model === 'note') {
       await this.applyNoteEvaluationRules(tenantId ?? String(data.tenantId ?? ''), data, id);
@@ -931,8 +962,19 @@ export class LegacyCrudService {
       return this.findOne(config, tenantId, id);
     }
 
-    if (config.model === 'personnel' && personnelUpdateSectionId && (personnelUpdateAffectationType === 'SURVEILLANT' || personnelUpdateAffectationType === 'SECRETAIRE_SURVEILLANT')) {
+    if (config.model === 'user' && config.role === 'ENSEIGNANT') {
+      if (professeurMatiereIds !== null) {
+        await this.replaceProfesseurMatieres(tenantId ?? String(updated.tenantId ?? ''), id, professeurMatiereIds);
+      }
+      return this.findOne(config, tenantId, id);
+    }
+
+    if (config.model === 'personnel' && personnelUpdateAllCycles && personnelUpdateAffectationType === 'SURVEILLANT_GENERAL') {
       const utilisateurId = String((updated as { utilisateurId: string }).utilisateurId);
+      await this.replaceSurveillantForAllCycles(tenantId ?? '', utilisateurId);
+    } else if (config.model === 'personnel' && personnelUpdateSectionId && (personnelUpdateAffectationType === 'SURVEILLANT' || personnelUpdateAffectationType === 'SECRETAIRE_SURVEILLANT')) {
+      const utilisateurId = String((updated as { utilisateurId: string }).utilisateurId);
+      await this.prisma.surveillantCycle.deleteMany({ where: { surveillantId: utilisateurId } });
       await this.replaceSurveillantForCycle(tenantId ?? '', personnelUpdateSectionId, utilisateurId);
     }
 
@@ -951,6 +993,38 @@ export class LegacyCrudService {
     if (coursToDelete) {
       await this.rebuildMatiereClasseForMatiere(this.prisma, tenantId ?? coursToDelete.tenantId, coursToDelete.matiereId);
     }
+  }
+
+  private async replaceProfesseurMatieres(tenantId: string, professeurId: string, matiereIds: string[]): Promise<void> {
+    const [professeur, matieres] = await Promise.all([
+      this.prisma.user.findFirst({ where: { id: professeurId, tenantId, role: 'ENSEIGNANT' }, select: { id: true } }),
+      matiereIds.length
+        ? this.prisma.matiere.findMany({
+            where: { tenantId, id: { in: matiereIds } },
+            select: { id: true, libelle: true, code: true },
+            orderBy: { libelle: 'asc' },
+          })
+        : Promise.resolve([]),
+    ]);
+    if (!professeur) throw new NotFoundException('Professeur introuvable pour cet établissement');
+    if (matieres.length !== matiereIds.length) {
+      throw new BadRequestException('Une ou plusieurs matières sélectionnées sont introuvables');
+    }
+
+    const specialite = matieres
+      .map((matiere) => String(matiere.libelle ?? matiere.code ?? '').trim())
+      .filter(Boolean)
+      .join(', ') || null;
+
+    await this.prisma.$transaction(async (transaction) => {
+      await transaction.professeurMatiere.deleteMany({ where: { professeurId, tenantId } });
+      if (matiereIds.length) {
+        await transaction.professeurMatiere.createMany({
+          data: matiereIds.map((matiereId) => ({ tenantId, professeurId, matiereId })),
+        });
+      }
+      await transaction.user.update({ where: { id: professeurId }, data: { specialite } });
+    });
   }
 
   findCurrentAnnee(tenantId: string | undefined) {
@@ -1024,16 +1098,60 @@ export class LegacyCrudService {
   }
 
   async validateAbsencePersonnel(tenantId: string | undefined, id: string, userId?: string) {
-    await this.findOne(V1_RESOURCES['absences-personnel'], tenantId, id);
-    return this.prisma.absencePersonnel.update({
-      where: { id },
-      data: { statut: 'APPROUVEE', validePar: userId },
+    const absence = await this.prisma.absencePersonnel.findFirst({
+      where: { id, tenantId },
+      include: { personnel: { select: { utilisateurId: true } } },
+    });
+    if (!absence) throw new NotFoundException('Absence personnel introuvable');
+    if (absence.statut !== 'EN_ATTENTE') {
+      throw new BadRequestException('Cette demande a déjà été traitée');
+    }
+
+    return this.prisma.$transaction(async (transaction) => {
+      const updated = await transaction.absencePersonnel.update({
+        where: { id },
+        data: { statut: 'APPROUVEE', validePar: userId, motifRefus: null },
+      });
+      await transaction.notification.create({
+        data: {
+          tenantId: absence.tenantId,
+          destinataireId: absence.personnel.utilisateurId,
+          titre: 'Absence validée',
+          contenu: 'Votre demande d’absence a été validée par l’administration.',
+        },
+      });
+      return updated;
     });
   }
 
-  async refuseAbsencePersonnel(tenantId: string | undefined, id: string) {
-    await this.findOne(V1_RESOURCES['absences-personnel'], tenantId, id);
-    return this.prisma.absencePersonnel.update({ where: { id }, data: { statut: 'REJETEE' } });
+  async refuseAbsencePersonnel(tenantId: string | undefined, id: string, motifRefus?: unknown, userId?: string) {
+    const absence = await this.prisma.absencePersonnel.findFirst({
+      where: { id, tenantId },
+      include: { personnel: { select: { utilisateurId: true } } },
+    });
+    if (!absence) throw new NotFoundException('Absence personnel introuvable');
+    if (absence.statut !== 'EN_ATTENTE') {
+      throw new BadRequestException('Cette demande a déjà été traitée');
+    }
+
+    const reason = String(motifRefus ?? '').trim() || null;
+    return this.prisma.$transaction(async (transaction) => {
+      const updated = await transaction.absencePersonnel.update({
+        where: { id },
+        data: { statut: 'REJETEE', validePar: userId, motifRefus: reason },
+      });
+      await transaction.notification.create({
+        data: {
+          tenantId: absence.tenantId,
+          destinataireId: absence.personnel.utilisateurId,
+          titre: 'Absence refusée',
+          contenu: reason
+            ? `Votre demande d’absence a été refusée. Motif : ${reason}`
+            : 'Votre demande d’absence a été refusée par l’administration.',
+        },
+      });
+      return updated;
+    });
   }
 
   async compteRenduConvocation(tenantId: string | undefined, id: string, compteRendu?: string) {
@@ -2040,6 +2158,7 @@ export class LegacyCrudService {
       delete data.statut;
       delete data.generatedUsername;
       delete data.generatedPassword;
+      delete data.matiereIds;
       delete data.matieresEnseignees;
       delete data.classesAssignees;
       delete data.salaire;
@@ -2205,13 +2324,35 @@ export class LegacyCrudService {
   private sanitizeEntity(model: string, entity: Payload): Payload {
     if (!entity) return entity;
     if (model === 'user') {
-      const { passwordHash: _passwordHash, eleveClasse, ...safeEntity } = entity as Payload & { passwordHash?: string; eleveClasse?: Payload };
+      const {
+        passwordHash: _passwordHash,
+        eleveClasse,
+        matieresEnseignees,
+        ...safeEntity
+      } = entity as Payload & {
+        passwordHash?: string;
+        eleveClasse?: Payload;
+        matieresEnseignees?: Array<{ matiere?: Payload }>;
+      };
       if (safeEntity.photoUrl) safeEntity.photoUrl = this.storage.resolveUrl(safeEntity.photoUrl as string) ?? undefined;
       if (eleveClasse && !safeEntity.classe) {
         safeEntity.classe = eleveClasse;
       }
       if ((safeEntity.classe || eleveClasse) && !safeEntity.eleveClasse) {
         safeEntity.eleveClasse = (safeEntity.classe ?? eleveClasse) as Payload;
+      }
+      const specialites = (matieresEnseignees ?? [])
+        .map((link) => link?.matiere)
+        .filter((matiere): matiere is Payload => !!matiere)
+        .sort((a, b) => String(a.libelle ?? a.code ?? '').localeCompare(String(b.libelle ?? b.code ?? ''), 'fr'));
+      if (specialites.length > 0) {
+        safeEntity.specialites = specialites;
+        safeEntity.specialite = specialites
+          .map((matiere) => String(matiere.libelle ?? matiere.code ?? ''))
+          .filter(Boolean)
+          .join(', ');
+      } else if (safeEntity.role === 'ENSEIGNANT') {
+        safeEntity.specialites = [];
       }
       return safeEntity;
     }
@@ -2761,10 +2902,33 @@ export class LegacyCrudService {
       const enseignantId = this.assertUuid(String(rawEnseignant).trim(), 'enseignantId');
       const enseignant = await this.prisma.user.findFirst({
         where: { id: enseignantId, tenantId, role: 'ENSEIGNANT' },
-        select: { id: true },
+        select: { id: true, specialite: true },
       });
       if (!enseignant) {
         throw new BadRequestException('Enseignant introuvable pour cet établissement');
+      }
+      if (data.matiereId) {
+        const [habilitation, matiere] = await Promise.all([
+          this.prisma.professeurMatiere.findFirst({
+            where: { tenantId, professeurId: enseignantId, matiereId: String(data.matiereId) },
+            select: { id: true },
+          }),
+          this.prisma.matiere.findFirst({
+            where: { id: String(data.matiereId), tenantId },
+            select: { libelle: true, code: true },
+          }),
+        ]);
+        const legacySpecialites = String(enseignant.specialite ?? '')
+          .split(',')
+          .map((value) => value.trim().toLocaleLowerCase())
+          .filter(Boolean);
+        const legacyMatch = matiere
+          ? legacySpecialites.includes(String(matiere.libelle ?? '').toLocaleLowerCase())
+            || legacySpecialites.includes(String(matiere.code ?? '').toLocaleLowerCase())
+          : false;
+        if (!habilitation && !legacyMatch) {
+          throw new BadRequestException('Ce professeur n’est pas habilité à enseigner cette matière');
+        }
       }
       data.enseignantId = enseignantId;
     } else if (create) {
@@ -2824,6 +2988,7 @@ export class LegacyCrudService {
     // Champs absents du modèle AbsencePersonnel
     delete data.type;
     delete data.justificatifJoint;
+    if (data.motifRefus === '') data.motifRefus = null;
   }
 
   private async normalizeAbsenceEleveData(tenantId: string, data: Payload, create: boolean): Promise<void> {
@@ -2953,7 +3118,10 @@ export class LegacyCrudService {
     const phoneCountry = await this.resolveTenantPhoneCountry(tenantId);
     const normalizedTelephone = normalizePhoneForCountry(data.telephone, phoneCountry);
 
-    if (affectationType === 'SURVEILLANT' || affectationType === 'SECRETAIRE_SURVEILLANT') {
+    if (affectationType === 'SURVEILLANT_GENERAL') {
+      data.__personnelAllCycles = true;
+      data.__personnelAffectationType = affectationType;
+    } else if (affectationType === 'SURVEILLANT' || affectationType === 'SECRETAIRE_SURVEILLANT') {
       if (!sectionId) throw new BadRequestException('sectionId est requis pour ce personnel');
       const section = await this.prisma.cycle.findFirst({ where: { id: sectionId, tenantId } });
       if (!section) throw new BadRequestException('Section introuvable');
@@ -3057,16 +3225,26 @@ export class LegacyCrudService {
   }
 
   private async replaceSurveillantForCycle(tenantId: string, cycleId: string, newSurveillantId: string): Promise<void> {
-    const existing = await this.prisma.surveillantCycle.findFirst({ where: { cycleId } });
-    if (existing && existing.surveillantId !== newSurveillantId) {
-      await this.prisma.user.update({ where: { id: existing.surveillantId }, data: { actif: false } });
-      await this.prisma.surveillantCycle.deleteMany({ where: { cycleId } });
-    }
+    await this.prisma.surveillantCycle.deleteMany({ where: { tenantId, cycleId, surveillantId: { not: newSurveillantId } } });
     await this.prisma.surveillantCycle.upsert({
       where: { surveillantId_cycleId: { surveillantId: newSurveillantId, cycleId } },
       create: { tenantId, surveillantId: newSurveillantId, cycleId },
       update: {},
     });
+  }
+
+  private async replaceSurveillantForAllCycles(tenantId: string, surveillantId: string): Promise<void> {
+    const cycles = await this.prisma.cycle.findMany({ where: { tenantId, actif: true }, select: { id: true } });
+    await this.prisma.$transaction([
+      this.prisma.surveillantCycle.deleteMany({ where: { tenantId, surveillantId } }),
+      this.prisma.surveillantCycle.deleteMany({ where: { tenantId, cycleId: { in: cycles.map((cycle) => cycle.id) }, surveillantId: { not: surveillantId } } }),
+      ...(cycles.length
+        ? [this.prisma.surveillantCycle.createMany({
+            data: cycles.map((cycle) => ({ tenantId, surveillantId, cycleId: cycle.id })),
+            skipDuplicates: true,
+          })]
+        : []),
+    ]);
   }
 
   private normalizePersonnelRole(value: unknown): 'ENSEIGNANT' | 'SURVEILLANT' | 'CAISSIER' | 'RH' {

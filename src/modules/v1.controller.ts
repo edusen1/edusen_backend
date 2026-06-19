@@ -200,14 +200,19 @@ export class V1Controller {
     @Param('id') id: string,
     @CurrentUser() user?: JwtUser,
   ) {
-    return this.crud.validateAbsencePersonnel(tenantId, id, user?.sub);
+    return this.crud.validateAbsencePersonnel(this.resolveTenantId(tenantId, user), id, user?.sub);
   }
 
   @Patch('absences-personnel/:id/refuser')
   @Post('absences-personnel/:id/rejeter')
   @Post('absences-personnel/:id/refuser')
-  refuserAbsencePersonnel(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string) {
-    return this.crud.refuseAbsencePersonnel(tenantId, id);
+  refuserAbsencePersonnel(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.crud.refuseAbsencePersonnel(this.resolveTenantId(tenantId, user), id, body.motifRefus, user?.sub);
   }
 
   @Get('pointages/rapport')

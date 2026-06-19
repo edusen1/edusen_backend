@@ -199,6 +199,7 @@ model Tenant {
   annees              AnneeAcademique[]
   classes             Classe[]
   matieres            Matiere[]
+  professeurMatieres  ProfesseurMatiere[]
   matiereClasses      MatiereClasse[]
   cours               Cours[]
   inscriptions        Inscription[]
@@ -409,6 +410,7 @@ model User {
   elevParents        EleveParent[]        @relation("EleveParents")
   parentEleves       EleveParent[]        @relation("ParentEleves")
   matiereClasses     MatiereClasse[]      @relation("EnseignantMatiereClasses")
+  matieresEnseignees ProfesseurMatiere[]  @relation("ProfesseurMatieres")
   absencesEnseignant AbsenceEnseignant[]
   surveillantCycles  SurveillantCycle[]
   auditLogs          AuditLog[]
@@ -584,6 +586,21 @@ model Matiere {
   matiereClasses MatiereClasse[]
   cours          Cours[]
   notes          Note[]
+  professeurs    ProfesseurMatiere[] @relation("ProfesseurMatieres")
+}
+
+model ProfesseurMatiere {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @db.Uuid
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  professeurId String   @db.Uuid
+  professeur   User     @relation("ProfesseurMatieres", fields: [professeurId], references: [id], onDelete: Cascade)
+  matiereId    String   @db.Uuid
+  matiere      Matiere  @relation("ProfesseurMatieres", fields: [matiereId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+
+  @@unique([professeurId, matiereId])
+  @@index([tenantId, matiereId])
 }
 
 model MatiereClasse {
@@ -1010,6 +1027,7 @@ model AbsencePersonnel {
   justificatifUrl String?
   statut          StatutAbsencePersonnel @default(EN_ATTENTE)
   validePar       String?                @db.Uuid
+  motifRefus      String?
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
 }
