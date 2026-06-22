@@ -14,6 +14,7 @@ import { MailService } from '@/infrastructure/mail/mail.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
 import type { JwtUser } from '@/common/types/auth.types';
 import { buildPhoneLoginVariants, normalizePhoneForCountry } from '@/common/utils/phone.util';
+import { AsyncSemaphore, mapWithConcurrency } from '@/common/utils/async.util';
 import { PASSWORD_MIN_LENGTH } from './auth.constants';
 
 const LOCKOUT_KEY = 'auth:lockout:';
@@ -27,6 +28,10 @@ const LOCKOUT_TTL = Number(process.env.AUTH_LOCKOUT_TTL_SECONDS ?? 600);
 const FORGOT_PER_EMAIL = Number(process.env.AUTH_FORGOT_PER_EMAIL ?? 3);
 const FORGOT_WINDOW = Number(process.env.AUTH_FORGOT_WINDOW_SECONDS ?? 900);
 const RESET_TOKEN_TTL = Number(process.env.AUTH_RESET_TOKEN_TTL_SECONDS ?? 3600);
+const LOGIN_PASSWORD_COMPARE_CONCURRENCY = Math.max(1, Number(process.env.AUTH_PASSWORD_COMPARE_CONCURRENCY ?? 4));
+const LOGIN_CANDIDATE_CONCURRENCY = Math.max(1, Number(process.env.AUTH_LOGIN_CANDIDATE_CONCURRENCY ?? 2));
+const LOGIN_MAX_CANDIDATES = Math.max(1, Number(process.env.AUTH_LOGIN_MAX_CANDIDATES ?? 12));
+const loginPasswordSemaphore = new AsyncSemaphore(LOGIN_PASSWORD_COMPARE_CONCURRENCY);
 // PASSWORD_MIN_LENGTH est désormais centralisé dans auth.constants.ts pour rester
 // aligné avec les DTO (évite l'erreur MOT_DE_PASSE_TROP_COURT sur un mot de passe
 // pourtant accepté par la validation de la requête).
@@ -93,19 +98,34 @@ export class AuthService {
       where: {
         OR: loginConditions,
       },
-      include: { tenant: true },
+      take: LOGIN_MAX_CANDIDATES + 1,
+      select: {
+        id: true,
+        tenantId: true,
+        passwordHash: true,
+        actif: true,
+        mustChangePwd: true,
+        role: true,
+        email: true,
+        telephone: true,
+        tenant: { select: { actif: true } },
+      },
     });
 
     if (!candidates.length) {
       return null;
     }
 
-    const matches: typeof candidates = [];
-    for (const candidate of candidates) {
-      if (await bcrypt.compare(dto.password, candidate.passwordHash)) {
-        matches.push(candidate);
-      }
+    // A crafted identifier must not trigger unbounded bcrypt work across tenants.
+    if (candidates.length > LOGIN_MAX_CANDIDATES) {
+      throw new UnauthorizedException('IDENTIFIANTS_AMBIGUS');
     }
+
+    const comparisons = await mapWithConcurrency(candidates, LOGIN_CANDIDATE_CONCURRENCY, async (candidate) => ({
+      candidate,
+      matches: await loginPasswordSemaphore.run(() => bcrypt.compare(dto.password, candidate.passwordHash)),
+    }));
+    const matches = comparisons.filter((comparison) => comparison.matches).map((comparison) => comparison.candidate);
 
     if (!matches.length) {
       return null;
@@ -172,7 +192,7 @@ export class AuthService {
       throw new UnauthorizedException('USER_INACTIVE');
     }
 
-    const valid = await bcrypt.compare(dto.password, pu.motDePasse);
+    const valid = await loginPasswordSemaphore.run(() => bcrypt.compare(dto.password, pu.motDePasse));
     if (!valid) {
       const newAttempts = await this.redis.incrementLockout(lockoutKey, LOCKOUT_TTL);
       if (newAttempts >= LOCKOUT_MAX_ATTEMPTS) {

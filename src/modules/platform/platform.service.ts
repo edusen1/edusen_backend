@@ -7,6 +7,7 @@ import { CreateUserDto } from '@/modules/platform/dto/create-user.dto';
 import { rethrowServiceError } from '@/common/utils/service-error.util';
 import { StorageService } from '@/infrastructure/storage/storage.service';
 import { MailService } from '@/infrastructure/mail/mail.service';
+import { AppCacheService } from '@/infrastructure/cache/app-cache.service';
 
 const PLATFORM_USER_SELECT = {
   id: true,
@@ -26,9 +27,16 @@ export class PlatformService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly mailService: MailService,
+    private readonly cache: AppCacheService,
   ) {}
 
   async findTenants() {
+    return this.cache.getOrSet('platform:tenants:v1', 20, () =>
+      this.prisma.withReadRetry('platform tenants', () => this.loadTenants()),
+    );
+  }
+
+  private async loadTenants() {
     const tenants = await this.prisma.tenant.findMany({ orderBy: { createdAt: 'desc' } });
     return tenants.map((tenant) => ({
       ...tenant,
@@ -77,6 +85,7 @@ export class PlatformService {
       });
 
       const initialAdmin = await this.createInitialTenantAdmin(tenant.id, tenant.nom, dto);
+      await this.invalidatePlatformCache();
       return {
         ...tenant,
         logoUrl: this.storage.resolveUrl(tenant.logoUrl) ?? tenant.logoUrl,
@@ -108,11 +117,24 @@ export class PlatformService {
         actif: dto.actif,
       },
     });
+    await this.invalidatePlatformCache();
     return { ...tenant, logoUrl: this.storage.resolveUrl(tenant.logoUrl) ?? tenant.logoUrl };
   }
-  suspendTenant(id: string) { return this.prisma.tenant.update({ where: { id }, data: { actif: false } }); }
-  reactivateTenant(id: string) { return this.prisma.tenant.update({ where: { id }, data: { actif: true } }); }
-  deleteTenant(id: string) { return this.prisma.tenant.delete({ where: { id } }); }
+  async suspendTenant(id: string) {
+    const tenant = await this.prisma.tenant.update({ where: { id }, data: { actif: false } });
+    await this.invalidatePlatformCache();
+    return tenant;
+  }
+  async reactivateTenant(id: string) {
+    const tenant = await this.prisma.tenant.update({ where: { id }, data: { actif: true } });
+    await this.invalidatePlatformCache();
+    return tenant;
+  }
+  async deleteTenant(id: string) {
+    const tenant = await this.prisma.tenant.delete({ where: { id } });
+    await this.invalidatePlatformCache();
+    return tenant;
+  }
 
   async uploadTenantLogo(id: string, buffer: Buffer, contentType: string, filename?: string) {
     const key = this.storage.buildKey('logos/tenants', id, filename || 'logo');
@@ -151,18 +173,29 @@ export class PlatformService {
         select: PLATFORM_USER_SELECT,
       });
       this.mailService.sendCompteCree(user.email, user.prenom, user.nom, password);
+      await this.cache.invalidate('platform:stats:v1');
       return { ...user, temporaryPassword: password };
     } catch (error) {
       rethrowServiceError(error, 'création utilisateur plateforme');
     }
   }
 
-  deleteUser(id: string) { return this.prisma.plateformeUtilisateur.delete({ where: { id } }); }
+  async deleteUser(id: string) {
+    const user = await this.prisma.plateformeUtilisateur.delete({ where: { id } });
+    await this.cache.invalidate('platform:stats:v1');
+    return user;
+  }
   setUserActive(id: string, actif: boolean) {
     return this.prisma.plateformeUtilisateur.update({ where: { id }, data: { actif } });
   }
 
   async stats() {
+    return this.cache.getOrSet('platform:stats:v1', 20, () =>
+      this.prisma.withReadRetry('platform stats', () => this.loadStats()),
+    );
+  }
+
+  private async loadStats() {
     const [totalTenants, tenantActifs, totalUsers, utilisateursPlateforme, totalInscriptions, totalPaiements, tenantParPlan] = await Promise.all([
       this.prisma.tenant.count(),
       this.prisma.tenant.count({ where: { actif: true } }),
@@ -278,6 +311,10 @@ export class PlatformService {
     });
     this.mailService.sendCompteCree(admin.email ?? email, admin.firstName, admin.lastName, password, tenantName);
     return { ...admin, temporaryPassword: password };
+  }
+
+  private async invalidatePlatformCache(): Promise<void> {
+    await this.cache.invalidate('platform:tenants:v1', 'platform:stats:v1');
   }
 
   private clean(value?: string | null): string | undefined {

@@ -7,6 +7,9 @@ import { MailService } from '@/infrastructure/mail/mail.service';
 import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 import type { JwtUser } from '@/common/types/auth.types';
 import { normalizePhoneForCountry } from '@/common/utils/phone.util';
+import { mapWithConcurrency } from '@/common/utils/async.util';
+import { calculateBulletinAverages } from '@/common/utils/bulletin-calculation.util';
+import { AppCacheService } from '@/infrastructure/cache/app-cache.service';
 
 type QueryValue = string | string[] | undefined;
 type QueryParams = Record<string, QueryValue>;
@@ -108,6 +111,7 @@ export class LegacyCrudService {
     private readonly storage: StorageService,
     private readonly mailService: MailService,
     private readonly whatsappService: WhatsappService,
+    private readonly cache: AppCacheService,
   ) {}
 
   async resolveTenantId(tenantId: string | undefined, user?: JwtUser): Promise<string | undefined> {
@@ -1207,6 +1211,18 @@ export class LegacyCrudService {
   }
 
   async statsEtablissement(tenantId: string | undefined, user?: JwtUser) {
+    const [stats, notificationsNonLues] = await Promise.all([
+      this.cache.getOrSet(this.dashboardCacheKey(tenantId), 8, () =>
+        this.prisma.withReadRetry('dashboard etablissement', () => this.loadStatsEtablissement(tenantId)),
+      ),
+      user?.sub
+        ? this.prisma.notification.count({ where: { ...(tenantId ? { tenantId } : {}), destinataireId: user.sub, lu: false } })
+        : Promise.resolve(0),
+    ]);
+    return { ...stats, notificationsNonLues };
+  }
+
+  private async loadStatsEtablissement(tenantId: string | undefined) {
     const tenantFilter = tenantId ? { tenantId } : {};
     const [
       eleves,
@@ -1234,7 +1250,6 @@ export class LegacyCrudService {
       bulletinsParStatut,
       derniersPaiements,
       absencesRecentes,
-      notificationsNonLues,
     ] = await Promise.all([
       this.prisma.user.count({ where: { ...tenantFilter, role: 'ELEVE' } }),
       this.prisma.user.count({ where: { ...tenantFilter, role: 'ENSEIGNANT' } }),
@@ -1308,11 +1323,6 @@ export class LegacyCrudService {
         orderBy: [{ createdAt: 'desc' }],
         take: 6,
       }),
-      user?.sub
-        ? this.prisma.notification.count({
-            where: { ...tenantFilter, destinataireId: user.sub, lu: false },
-          })
-        : Promise.resolve(0),
     ]);
     return {
       eleves,
@@ -1328,7 +1338,6 @@ export class LegacyCrudService {
       convocationsEnAttente,
       bulletinsValides,
       bulletinsBrouillons,
-      notificationsNonLues,
       moyenneNotes: notes._avg.note ?? 0,
       nombreNotes: notes._count,
       montantPaiements: paiementsValidesAggregate._sum.montant ?? 0,
@@ -1369,6 +1378,10 @@ export class LegacyCrudService {
         classeNom: absence.classe?.nom ?? null,
       })),
     };
+  }
+
+  private dashboardCacheKey(tenantId: string | undefined): string {
+    return `tenant:${tenantId ?? 'platform'}:dashboard-stats:v2`;
   }
 
   async appbarSummary(tenantId: string | undefined, user?: JwtUser) {
@@ -1865,45 +1878,71 @@ export class LegacyCrudService {
         statut: 'ACTIF',
         anneeAcademiqueId,
       },
+      select: { eleveId: true },
     });
 
-    const bulletins: unknown[] = [];
-    for (const inscription of inscriptions) {
-      const { moyenne } = await this.computeStudentAverage(tenantId, inscription.eleveId, trimestre, anneeScolaire);
-      const absences = await this.prisma.absenceEleve.count({ where: { tenantId, eleveId: inscription.eleveId } });
-      const retards = await this.prisma.absenceEleve.count({
-        where: { tenantId, eleveId: inscription.eleveId, typeAbsence: 'RETARD' },
-      });
+    const studentIds = inscriptions.map((inscription) => inscription.eleveId);
+    if (!studentIds.length) return [];
 
-      const existing = await this.prisma.bulletin.findFirst({
-        where: { tenantId, eleveId: inscription.eleveId, classeId, trimestre, anneeScolaire },
-      });
+    // All class data is read in parallel. Avoid one database round-trip per student.
+    const [notes, absenceRows, cours] = await Promise.all([
+      this.prisma.note.findMany({
+        where: { tenantId, eleveId: { in: studentIds }, trimestre, anneeScolaire },
+        select: { eleveId: true, matiereId: true, note: true, noteSur: true },
+      }),
+      this.prisma.absenceEleve.groupBy({
+        by: ['eleveId', 'typeAbsence'],
+        where: { tenantId, eleveId: { in: studentIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.cours.findMany({
+        where: {
+          tenantId,
+          classeId,
+          OR: [{ anneeAcademique: { libelle: anneeScolaire } }, { anneeAcademiqueId: null }],
+        },
+        select: { matiereId: true, coefficient: true },
+      }),
+    ]);
 
+    const coefficients = new Map(cours.map((cours) => [cours.matiereId, cours.coefficient ?? 1]));
+    const averages = calculateBulletinAverages(studentIds, notes, coefficients);
+    const absencesByStudent = new Map<string, { total: number; retards: number }>();
+    for (const row of absenceRows) {
+      const current = absencesByStudent.get(row.eleveId) ?? { total: 0, retards: 0 };
+      current.total += row._count._all;
+      if (row.typeAbsence === 'RETARD') current.retards += row._count._all;
+      absencesByStudent.set(row.eleveId, current);
+    }
+
+    // Eight concurrent upserts keep batch requests fast without exhausting the pool.
+    const bulletins = await mapWithConcurrency(inscriptions, 8, async ({ eleveId }) => {
+      const absence = absencesByStudent.get(eleveId) ?? { total: 0, retards: 0 };
       const data = {
-        moyenne,
-        totalEleves: inscriptions.length,
-        nombreAbsences: absences,
-        nombreRetards: retards,
+        moyenne: averages.get(eleveId) ?? 0,
+        totalEleves: studentIds.length,
+        nombreAbsences: absence.total,
+        nombreRetards: absence.retards,
         moyenneClasse: 0,
         soumisPar: userId,
       };
 
-      const bulletin = existing
-        ? await this.prisma.bulletin.update({ where: { id: existing.id }, data })
-        : await this.prisma.bulletin.create({
-            data: {
-              tenantId,
-              eleveId: inscription.eleveId,
-              classeId,
-              trimestre,
-              anneeScolaire,
-              statut: 'BROUILLON',
-              ...data,
-            },
-          });
-
-      bulletins.push(await this.attachBulletinPdf(tenantId, bulletin));
-    }
+      return this.prisma.bulletin.upsert({
+        where: {
+          eleveId_classeId_trimestre_anneeScolaire: { eleveId, classeId, trimestre, anneeScolaire },
+        },
+        update: data,
+        create: {
+          tenantId,
+          eleveId,
+          classeId,
+          trimestre,
+          anneeScolaire,
+          statut: 'BROUILLON',
+          ...data,
+        },
+      });
+    });
 
     await this.updateBulletinRanks(tenantId, classeId, trimestre, anneeScolaire);
     return bulletins;
@@ -3674,12 +3713,18 @@ export class LegacyCrudService {
     anneeScolaire: string,
   ): Promise<void> {
     if (!tenantId) return;
-    const bulletins = await this.prisma.bulletin.findMany({ where: { tenantId, eleveId, trimestre, anneeScolaire } });
-    for (const bulletin of bulletins) {
-      const { moyenne } = await this.computeStudentAverage(tenantId, eleveId, trimestre, anneeScolaire);
-      const updated = await this.prisma.bulletin.update({ where: { id: bulletin.id }, data: { moyenne } });
-      await this.attachBulletinPdf(tenantId, updated);
-    }
+    const [bulletins, { moyenne }] = await Promise.all([
+      this.prisma.bulletin.findMany({ where: { tenantId, eleveId, trimestre, anneeScolaire }, select: { id: true } }),
+      this.computeStudentAverage(tenantId, eleveId, trimestre, anneeScolaire),
+    ]);
+
+    if (!bulletins.length) return;
+
+    // A PDF is built only when downloaded. Rebuilding and uploading it on every
+    // note edit made grade entry depend on storage latency and could serve stale data.
+    await mapWithConcurrency(bulletins, 4, ({ id }) =>
+      this.prisma.bulletin.update({ where: { id }, data: { moyenne, fichierPdfUrl: null } }),
+    );
   }
 
   private async attachBulletinPdf(tenantId: string | undefined, bulletin: Record<string, any>) {

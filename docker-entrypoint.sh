@@ -81,6 +81,9 @@ echo ""
 
 # ── 3. Démarrage ──────────────────────────────────────────────────────────────
 log_step "🚀 Démarrage du serveur NestJS"
+export UV_THREADPOOL_SIZE="${UV_THREADPOOL_SIZE:-8}"
+# Garde une marge mémoire pour PostgreSQL/Redis/Chromium dans un conteneur SaaS.
+export NODE_OPTIONS="${NODE_OPTIONS:---max_old_space_size=768}"
 printf '%b\n\n' "${DIM}Commande: node dist/main${RESET}"
 echo ""
 exec node dist/main

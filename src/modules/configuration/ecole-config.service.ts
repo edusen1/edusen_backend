@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@/config/prisma.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
+import { AppCacheService } from '@/infrastructure/cache/app-cache.service';
 import { UpdateEcoleConfigDto } from './dto/update-ecole-config.dto';
 import { UpdateApparenceDto } from './dto/update-apparence.dto';
 import { SaveApparencePaletteDto } from './dto/save-apparence-palette.dto';
@@ -58,9 +59,16 @@ export class EcoleConfigService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly cache: AppCacheService,
   ) {}
 
   async getEcoleConfig(tenantId: string): Promise<EcoleConfigResponse> {
+    return this.cache.getOrSet(this.configCacheKey(tenantId), 300, () =>
+      this.prisma.withReadRetry('ecole config', () => this.loadEcoleConfig(tenantId)),
+    );
+  }
+
+  private async loadEcoleConfig(tenantId: string): Promise<EcoleConfigResponse> {
     const config = await this.prisma.ecoleConfig.findUnique({ where: { tenantId } });
 
     if (config) {
@@ -168,10 +176,17 @@ export class EcoleConfigService {
       },
     });
 
+    await this.invalidateTenantCache(tenantId);
     return this.toResponse(config);
   }
 
   async getApparence(tenantId: string): Promise<ApparenceResponse> {
+    return this.cache.getOrSet(this.apparenceCacheKey(tenantId), 300, () =>
+      this.prisma.withReadRetry('ecole apparence', () => this.loadApparence(tenantId)),
+    );
+  }
+
+  private async loadApparence(tenantId: string): Promise<ApparenceResponse> {
     const config = await this.prisma.ecoleConfig.findUnique({
       where: { tenantId },
       select: {
@@ -226,10 +241,17 @@ export class EcoleConfigService {
       update: apparenceData,
     });
 
+    await this.invalidateTenantCache(tenantId);
     return apparenceData;
   }
 
   async getApparencePalettes(tenantId: string): Promise<ApparencePaletteResponse[]> {
+    return this.cache.getOrSet(this.palettesCacheKey(tenantId), 300, () =>
+      this.prisma.withReadRetry('ecole palettes', () => this.loadApparencePalettes(tenantId)),
+    );
+  }
+
+  private async loadApparencePalettes(tenantId: string): Promise<ApparencePaletteResponse[]> {
     const palettes = await this.prisma.ecolePaletteConfig.findMany({
       where: { tenantId, actif: true },
       orderBy: [{ createdAt: 'asc' }, { libelle: 'asc' }],
@@ -270,12 +292,14 @@ export class EcoleConfigService {
         where: { id: existing.id },
         data,
       });
+      await this.invalidateTenantCache(tenantId);
       return this.toPaletteResponse(updated);
     }
 
     const created = await this.prisma.ecolePaletteConfig.create({
       data: { tenantId, ...data },
     });
+    await this.invalidateTenantCache(tenantId);
     return this.toPaletteResponse(created);
   }
 
@@ -287,6 +311,27 @@ export class EcoleConfigService {
     if (result.count === 0) {
       throw new NotFoundException('Palette introuvable');
     }
+    await this.invalidateTenantCache(tenantId);
+  }
+
+  private configCacheKey(tenantId: string): string {
+    return `tenant:${tenantId}:ecole-config:v1`;
+  }
+
+  private apparenceCacheKey(tenantId: string): string {
+    return `tenant:${tenantId}:apparence:v1`;
+  }
+
+  private palettesCacheKey(tenantId: string): string {
+    return `tenant:${tenantId}:apparence-palettes:v1`;
+  }
+
+  private async invalidateTenantCache(tenantId: string): Promise<void> {
+    await this.cache.invalidate(
+      this.configCacheKey(tenantId),
+      this.apparenceCacheKey(tenantId),
+      this.palettesCacheKey(tenantId),
+    );
   }
 
   private normalizeHex(value: string): string {

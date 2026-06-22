@@ -668,6 +668,7 @@ model Inscription {
 
   @@unique([tenantId, eleveId, anneeAcademiqueId], map: "inscriptions_tenant_eleve_annee_unique")
   @@index([tenantId, statut], map: "inscriptions_tenantId_statut_idx")
+  @@index([tenantId, classeId, statut, anneeAcademiqueId], map: "inscriptions_bulletin_batch_idx")
 }
 
 // ==================== GRADES ====================
@@ -692,6 +693,7 @@ model Note {
   reclamations Reclamation[]
 
   @@index([tenantId], map: "notes_tenantId_idx")
+  @@index([tenantId, eleveId, trimestre, anneeScolaire], map: "notes_bulletin_batch_idx")
 }
 
 model Bulletin {
@@ -719,6 +721,7 @@ model Bulletin {
 
   @@unique([eleveId, classeId, trimestre, anneeScolaire])
   @@index([tenantId, statut], map: "bulletins_tenantId_statut_idx")
+  @@index([tenantId, classeId, trimestre, anneeScolaire], map: "bulletins_class_period_idx")
 
   liensBulletin LienBulletinParent[]
 }
@@ -744,6 +747,7 @@ model AbsenceEleve {
 
   @@index([tenantId, statut, createdAt], map: "absences_eleves_tenantId_statut_createdAt_idx")
   @@index([tenantId, typeAbsence], map: "absences_eleves_tenantId_typeAbsence_idx")
+  @@index([tenantId, eleveId], map: "absences_eleves_bulletin_batch_idx")
 }
 
 model AbsenceEnseignant {
@@ -918,6 +922,7 @@ model Paiement {
   updatedAt     DateTime       @updatedAt
 
   @@index([tenantId, statut, createdAt], map: "paiements_tenantId_statut_createdAt_idx")
+  @@index([eleveId, typePaiement, anneeScolaire, trimestre], map: "paiements_mensualites_batch_idx")
 }
 
 model LienPaiementParent {

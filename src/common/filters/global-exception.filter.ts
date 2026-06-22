@@ -9,10 +9,14 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { AppLoggerService } from '@/common/logger/app-logger.service';
+import { RequestContextService } from '@/common/performance/request-context.service';
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
-  constructor(private readonly logger: AppLoggerService) {}
+  constructor(
+    private readonly logger: AppLoggerService,
+    private readonly requestContext: RequestContextService,
+  ) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
@@ -43,6 +47,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
     if (exception instanceof Prisma.PrismaClientKnownRequestError) {
       const status = this.mapPrismaStatus(exception.code);
+      if (exception.code === 'P1001') {
+        res.header('retry-after', '3');
+      }
       this.logger.warn(
         `[PrismaError] code=${exception.code} status=${status} method=${req.method} path=${req.url} correlationId=${correlationId}`,
         GlobalExceptionFilter.name,
@@ -84,6 +91,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   }
 
   private getCorrelationId(req: FastifyRequest): string {
+    const activeContext = this.requestContext.get();
+    if (activeContext?.correlationId) return activeContext.correlationId;
+
     const header = req.headers['x-correlation-id'];
     const value = Array.isArray(header) ? header[0] : header;
 
@@ -121,6 +131,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   }
 
   private mapPrismaStatus(code: string): HttpStatus {
+    if (code === 'P1001') return HttpStatus.SERVICE_UNAVAILABLE;
     if (code === 'P2002') return HttpStatus.CONFLICT;
     if (code === 'P2025') return HttpStatus.NOT_FOUND;
     if (code === 'P2023') return HttpStatus.BAD_REQUEST;
@@ -139,6 +150,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     if (code === 'P2002') return 'Conflit de données: une valeur unique existe déjà';
     if (code === 'P2025') return 'Ressource introuvable';
     if (code === 'P2023') return 'Identifiant invalide: UUID attendu';
+    if (code === 'P1001') return 'Service temporairement indisponible. Réessayez dans quelques secondes';
     return 'Erreur de persistance des données';
   }
 }

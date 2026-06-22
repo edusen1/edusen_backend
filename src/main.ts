@@ -6,6 +6,7 @@ import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
+import compress from '@fastify/compress';
 import { AppModule } from '@/app.module';
 import { AppLoggerService } from '@/common/logger/app-logger.service';
 
@@ -44,7 +45,12 @@ function registerProcessErrorHandlers(logger: AppLoggerService): void {
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ logger: false }),
+    new FastifyAdapter({
+      logger: false,
+      bodyLimit: Number(process.env.HTTP_BODY_LIMIT_BYTES ?? 5 * 1024 * 1024),
+      requestTimeout: Number(process.env.HTTP_REQUEST_TIMEOUT_MS ?? 60_000),
+      keepAliveTimeout: Number(process.env.HTTP_KEEP_ALIVE_TIMEOUT_MS ?? 72_000),
+    }),
     { bufferLogs: true },
   );
   const logger = app.get(AppLoggerService);
@@ -54,6 +60,10 @@ async function bootstrap(): Promise<void> {
 
   await app.register(helmet, {
     contentSecurityPolicy: false,
+  });
+  await app.register(compress, {
+    global: true,
+    threshold: Number(process.env.HTTP_COMPRESSION_THRESHOLD_BYTES ?? 1024),
   });
 
   const defaultAllowedOrigins = [
@@ -87,13 +97,18 @@ async function bootstrap(): Promise<void> {
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Tenant-Id', 'Accept', 'Origin'],
-    exposedHeaders: ['X-Total-Count'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Tenant-Id', 'X-Correlation-Id', 'Accept', 'Origin'],
+    exposedHeaders: ['X-Total-Count', 'X-Correlation-Id', 'X-Response-Time-Ms', 'Server-Timing'],
     preflight: true,
     strictPreflight: false,
   });
   await app.register(multipart, { limits: { fileSize: 5 * 1024 * 1024 } }); // 5 MB max
-  await app.register(rateLimit, { max: 200, timeWindow: '1 minute' });
+  await app.register(rateLimit, {
+    max: Number(process.env.HTTP_RATE_LIMIT_MAX ?? 240),
+    timeWindow: process.env.HTTP_RATE_LIMIT_WINDOW ?? '1 minute',
+    keyGenerator: (request) => request.ip,
+    skipOnError: true,
+  });
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.setGlobalPrefix('api');

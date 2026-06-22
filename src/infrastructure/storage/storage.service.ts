@@ -3,6 +3,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   GetObjectCommandOutput,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -17,6 +18,7 @@ export class StorageService {
   private readonly bucket: string;
   private readonly publicBaseUrl: string | null;
   private readonly presignedTtl: number;
+  private readonly configured: boolean;
 
   constructor() {
     const region = process.env.S3_REGION ?? process.env.AWS_REGION ?? 'us-east-1';
@@ -27,14 +29,72 @@ export class StorageService {
     this.publicBaseUrl = process.env.S3_PUBLIC_URL ?? process.env.S3_PUBLIC_BASE_URL ?? null;
     this.presignedTtl = Number(process.env.S3_PRESIGNED_TTL_SECONDS ?? 900);
 
+    const accessKeyId = process.env.S3_ACCESS_KEY ?? process.env.AWS_ACCESS_KEY_ID ?? '';
+    const secretAccessKey = process.env.S3_SECRET_KEY ?? process.env.AWS_SECRET_ACCESS_KEY ?? '';
+    this.configured = Boolean(
+      accessKeyId
+      && secretAccessKey
+      && (endpoint || process.env.S3_REGION || process.env.AWS_REGION),
+    );
+
     this.client = new S3Client({
       region,
       ...(endpoint ? { endpoint, forcePathStyle } : {}),
       credentials: {
-        accessKeyId: process.env.S3_ACCESS_KEY ?? process.env.AWS_ACCESS_KEY_ID ?? '',
-        secretAccessKey: process.env.S3_SECRET_KEY ?? process.env.AWS_SECRET_ACCESS_KEY ?? '',
+        accessKeyId,
+        secretAccessKey,
       },
     });
+  }
+
+  isConfigured(): boolean {
+    return this.configured;
+  }
+
+  async uploadPrivate(key: string, buffer: Buffer, contentType: string): Promise<void> {
+    if (!this.configured) {
+      throw new InternalServerErrorException('Stockage objet non configure');
+    }
+
+    try {
+      await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: buffer, ContentType: contentType }));
+    } catch (err) {
+      this.logger.error(`[Storage] Private upload failed key=${key}: ${(err as Error).message}`);
+      throw new InternalServerErrorException('Echec du stockage prive');
+    }
+  }
+
+  async getPrivateBuffer(key: string): Promise<Buffer | null> {
+    if (!this.configured) return null;
+
+    try {
+      const response = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+      if (!response.Body) return null;
+      const body = response.Body as { transformToByteArray?: () => Promise<Uint8Array> };
+      if (body.transformToByteArray) {
+        return Buffer.from(await body.transformToByteArray());
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of response.Body as AsyncIterable<Uint8Array>) {
+        chunks.push(Buffer.from(chunk));
+      }
+      return Buffer.concat(chunks);
+    } catch (err) {
+      const error = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+      if (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404) return null;
+      this.logger.error(`[Storage] Private download failed key=${key}: ${error.name ?? 'unknown error'}`);
+      throw new InternalServerErrorException('Echec de lecture du stockage prive');
+    }
+  }
+
+  async privateObjectExists(key: string): Promise<boolean> {
+    if (!this.configured) return false;
+    try {
+      await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async upload(key: string, buffer: Buffer, contentType: string): Promise<string> {

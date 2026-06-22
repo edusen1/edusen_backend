@@ -6,6 +6,7 @@ import { AppAuthGuard } from '@/common/guards/app-auth.guard';
 import { GlobalExceptionFilter } from '@/common/filters/global-exception.filter';
 import { ResponseInterceptor } from '@/common/interceptors/response.interceptor';
 import { AppLoggerService } from '@/common/logger/app-logger.service';
+import { RequestContextService } from '@/common/performance/request-context.service';
 import { PrismaService } from '@/config/prisma.service';
 import { AuthController } from '@/modules/auth.controller';
 import { PlatformController } from '@/modules/platform.controller';
@@ -25,6 +26,7 @@ import { DomainService } from '@/modules/domain.service';
 import { LegacyCrudService } from '@/modules/legacy-crud.service';
 import { MailService } from '@/infrastructure/mail/mail.service';
 import { RedisService } from '@/infrastructure/redis/redis.service';
+import { AppCacheService } from '@/infrastructure/cache/app-cache.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
 import { EcoleConfigService } from '@/modules/configuration/ecole-config.service';
 import { AcademiqueConfigService } from '@/modules/configuration/academique-config.service';
@@ -59,8 +61,10 @@ import { MensualitesSchedulerService } from '@/modules/mensualites-scheduler.ser
   ],
   providers: [
     AppLoggerService,
+    RequestContextService,
     PrismaService,
     RedisService,
+    AppCacheService,
     AuthService,
     PlatformService,
     SchoolService,

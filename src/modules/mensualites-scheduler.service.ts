@@ -1,8 +1,10 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '@/config/prisma.service';
+import { RedisService } from '@/infrastructure/redis/redis.service';
 import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 import { formatMru } from '@/common/utils/currency.util';
+import { mapWithConcurrency } from '@/common/utils/async.util';
 
 /** Days after month start before declaring a payment overdue */
 const OVERDUE_DAYS = 10;
@@ -12,6 +14,8 @@ const WARN_DAYS_BEFORE_MONTH_END = 5;
 const INTERVAL_MS = 24 * 60 * 60 * 1000;
 /** Startup delay in ms */
 const STARTUP_DELAY_MS = 45_000;
+/** Keeps one daily scheduler run across all SaaS replicas. */
+const SCHEDULER_LOCK_TTL_SECONDS = 26 * 60 * 60;
 
 @Injectable()
 export class MensualitesSchedulerService implements OnModuleInit {
@@ -19,6 +23,7 @@ export class MensualitesSchedulerService implements OnModuleInit {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
     private readonly whatsapp: WhatsappService,
   ) {}
 
@@ -34,10 +39,27 @@ export class MensualitesSchedulerService implements OnModuleInit {
 
   /** Main entry point — called daily */
   async run(): Promise<void> {
+    const dayKey = new Date().toISOString().slice(0, 10);
+    const lockKey = `scheduler:mensualites:${dayKey}`;
+    const lockResult = await this.redis.acquireLock(lockKey, `instance-${process.pid}`, SCHEDULER_LOCK_TTL_SECONDS);
+    if (lockResult === 'locked') {
+      this.logger.log('[MensualitesScheduler] Daily run already handled by another SaaS instance.');
+      return;
+    }
+    if (lockResult === 'unavailable') {
+      this.logger.warn('[MensualitesScheduler] Redis unavailable; running without distributed lock.');
+    }
+
     this.logger.log('[MensualitesScheduler] Starting daily check…');
-    await this.autoCreateMensualitesPaiements();
-    await this.notifyOverduePaiements();
-    await this.notifyUpcomingEndOfMonth();
+    try {
+      await this.autoCreateMensualitesPaiements();
+      await this.notifyOverduePaiements();
+      await this.notifyUpcomingEndOfMonth();
+    } catch (error) {
+      // Allow a later retry when the protected run fails before completion.
+      if (lockResult === 'acquired') await this.redis.del(lockKey);
+      throw error;
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -56,47 +78,50 @@ export class MensualitesSchedulerService implements OnModuleInit {
 
     const inscriptions = await this.prisma.inscription.findMany({
       where: { statut: 'ACTIF' },
-      include: { classe: { include: { niveau: true } } },
+      select: { id: true, tenantId: true, eleveId: true },
     });
 
-    let created = 0;
-    for (const ins of inscriptions) {
-      const existing = await this.prisma.paiement.findFirst({
-        where: {
-          tenantId: ins.tenantId,
-          eleveId: ins.eleveId,
-          typePaiement: 'SCOLARITE',
-          anneeScolaire,
-          trimestre: trimestreKey,
-        },
-      });
-      if (existing) continue;
+    if (!inscriptions.length) return;
 
-      // Look up frais for this niveau
-      const frais = await this.prisma.fraisNiveauConfig.findFirst({
-        where: { tenantId: ins.tenantId, actif: true },
-      });
-
-      const montant = frais?.mensualite ?? 0;
-      if (montant <= 0) continue;
-
-      await this.prisma.paiement.create({
-        data: {
-          tenantId: ins.tenantId,
-          eleveId: ins.eleveId,
-          inscriptionId: ins.id,
-          reference: `MENS-${year}${String(month).padStart(2, '0')}-${randomUUID().slice(0, 6).toUpperCase()}`,
-          montant,
-          typePaiement: 'SCOLARITE',
-          modePaiement: 'ESPECES',
-          statut: 'EN_ATTENTE',
-          anneeScolaire,
-          trimestre: trimestreKey,
-          description: `Mensualité ${this.monthLabel(month)} ${year}`,
-        },
-      });
-      created++;
+    const tenantIds = [...new Set(inscriptions.map((inscription) => inscription.tenantId))];
+    const studentIds = inscriptions.map((inscription) => inscription.eleveId);
+    const [existing, fraisConfigs] = await Promise.all([
+      this.prisma.paiement.findMany({
+        where: { eleveId: { in: studentIds }, typePaiement: 'SCOLARITE', anneeScolaire, trimestre: trimestreKey },
+        select: { tenantId: true, eleveId: true },
+      }),
+      this.prisma.fraisNiveauConfig.findMany({
+        where: { tenantId: { in: tenantIds }, actif: true },
+        select: { tenantId: true, mensualite: true },
+      }),
+    ]);
+    const existingByStudent = new Set(existing.map((payment) => `${payment.tenantId}:${payment.eleveId}`));
+    const mensualiteByTenant = new Map<string, number>();
+    for (const config of fraisConfigs) {
+      if (!mensualiteByTenant.has(config.tenantId)) {
+        mensualiteByTenant.set(config.tenantId, config.mensualite ?? 0);
+      }
     }
+
+    const payments = inscriptions.flatMap((inscription) => {
+      const key = `${inscription.tenantId}:${inscription.eleveId}`;
+      const montant = mensualiteByTenant.get(inscription.tenantId) ?? 0;
+      if (existingByStudent.has(key) || montant <= 0) return [];
+      return [{
+        tenantId: inscription.tenantId,
+        eleveId: inscription.eleveId,
+        inscriptionId: inscription.id,
+        reference: `MENS-${year}${String(month).padStart(2, '0')}-${randomUUID().slice(0, 6).toUpperCase()}`,
+        montant,
+        typePaiement: 'SCOLARITE' as const,
+        modePaiement: 'ESPECES' as const,
+        statut: 'EN_ATTENTE' as const,
+        anneeScolaire,
+        trimestre: trimestreKey,
+        description: `Mensualité ${this.monthLabel(month)} ${year}`,
+      }];
+    });
+    const created = payments.length ? (await this.prisma.paiement.createMany({ data: payments, skipDuplicates: true })).count : 0;
     this.logger.log(`[MensualitesScheduler] Created ${created} new mensualité records for ${this.monthLabel(month)} ${year}`);
   }
 
@@ -116,13 +141,13 @@ export class MensualitesSchedulerService implements OnModuleInit {
 
     this.logger.log(`[MensualitesScheduler] ${overdue.length} overdue payments to notify`);
 
-    for (const p of overdue) {
-      await this.notifyEleveAndParents(
+    await mapWithConcurrency(overdue, 6, (p) =>
+      this.notifyEleveAndParents(
         p.tenantId, p.eleveId, p.montant, p.anneeScolaire,
         p.description ?? p.trimestre ?? '',
         true,
-      );
-    }
+      ),
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -147,19 +172,29 @@ export class MensualitesSchedulerService implements OnModuleInit {
 
     this.logger.log(`[MensualitesScheduler] Sending upcoming-payment warnings for ${nextLabel}`);
 
-    const fraisCache = new Map<string, number>();
-    for (const ins of inscriptions) {
-      let montant = fraisCache.has(ins.tenantId) ? fraisCache.get(ins.tenantId)! : -1;
-      if (montant < 0) {
-        const frais = await this.prisma.fraisNiveauConfig.findFirst({
-          where: { tenantId: ins.tenantId, actif: true },
-        });
-        montant = frais?.mensualite ?? 0;
-        fraisCache.set(ins.tenantId, montant);
+    const tenantIds = [...new Set(inscriptions.map((inscription) => inscription.tenantId))];
+    const fraisConfigs = await this.prisma.fraisNiveauConfig.findMany({
+      where: { tenantId: { in: tenantIds }, actif: true },
+      select: { tenantId: true, mensualite: true },
+    });
+    const mensualiteByTenant = new Map<string, number>();
+    for (const config of fraisConfigs) {
+      if (!mensualiteByTenant.has(config.tenantId)) {
+        mensualiteByTenant.set(config.tenantId, config.mensualite ?? 0);
       }
-      if (montant <= 0) continue;
-      await this.notifyEleveAndParents(ins.tenantId, ins.eleveId, montant, anneeScolaire, nextLabel, false);
     }
+
+    const recipients = inscriptions.filter((inscription) => (mensualiteByTenant.get(inscription.tenantId) ?? 0) > 0);
+    await mapWithConcurrency(recipients, 6, (inscription) =>
+      this.notifyEleveAndParents(
+        inscription.tenantId,
+        inscription.eleveId,
+        mensualiteByTenant.get(inscription.tenantId)!,
+        anneeScolaire,
+        nextLabel,
+        false,
+      ),
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

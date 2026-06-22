@@ -1,6 +1,8 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import Redis from 'ioredis';
 
+export type RedisLockResult = 'acquired' | 'locked' | 'unavailable';
+
 @Injectable()
 export class RedisService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
@@ -78,6 +80,21 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     } catch (err) {
       this.logger.warn(`Redis setIfAbsent failed for key=${key}: ${(err as Error).message}`);
       return false;
+    }
+  }
+
+  /**
+   * Distinguishes an existing lock from a Redis outage so schedulers can avoid
+   * duplicate work without silently stopping a critical daily task.
+   */
+  async acquireLock(key: string, value: string, ttlSeconds: number): Promise<RedisLockResult> {
+    try {
+      if (this.client.status !== 'ready') return 'unavailable';
+      const result = await this.client.set(key, value, 'EX', ttlSeconds, 'NX');
+      return result === 'OK' ? 'acquired' : 'locked';
+    } catch (err) {
+      this.logger.warn(`Redis acquireLock failed for key=${key}: ${(err as Error).message}`);
+      return 'unavailable';
     }
   }
 

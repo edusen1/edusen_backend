@@ -8,11 +8,12 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createHash, randomInt, randomUUID } from 'node:crypto';
+import { createHash, randomInt, randomUUID, webcrypto } from 'node:crypto';
 import { basename, dirname, join } from 'path';
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'fs';
 import { PrismaService } from '@/config/prisma.service';
 import { RedisService } from '@/infrastructure/redis/redis.service';
+import { StorageService } from '@/infrastructure/storage/storage.service';
 import { RedisRemoteAuthTenantStore } from './redis-remote-auth-tenant.store';
 
 // Lazy-loaded au premier appel pour ne pas crasher si Chromium absent au démarrage
@@ -81,6 +82,15 @@ interface WhatsappPersistedStatus {
   updatedAt: string;
 }
 
+interface WhatsappStoredSessionMeta {
+  encoding: 'binary' | 'base64';
+  checksum: string;
+  size: number;
+  storage?: 'redis' | 's3';
+  storageKey?: string;
+  updatedAt: string;
+}
+
 interface WhatsappQueueRecord {
   id: string;
   tenantId: string;
@@ -146,6 +156,7 @@ const QR_MAX_RETRIES_REACHED = 'Max qrcode retries reached';
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY_MS = 10_000;
 const STARTUP_STAGGER_MS = 3_000;
+const WHATSAPP_BACKUP_SYNC_INTERVAL_MS = Math.max(60_000, Number(process.env.WHATSAPP_BACKUP_SYNC_INTERVAL_MS ?? 900_000));
 
 const MAX_OUTBOX_ATTEMPTS = Number(process.env.WHATSAPP_OUTBOX_MAX_ATTEMPTS ?? 10);
 const OUTBOX_FLUSH_INTERVAL_MS = Number(process.env.WHATSAPP_OUTBOX_FLUSH_INTERVAL_MS ?? 15_000);
@@ -191,11 +202,20 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly storage: StorageService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    if (!this.isClientWorkerEnabled()) {
+      this.logger.log('Worker WhatsApp désactivé pour cette instance API : les messages restent en file Redis.');
+      return;
+    }
+
     this.startTimers();
     await this.migrateLegacyStateToRedis();
+    // Large legacy archives are moved in the background so startup and health
+    // checks remain responsive while Redis memory is progressively released.
+    void this.migrateRedisSessionPayloadsToObjectStorage();
 
     const autostart = this.config.get<string>('WHATSAPP_AUTOSTART', 'true') !== 'false';
     if (!autostart) return;
@@ -258,9 +278,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
 
     const state = this.states.get(tenantId);
     const persisted = await this.redis.getJson<WhatsappPersistedStatus>(this.getStatusKey(tenantId));
-    const hasSession = state?.ready || state?.initializing
-      ? true
-      : await this.redis.exists(this.getSessionKey(tenantId));
+    const hasSession = state?.ready || state?.initializing ? true : await this.hasPersistedSession(tenantId);
     const features = await this.getFeatures(tenantId);
 
     return {
@@ -325,9 +343,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       this.states.delete(tenantId);
     }
 
-    await this.redis.del(this.getSessionKey(tenantId));
-    await this.redis.del(this.getSessionMetaKey(tenantId));
-    await this.redis.srem(WA_SESSION_INDEX_KEY, tenantId);
+    await this.deletePersistedSession(tenantId);
     await this.persistStatus(tenantId, {
       connected: false,
       hasSession: false,
@@ -580,6 +596,8 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
   }
 
   private startClientIfNeeded(tenantId: string, resetAttempts = false): void {
+    if (!this.isClientWorkerEnabled()) return;
+
     const state = this.getOrCreateState(tenantId);
     if (resetAttempts) state.reconnectAttempts = 0;
     if (state.ready || state.initializing) return;
@@ -602,7 +620,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     mkdirSync(dataPath, { recursive: true });
 
     loadWWebDeps();
-    const store = new RedisRemoteAuthTenantStore(this.redis, tenantId, dataPath);
+    const store = new RedisRemoteAuthTenantStore(this.redis, tenantId, dataPath, this.storage);
     const clientId = `school-${tenantId}`;
 
     const client = new WWebClient({
@@ -619,7 +637,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
         clientId,
         dataPath,
         store,
-        backupSyncIntervalMs: 60_000,
+      backupSyncIntervalMs: WHATSAPP_BACKUP_SYNC_INTERVAL_MS,
       }),
       puppeteer: {
         headless: 'new',
@@ -753,9 +771,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       state.qrRequestExpiresAt = null;
       state.lastError = msg || 'Échec authentification WhatsApp';
       this.logger.error(`Auth failure (tenant=${tenantId}): ${state.lastError}`);
-      void this.redis.del(this.getSessionKey(tenantId)).catch(() => null);
-      void this.redis.del(this.getSessionMetaKey(tenantId)).catch(() => null);
-      void this.redis.srem(WA_SESSION_INDEX_KEY, tenantId).catch(() => null);
+      void this.deletePersistedSession(tenantId).catch(() => null);
       void this.persistStatus(tenantId, {
         connected: false,
         hasSession: false,
@@ -871,9 +887,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     }
     this.states.delete(tenantId);
 
-    await this.redis.del(this.getSessionKey(tenantId));
-    await this.redis.del(this.getSessionMetaKey(tenantId));
-    await this.redis.srem(WA_SESSION_INDEX_KEY, tenantId);
+    await this.deletePersistedSession(tenantId);
     await this.persistStatus(tenantId, {
       connected: false,
       hasSession: false,
@@ -1282,6 +1296,29 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     await this.migrateLegacyOutboxToRedis();
   }
 
+  private async migrateRedisSessionPayloadsToObjectStorage(): Promise<void> {
+    if (!this.usesObjectStorage()) return;
+
+    const tenantIds = await this.redis.smembers(WA_SESSION_INDEX_KEY);
+    for (const tenantId of tenantIds) {
+      const meta = await this.redis.getJson<WhatsappStoredSessionMeta>(this.getSessionMetaKey(tenantId));
+      if (meta?.storage === 's3') continue;
+
+      const bytes = await this.redis.getBuffer(this.getSessionKey(tenantId));
+      if (!bytes) continue;
+
+      try {
+        await this.persistSessionBytes(tenantId, bytes);
+        this.logger.log(`Session WhatsApp migrée vers S3/MinIO (tenant=${tenantId}, bytes=${bytes.length})`);
+      } catch (error) {
+        this.logger.warn(`Migration session WhatsApp reportée (tenant=${tenantId}): ${this.formatError(error)}`);
+      }
+
+      // Yield between large archives so the API remains responsive under load.
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  }
+
   private async migrateLegacySessionsToRedis(): Promise<void> {
     const sessions = await this.prisma.whatsappSession.findMany({
       where: {
@@ -1301,16 +1338,13 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     if (!sessions.length) return;
 
     for (const session of sessions as LegacySessionRecord[]) {
-      if (session.sessionData && !await this.redis.exists(this.getSessionKey(session.tenantId))) {
+      if (session.sessionData && !await this.hasPersistedSession(session.tenantId)) {
         const bytes = Buffer.from(session.sessionData);
-        await this.redis.setBuffer(this.getSessionKey(session.tenantId), bytes);
-        await this.redis.setJson(this.getSessionMetaKey(session.tenantId), {
-          encoding: 'binary',
-          checksum: createHash('sha256').update(bytes).digest('hex'),
-          size: bytes.length,
-          updatedAt: new Date().toISOString(),
+        await this.persistSessionBytes(session.tenantId, bytes);
+        await this.prisma.whatsappSession.update({
+          where: { tenantId: session.tenantId },
+          data: { sessionData: null },
         });
-        await this.redis.sadd(WA_SESSION_INDEX_KEY, session.tenantId);
       }
 
       if (!await this.redis.exists(this.getFeaturesKey(session.tenantId))) {
@@ -1426,21 +1460,64 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       });
     }
 
-    if (legacy.sessionData && !await this.redis.exists(this.getSessionKey(tenantId))) {
+    if (legacy.sessionData && !await this.hasPersistedSession(tenantId)) {
       const bytes = Buffer.from(legacy.sessionData);
-      await this.redis.setBuffer(this.getSessionKey(tenantId), bytes);
-      await this.redis.setJson(this.getSessionMetaKey(tenantId), {
-        encoding: 'binary',
-        checksum: createHash('sha256').update(bytes).digest('hex'),
-        size: bytes.length,
-        updatedAt: new Date().toISOString(),
-      });
-      await this.redis.sadd(WA_SESSION_INDEX_KEY, tenantId);
+      await this.persistSessionBytes(tenantId, bytes);
+      await this.prisma.whatsappSession.update({ where: { tenantId }, data: { sessionData: null } });
     }
   }
 
   private async hasPersistedSession(tenantId: string): Promise<boolean> {
+    const meta = await this.redis.getJson<WhatsappStoredSessionMeta>(this.getSessionMetaKey(tenantId));
+    if (meta?.storage === 's3') return Boolean(meta.storageKey);
     return this.redis.exists(this.getSessionKey(tenantId));
+  }
+
+  private async persistSessionBytes(tenantId: string, bytes: Buffer): Promise<void> {
+    const useObjectStorage = this.usesObjectStorage();
+    const storageKey = this.getSessionObjectKey(tenantId);
+    if (useObjectStorage) {
+      await this.storage.uploadPrivate(storageKey, bytes, 'application/zip');
+      await this.redis.del(this.getSessionKey(tenantId));
+    } else {
+      await this.redis.setBuffer(this.getSessionKey(tenantId), bytes);
+    }
+    await this.redis.setJson(this.getSessionMetaKey(tenantId), {
+      encoding: 'binary',
+      checksum: await this.sessionChecksum(bytes),
+      size: bytes.length,
+      storage: useObjectStorage ? 's3' : 'redis',
+      storageKey: useObjectStorage ? storageKey : undefined,
+      updatedAt: new Date().toISOString(),
+    } satisfies WhatsappStoredSessionMeta);
+    await this.redis.sadd(WA_SESSION_INDEX_KEY, tenantId);
+  }
+
+  private async deletePersistedSession(tenantId: string): Promise<void> {
+    const meta = await this.redis.getJson<WhatsappStoredSessionMeta>(this.getSessionMetaKey(tenantId));
+    if (meta?.storage === 's3' && meta.storageKey) {
+      await this.storage.delete(meta.storageKey).catch(() => undefined);
+    }
+    await this.redis.del(this.getSessionKey(tenantId));
+    await this.redis.del(this.getSessionMetaKey(tenantId));
+    await this.redis.srem(WA_SESSION_INDEX_KEY, tenantId);
+  }
+
+  private usesObjectStorage(): boolean {
+    return process.env.WHATSAPP_SESSION_STORAGE !== 'redis' && this.storage.isConfigured();
+  }
+
+  private isClientWorkerEnabled(): boolean {
+    return this.config.get<string>('WHATSAPP_CLIENT_ENABLED', 'true') !== 'false';
+  }
+
+  private getSessionObjectKey(tenantId: string): string {
+    return `whatsapp-sessions/${tenantId}/remote-auth.zip`;
+  }
+
+  private async sessionChecksum(bytes: Buffer): Promise<string> {
+    const digest = await webcrypto.subtle.digest('SHA-256', bytes);
+    return Buffer.from(digest).toString('hex');
   }
 
   private async persistStatus(tenantId: string, status: WhatsappPersistedStatus): Promise<void> {

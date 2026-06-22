@@ -59,7 +59,7 @@ RUN chmod +x docker-entrypoint.sh
 EXPOSE 3000
 
 HEALTHCHECK --interval=60s --timeout=5s --start-period=60s --retries=3 \
-  CMD curl -fsS "http://127.0.0.1:${PORT:-3000}/api/health" >/dev/null || exit 1
+  CMD curl -fsS "http://127.0.0.1:${PORT:-3000}/api/health/ready" >/dev/null || exit 1
 
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["./docker-entrypoint.sh"]
