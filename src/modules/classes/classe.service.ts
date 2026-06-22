@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '@/config/prisma.service';
+import { StorageService } from '@/infrastructure/storage/storage.service';
+import { BulletinDocumentService } from '@/modules/bulletin-document.service';
 import { CreateClasseDto } from './dto/create-classe.dto';
 import { UpdateClasseDto } from './dto/update-classe.dto';
 
@@ -36,7 +38,11 @@ const CLASSE_INCLUDE = {
 
 @Injectable()
 export class ClasseService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+    private readonly bulletinDocument: BulletinDocumentService,
+  ) {}
 
   // ----------------------------------------------------------------
   // List
@@ -919,31 +925,21 @@ export class ClasseService {
 
   async exportTeacherStudentBulletin(tenantId: string, enseignantId: string, classeId: string, eleveId: string) {
     await this.assertTeacherClasseAccess(tenantId, enseignantId, classeId);
-    const report = await this.getEleveNotesForClasse(tenantId, classeId, eleveId);
+    const bulletin = await this.prisma.bulletin.findFirst({
+      where: { tenantId, classeId, eleveId },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, trimestre: true },
+    });
+    if (!bulletin) {
+      throw new NotFoundException('Aucun bulletin généré pour cet élève');
+    }
 
-    return this.csvExport(
-      `bulletin-${this.safeFilename(report.eleve.nom)}-${this.safeFilename(report.classe.nom)}.csv`,
-      [
-        ['Eleve', report.eleve.nom],
-        ['Matricule', report.eleve.matricule ?? ''],
-        ['Classe', report.classe.nom],
-        ['Annee scolaire', report.classe.annee ?? ''],
-        ['Moyenne annuelle', report.moyenneAnnuelle ?? ''],
-        [],
-        ['Periode', 'Matiere', 'Coefficient', 'Devoirs', 'Composition', 'Moyenne', 'Appreciation'],
-        ...report.periodes.flatMap((periode) =>
-          periode.matieres.map((matiere) => [
-            periode.label,
-            matiere.libelle,
-            matiere.coefficient,
-            matiere.moyenneDevoirs ?? '',
-            matiere.composition?.length ? matiere.composition[matiere.composition.length - 1].note : '',
-            matiere.moyenne ?? '',
-            periode.appreciation ?? '',
-          ]),
-        ),
-      ],
-    );
+    const { buffer } = await this.bulletinDocument.generate(tenantId, bulletin.id);
+    const key = this.storage.buildBulletinKey(tenantId, eleveId, bulletin.trimestre);
+    const fichierPdfUrl = await this.storage.upload(key, buffer, 'application/pdf');
+    await this.prisma.bulletin.update({ where: { id: bulletin.id }, data: { fichierPdfUrl } });
+
+    return { id: bulletin.id, format: 'pdf', url: fichierPdfUrl, fichierPdfUrl };
   }
 
   async getTeacherReclamations(tenantId: string, enseignantId: string) {

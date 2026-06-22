@@ -36,6 +36,7 @@ import { HealthController } from '@/modules/health.controller';
 import { EmploiDuTempsService } from '@/modules/v1/emploi-du-temps/emploi-du-temps.service';
 import { BulletinService } from '@/modules/v1/bulletin/bulletin.service';
 import { MensualitesSchedulerService } from '@/modules/mensualites-scheduler.service';
+import { BulletinDocumentService } from '@/modules/bulletin-document.service';
 
 @Module({
   imports: [
@@ -78,6 +79,7 @@ import { MensualitesSchedulerService } from '@/modules/mensualites-scheduler.ser
     ClasseService,
     EmploiDuTempsService,
     BulletinService,
+    BulletinDocumentService,
     MensualitesSchedulerService,
     { provide: APP_GUARD, useClass: AppAuthGuard },
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },

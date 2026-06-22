@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Headers,
   HttpCode,
@@ -52,6 +53,20 @@ export class AdminController {
     return this.crud.resolveTenantId(tenantId, user);
   }
 
+  /** Restricts dynamic CRUD routes without blocking each role's own workflow. */
+  private assertResourceWriteAccess(resource: string, user?: JwtUser): void {
+    if (user?.role === 'ADMIN') return;
+
+    const resourcesByRole: Partial<Record<JwtUser['role'], string[]>> = {
+      RH: ['personnel', 'pointages', 'absences-personnel'],
+      CAISSIER: ['inscriptions'],
+      SURVEILLANT: ['absences-eleves', 'convocations'],
+    };
+    if (!user?.role || !resourcesByRole[user.role]?.includes(resource)) {
+      throw new ForbiddenException('Vous ne pouvez pas modifier cette ressource');
+    }
+  }
+
   // ----------------------------------------------------------------
   // Classes
   // ----------------------------------------------------------------
@@ -67,6 +82,7 @@ export class AdminController {
     return this.resolveTenantId(tenantId, user).then((tid) => this.classeService.getClasses(tid!, anneeId, niveauId, cycleId));
   }
 
+  @Roles('ADMIN')
   @Post('classes')
   createClasse(@Headers('x-tenant-id') tenantId: string | undefined, @Body() dto: CreateClasseDto) {
     return this.classeService.createClasse(tenantId!, dto);
@@ -97,6 +113,7 @@ export class AdminController {
     return this.resolveTenantId(tenantId, user).then((tid) => this.classeService.getClasse(tid!, id));
   }
 
+  @Roles('ADMIN')
   @Put('classes/:id')
   updateClasse(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -107,12 +124,14 @@ export class AdminController {
     return this.resolveTenantId(tenantId, user).then((tid) => this.classeService.updateClasse(tid!, id, dto));
   }
 
+  @Roles('ADMIN')
   @Delete('classes/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   deleteClasse(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string, @CurrentUser() user?: JwtUser) {
     return this.resolveTenantId(tenantId, user).then((tid) => this.classeService.deleteClasse(tid!, id));
   }
 
+  @Roles('ADMIN')
   @Post('classes/:id/stagiaires')
   addStagiaire(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -149,6 +168,7 @@ export class AdminController {
     );
   }
 
+  @Roles('ADMIN')
   @Delete('classes/:id/stagiaires/:stagiaireId')
   removeStagiaire(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -172,6 +192,7 @@ export class AdminController {
     return this.emploiService.findAll(tenantId!, classeId, enseignantId);
   }
 
+  @Roles('ADMIN')
   @Post('emplois-du-temps')
   createEmploi(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -189,6 +210,7 @@ export class AdminController {
     return this.emploiService.findByClasse(tenantId!, classeId, anneeScolaire);
   }
 
+  @Roles('ADMIN')
   @Post('emplois-du-temps/classe/:classeId')
   createEmploiParClasse(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -198,6 +220,7 @@ export class AdminController {
     return this.emploiService.create(tenantId!, { ...(body as any), classeId });
   }
 
+  @Roles('ADMIN')
   @Post('emplois-du-temps/classe/:classeId/publier')
   publierEmploiParClasse(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -215,6 +238,7 @@ export class AdminController {
     return this.emploiService.findOne(tenantId!, id);
   }
 
+  @Roles('ADMIN')
   @Put('emplois-du-temps/:id')
   @Patch('emplois-du-temps/:id')
   updateEmploi(
@@ -225,6 +249,7 @@ export class AdminController {
     return this.emploiService.update(tenantId!, id, body as any);
   }
 
+  @Roles('ADMIN')
   @Delete('emplois-du-temps/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   deleteEmploi(
@@ -820,6 +845,7 @@ export class AdminController {
     @Body() body: Payload,
     @CurrentUser() user?: JwtUser,
   ) {
+    this.assertResourceWriteAccess(resource, user);
     return this.resolveTenantId(tenantId, user).then((tid) => this.crud.create(this.crud.adminConfig(resource), tid, body, user?.sub));
   }
 
@@ -831,6 +857,7 @@ export class AdminController {
     @Body() body: Payload,
     @CurrentUser() user?: JwtUser,
   ) {
+    this.assertResourceWriteAccess(resource, user);
     return this.resolveTenantId(tenantId, user).then((tid) => this.crud.update(this.crud.adminConfig(resource), tid, id, body));
   }
 
@@ -842,6 +869,7 @@ export class AdminController {
     @Param('id') id: string,
     @CurrentUser() user?: JwtUser,
   ) {
+    this.assertResourceWriteAccess(resource, user);
     return this.resolveTenantId(tenantId, user).then((tid) => this.crud.delete(this.crud.adminConfig(resource), tid, id));
   }
 }

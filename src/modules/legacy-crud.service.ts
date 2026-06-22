@@ -10,6 +10,7 @@ import { normalizePhoneForCountry } from '@/common/utils/phone.util';
 import { mapWithConcurrency } from '@/common/utils/async.util';
 import { calculateBulletinAverages } from '@/common/utils/bulletin-calculation.util';
 import { AppCacheService } from '@/infrastructure/cache/app-cache.service';
+import { BulletinDocumentService } from '@/modules/bulletin-document.service';
 
 type QueryValue = string | string[] | undefined;
 type QueryParams = Record<string, QueryValue>;
@@ -112,6 +113,7 @@ export class LegacyCrudService {
     private readonly mailService: MailService,
     private readonly whatsappService: WhatsappService,
     private readonly cache: AppCacheService,
+    private readonly bulletinDocument: BulletinDocumentService,
   ) {}
 
   async resolveTenantId(tenantId: string | undefined, user?: JwtUser): Promise<string | undefined> {
@@ -1849,10 +1851,9 @@ export class LegacyCrudService {
 
   async getBulletinDownload(tenantId: string | undefined, id: string) {
     const bulletin = await this.findOne(V1_RESOURCES.bulletins, tenantId, id);
-    const withPdf =
-      (bulletin as Record<string, unknown>).fichierPdfUrl
-        ? bulletin
-        : await this.attachBulletinPdf(tenantId, bulletin as Record<string, any>);
+    // School identity can change at any time. Always render from current tenant
+    // configuration so a new download never shows an old logo or school name.
+    const withPdf = await this.attachBulletinPdf(tenantId, bulletin as Record<string, any>);
     return {
       id,
       format: 'pdf',
@@ -3729,76 +3730,10 @@ export class LegacyCrudService {
 
   private async attachBulletinPdf(tenantId: string | undefined, bulletin: Record<string, any>) {
     if (!tenantId) return bulletin;
-    const buffer = await this.buildBulletinPdf(tenantId, bulletin);
+    const { buffer } = await this.bulletinDocument.generate(tenantId, String(bulletin.id));
     const key = this.storage.buildBulletinKey(tenantId, String(bulletin.eleveId), String(bulletin.trimestre));
     const fichierPdfUrl = await this.storage.upload(key, buffer, 'application/pdf');
     return this.prisma.bulletin.update({ where: { id: bulletin.id }, data: { fichierPdfUrl } });
-  }
-
-  private async buildBulletinPdf(tenantId: string, bulletin: Record<string, any>): Promise<Buffer> {
-    const [eleve, classe, notes] = await Promise.all([
-      this.prisma.user.findFirst({ where: { id: String(bulletin.eleveId), tenantId } }),
-      this.prisma.classe.findFirst({ where: { id: String(bulletin.classeId), tenantId } }),
-      this.prisma.note.findMany({
-        where: {
-          tenantId,
-          eleveId: String(bulletin.eleveId),
-          trimestre: String(bulletin.trimestre),
-          anneeScolaire: String(bulletin.anneeScolaire),
-        },
-        include: { matiere: true },
-        orderBy: { createdAt: 'asc' },
-      }),
-    ]);
-
-    const lines = [
-      'Noura School - Bulletin',
-      `Eleve: ${eleve ? `${eleve.firstName} ${eleve.lastName}` : bulletin.eleveId}`,
-      `Classe: ${classe?.nom ?? bulletin.classeId ?? '-'}`,
-      `Trimestre: ${bulletin.trimestre}`,
-      `Annee scolaire: ${bulletin.anneeScolaire}`,
-      '',
-      'Notes:',
-      ...notes.map((note) => `${note.matiere.libelle}: ${note.note}/${note.noteSur} (${note.typeEvaluation})`),
-      '',
-      `Moyenne generale: ${bulletin.moyenne ?? 0}`,
-      `Moyenne classe: ${bulletin.moyenneClasse ?? 0}`,
-      `Rang: ${bulletin.rang ?? '-'} / ${bulletin.totalEleves ?? '-'}`,
-      `Absences: ${bulletin.nombreAbsences ?? 0}`,
-      `Retards: ${bulletin.nombreRetards ?? 0}`,
-      `Appreciation: ${bulletin.appreciation ?? '-'}`,
-    ];
-
-    return this.simplePdf(lines);
-  }
-
-  private simplePdf(lines: string[]): Buffer {
-    const escapedLines = lines.map((line) => `(${this.escapePdfText(line)}) Tj T*`).join('\n');
-    const stream = `BT /F1 11 Tf 50 790 Td 14 TL\n${escapedLines}\nET`;
-    const objects = [
-      '1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj',
-      '2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj',
-      '3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj',
-      '4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj',
-      `5 0 obj << /Length ${Buffer.byteLength(stream, 'latin1')} >> stream\n${stream}\nendstream endobj`,
-    ];
-    let pdf = '%PDF-1.4\n';
-    const offsets = [0];
-    for (const object of objects) {
-      offsets.push(Buffer.byteLength(pdf, 'latin1'));
-      pdf += `${object}\n`;
-    }
-    const xref = Buffer.byteLength(pdf, 'latin1');
-    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-    for (const offset of offsets.slice(1)) {
-      pdf += `${offset.toString().padStart(10, '0')} 00000 n \n`;
-    }
-    pdf += `trailer << /Root 1 0 R /Size ${objects.length + 1} >>\nstartxref\n${xref}\n%%EOF`;
-    return Buffer.from(pdf, 'latin1');
-  }
-
-  private escapePdfText(value: string): string {
-    return value.replace(/[\\()]/g, '\\$&').replace(/[^\x20-\x7E]/g, '');
   }
 
   private async syncEleveClasse(eleveId?: string, classeId?: string): Promise<void> {

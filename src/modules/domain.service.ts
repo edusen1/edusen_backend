@@ -2,6 +2,8 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { randomUUID } from "node:crypto";
 import { PrismaService } from "@/config/prisma.service";
 import { WhatsappService } from "@/modules/whatsapp/whatsapp.service";
+import { StorageService } from "@/infrastructure/storage/storage.service";
+import { BulletinDocumentService } from "@/modules/bulletin-document.service";
 import { normalizePhoneForCountry } from "@/common/utils/phone.util";
 import { formatMru } from "@/common/utils/currency.util";
 
@@ -37,6 +39,8 @@ export class DomainService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly whatsapp: WhatsappService,
+    private readonly storage: StorageService,
+    private readonly bulletinDocument: BulletinDocumentService,
   ) {}
 
   adminUsers(tenantId: string) {
@@ -348,29 +352,20 @@ export class DomainService {
     });
     if (!bulletin) throw new NotFoundException("Bulletin introuvable");
 
-    const notes = await this.prisma.note.findMany({
-      where: { tenantId, eleveId, anneeScolaire: bulletin.anneeScolaire, trimestre: bulletin.trimestre },
-      include: { matiere: { select: { code: true, libelle: true } } },
-      orderBy: [{ matiere: { libelle: "asc" } }, { dateEvaluation: "asc" }],
-    });
+    // The official bulletin is rendered from the latest school configuration.
+    // This keeps a student's download aligned with the admin download, including
+    // a logo or school-name update made after the bulletin record was created.
+    const { buffer } = await this.bulletinDocument.generate(tenantId, bulletin.id);
+    const key = this.storage.buildBulletinKey(tenantId, eleveId, bulletin.trimestre);
+    const fichierPdfUrl = await this.storage.upload(key, buffer, "application/pdf");
+    await this.prisma.bulletin.update({ where: { id: bulletin.id }, data: { fichierPdfUrl } });
 
-    return this.csvExport(`bulletin-${this.safeFilename(bulletin.classe?.nom ?? "classe")}-${bulletin.trimestre}.csv`, [
-      ["Classe", bulletin.classe?.nom ?? ""],
-      ["Annee scolaire", bulletin.anneeScolaire],
-      ["Periode", bulletin.trimestre],
-      ["Moyenne", bulletin.moyenne ?? ""],
-      ["Rang", bulletin.rang ?? ""],
-      [],
-      ["Matiere", "Type", "Note", "Bareme", "Date", "Commentaire"],
-      ...notes.map((note) => [
-        note.matiere?.libelle ?? note.matiere?.code ?? "",
-        note.typeEvaluation,
-        note.note,
-        note.noteSur,
-        this.dateOnly(note.dateEvaluation),
-        note.commentaire ?? "",
-      ]),
-    ]);
+    return {
+      id: bulletin.id,
+      format: "pdf",
+      url: fichierPdfUrl,
+      fichierPdfUrl,
+    };
   }
   async studentEmploiDuTemps(tenantId: string, eleveId: string) {
     const inscription = await this.prisma.inscription.findFirst({
