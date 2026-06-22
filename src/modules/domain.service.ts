@@ -386,7 +386,13 @@ export class DomainService {
           : {}),
       },
       include: {
-        classe: { select: { id: true, nom: true } },
+        classe: {
+          select: {
+            id: true,
+            nom: true,
+            salle: { select: { id: true, nom: true, batiment: { select: { nom: true } } } },
+          },
+        },
         cours: {
           include: {
             matiere: { select: { id: true, code: true, libelle: true } },
@@ -942,9 +948,11 @@ export class DomainService {
         matiereCode: matiere?.code ?? null,
         enseignantId,
         enseignantNom: enseignant ? `${enseignant.firstName ?? ""} ${enseignant.lastName ?? ""}`.trim() : null,
-        salleId: row.salleId,
-        salleNom: row.salle?.nom ?? null,
-        salleBatimentNom: row.salle?.batiment?.nom ?? null,
+        // A slot may omit its own room; expose the class room as a fallback
+        // instead of leaving the student's timetable blank.
+        salleId: row.salleId ?? row.classe?.salle?.id ?? null,
+        salleNom: row.salle?.nom ?? row.classe?.salle?.nom ?? null,
+        salleBatimentNom: row.salle?.batiment?.nom ?? row.classe?.salle?.batiment?.nom ?? null,
         jourSemaine: row.jourSemaine,
         heureDebut: row.heureDebut,
         heureFin: row.heureFin,
