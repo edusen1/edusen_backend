@@ -1,9 +1,10 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { PrismaService } from "@/config/prisma.service";
 import { WhatsappService } from "@/modules/whatsapp/whatsapp.service";
 import { StorageService } from "@/infrastructure/storage/storage.service";
 import { BulletinDocumentService } from "@/modules/bulletin-document.service";
+import { PaymentReceiptDocumentService } from "@/modules/payment-receipt-document.service";
 import { normalizePhoneForCountry } from "@/common/utils/phone.util";
 import { formatMru } from "@/common/utils/currency.util";
 import { PushNotificationService } from "@/modules/push-notification.service";
@@ -11,6 +12,7 @@ import { buildDebtDashboardSummary, buildDebtSummary, DebtPaymentRow } from "@/m
 
 @Injectable()
 export class DomainService {
+  private readonly logger = new Logger(DomainService.name);
   private readonly userProfileSelect = {
     id: true,
     username: true,
@@ -43,6 +45,7 @@ export class DomainService {
     private readonly whatsapp: WhatsappService,
     private readonly storage: StorageService,
     private readonly bulletinDocument: BulletinDocumentService,
+    private readonly paymentReceiptDocument: PaymentReceiptDocumentService,
     private readonly pushNotifications: PushNotificationService,
   ) {}
 
@@ -913,7 +916,11 @@ export class DomainService {
       },
       include: this.paiementInclude,
     });
-    return created;
+
+    const receipt = (body.statut ?? 'EN_ATTENTE') === 'VALIDE'
+      ? await this.deliverPaymentReceipt(created as any).catch(() => null)
+      : null;
+    return { ...created, receiptPdfUrl: receipt?.receiptPdfUrl ?? null };
   }
 
   async caisseValiderPaiement(id: string, userId?: string) {
@@ -924,16 +931,8 @@ export class DomainService {
       data: { statut: 'VALIDE', datePaiement: new Date(), validePar: userId ?? null },
       include: this.paiementInclude,
     });
-    // Notify via WhatsApp
-    const eleve = await this.prisma.user.findUnique({
-      where: { id: paiement.eleveId },
-      select: { firstName: true, lastName: true, telephone: true },
-    });
-    if (eleve?.telephone) {
-      const msg = `✅ *Paiement confirmé*\nBonjour ${eleve.firstName ?? ''},\nVotre paiement de *${formatMru(paiement.montant)}* (${paiement.typePaiement}) a été validé.\nRéférence : ${paiement.reference}`;
-      this.whatsapp.sendMessage(paiement.tenantId, eleve.telephone, msg).catch(() => {});
-    }
-    return updated;
+    const receipt = await this.deliverPaymentReceipt(updated as any).catch(() => null);
+    return { ...updated, receiptPdfUrl: receipt?.receiptPdfUrl ?? null };
   }
 
   async caisseRejeterPaiement(id: string, motif?: string) {
@@ -946,6 +945,64 @@ export class DomainService {
         description: motif ? `[REJETÉ] ${motif}` : paiement.description,
       },
     });
+  }
+
+  private async deliverPaymentReceipt(paiement: any): Promise<{ receiptPdfUrl: string | null }> {
+    const hydrated = await this.hydratePaymentForReceipt(paiement);
+    const generated = await this.paymentReceiptDocument.generate(hydrated.tenantId, hydrated);
+    const receiptKey = this.storage.buildKey('recu-paiements', hydrated.tenantId, generated.filename);
+    const receiptPdfUrl = await this.storage.upload(receiptKey, generated.buffer, 'application/pdf').catch(() => null);
+
+    const parent = this.resolvePaymentParent(hydrated);
+    const phone = parent?.telephone?.trim() || null;
+    if (phone) {
+      const caption = `Votre paiement de ${formatMru(hydrated.montant)} a été validé. Veuillez trouver ci-joint votre reçu PDF.`;
+      await this.whatsapp.sendDocument(hydrated.tenantId, phone, {
+        filename: generated.filename,
+        mimeType: 'application/pdf',
+        data: generated.buffer,
+        caption,
+      }).catch((error: unknown) => {
+        this.logger.warn(`WhatsApp reçu paiement ${hydrated.reference}: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
+
+    return { receiptPdfUrl };
+  }
+
+  private async hydratePaymentForReceipt(paiement: any): Promise<any> {
+    if (paiement?.eleve?.elevParents) return paiement;
+
+    const eleve = await this.prisma.user.findUnique({
+      where: { id: paiement.eleveId },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        matricule: true,
+        telephone: true,
+        elevParents: {
+          select: {
+            parent: {
+              select: { id: true, firstName: true, lastName: true, telephone: true, lienParente: true },
+            },
+          },
+        },
+      },
+    });
+
+    return { ...paiement, eleve };
+  }
+
+  private resolvePaymentParent(paiement: any): { id?: string; firstName?: string | null; lastName?: string | null; telephone?: string | null } | null {
+    const direct = paiement?.parentId
+      ? paiement?.eleve?.elevParents?.map((item: any) => item?.parent).find((parent: any) => parent?.id === paiement.parentId)
+      : null;
+    if (direct) return direct;
+
+    const parents = paiement?.eleve?.elevParents?.map((item: any) => item?.parent).filter(Boolean) ?? [];
+    const withPhone = parents.find((parent: any) => String(parent?.telephone ?? '').trim());
+    return withPhone ?? parents[0] ?? null;
   }
 
   async caisseEleves(tenantId: string, search?: string) {

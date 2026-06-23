@@ -18,7 +18,7 @@ import { RedisRemoteAuthTenantStore } from './redis-remote-auth-tenant.store';
 
 // Lazy-loaded au premier appel pour ne pas crasher si Chromium absent au démarrage
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let WWebClient: any, WWebRemoteAuth: any, QRCodeLib: any, PuppeteerLib: any;
+let WWebClient: any, WWebRemoteAuth: any, WWebMessageMedia: any, QRCodeLib: any, PuppeteerLib: any;
 
 function loadWWebDeps(): void {
   if (WWebClient) return;
@@ -26,6 +26,7 @@ function loadWWebDeps(): void {
   const wweb = require('whatsapp-web.js');
   WWebClient = wweb.Client;
   WWebRemoteAuth = wweb.RemoteAuth;
+  WWebMessageMedia = wweb.MessageMedia;
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   QRCodeLib = require('qrcode');
 }
@@ -95,7 +96,13 @@ interface WhatsappQueueRecord {
   id: string;
   tenantId: string;
   phone: string;
+  kind: 'text' | 'document';
   message: string;
+  document?: {
+    filename: string;
+    mimeType: string;
+    dataBase64: string;
+  } | null;
   status: 'QUEUED' | 'PROCESSING' | 'RETRY' | 'SENT' | 'FAILED';
   attempts: number;
   createdAt: string;
@@ -386,7 +393,9 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       id,
       tenantId,
       phone: normalizedPhone,
+      kind: 'text',
       message: content,
+      document: null,
       status: 'QUEUED',
       attempts: 0,
       createdAt: now,
@@ -400,6 +409,57 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
 
     await this.queueMessageRecord(record);
     this.logger.log(`Message WhatsApp mis en file Redis → ${normalizedPhone} (tenant=${tenantId}, message=${id})`);
+    return { queued: true, messageId: id };
+  }
+
+  async sendDocument(
+    tenantId: string,
+    phone: string,
+    document: {
+      filename: string;
+      mimeType: string;
+      data: Buffer;
+      caption?: string;
+    },
+  ): Promise<WhatsappQueueResponse> {
+    await this.assertTenantExists(tenantId);
+
+    const normalizedPhone = this.normalizePhone(phone);
+    const filename = String(document?.filename ?? '').trim();
+    const mimeType = String(document?.mimeType ?? '').trim();
+    const data = Buffer.isBuffer(document?.data) ? document.data : Buffer.from(document?.data ?? []);
+    const caption = String(document?.caption ?? '').trim();
+
+    if (!filename || !mimeType || !data.length) {
+      throw new BadRequestException('Document WhatsApp invalide');
+    }
+
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const record: WhatsappQueueRecord = {
+      id,
+      tenantId,
+      phone: normalizedPhone,
+      kind: 'document',
+      message: caption,
+      document: {
+        filename,
+        mimeType,
+        dataBase64: data.toString('base64'),
+      },
+      status: 'QUEUED',
+      attempts: 0,
+      createdAt: now,
+      queuedAt: now,
+      lastAttemptAt: null,
+      nextAttemptAt: null,
+      lastError: null,
+      sentAt: null,
+      updatedAt: now,
+    };
+
+    await this.queueMessageRecord(record);
+    this.logger.log(`Document WhatsApp mis en file Redis → ${normalizedPhone} (tenant=${tenantId}, message=${id})`);
     return { queued: true, messageId: id };
   }
 
@@ -461,7 +521,9 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
           id: randomUUID(),
           tenantId,
           phone: normalizedPhone,
+          kind: 'text',
           message: String(message ?? '').trim(),
+          document: null,
           status: 'QUEUED',
           attempts: 0,
           createdAt: iso,
@@ -1133,7 +1195,15 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       record.updatedAt = attemptAt;
       await this.saveMessageRecord(record);
 
-      await state.client.sendMessage(record.phone, record.message);
+      if (record.kind === 'document' && record.document) {
+        const media = new WWebMessageMedia(record.document.mimeType, record.document.dataBase64, record.document.filename);
+        await state.client.sendMessage(record.phone, media, {
+          caption: record.message || undefined,
+          sendMediaAsDocument: true,
+        });
+      } else {
+        await state.client.sendMessage(record.phone, record.message);
+      }
 
       record.status = 'SENT';
       record.lastError = null;
@@ -1392,7 +1462,9 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
           id: entry.id,
           tenantId: entry.tenantId,
           phone: normalizedPhone ?? String(entry.phone ?? ''),
+          kind: 'text',
           message: entry.message,
+          document: null,
           status: invalidPhone ? 'FAILED' : status,
           attempts: entry.attempts,
           createdAt: entry.createdAt.toISOString(),
