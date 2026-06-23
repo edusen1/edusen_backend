@@ -179,7 +179,17 @@ export class PresenceProfesseurService {
   async paiementsProfesseurs(tenantId: string): Promise<unknown[]> {
     const rows = await this.prisma.paiementProfesseur.findMany({
       where: { tenantId },
-      include: {
+      select: {
+        id: true,
+        reference: true,
+        dateDebut: true,
+        dateFin: true,
+        heuresEffectuees: true,
+        heuresDeduites: true,
+        montant: true,
+        statut: true,
+        observations: true,
+        createdAt: true,
         enseignant: { select: { id: true, firstName: true, lastName: true, email: true } },
       },
       orderBy: { createdAt: 'desc' },
@@ -196,8 +206,8 @@ export class PresenceProfesseurService {
       heuresDeduites: row.heuresDeduites,
       montant: row.montant,
       statut: row.statut,
-      motifRejet: row.motifRejet,
-      reponduLe: row.reponduLe,
+      motifRejet: null,
+      reponduLe: null,
       observations: row.observations,
       createdAt: row.createdAt,
     }));
@@ -251,7 +261,17 @@ export class PresenceProfesseurService {
           notificationId: notification.id,
           observations: this.cleanObservation(payload.observations),
         },
-        include: {
+        select: {
+          id: true,
+          reference: true,
+          dateDebut: true,
+          dateFin: true,
+          heuresEffectuees: true,
+          heuresDeduites: true,
+          montant: true,
+          statut: true,
+          notificationId: true,
+          createdAt: true,
           enseignant: { select: { id: true, firstName: true, lastName: true, email: true } },
         },
       });
@@ -269,8 +289,8 @@ export class PresenceProfesseurService {
       montant: created.montant,
       statut: created.statut,
       notificationId: created.notificationId,
-      motifRejet: created.motifRejet,
-      reponduLe: created.reponduLe,
+      motifRejet: null,
+      reponduLe: null,
       createdAt: created.createdAt,
     };
   }
@@ -278,6 +298,7 @@ export class PresenceProfesseurService {
   async paiementsProfesseurPourEnseignant(tenantId: string, enseignantId: string): Promise<unknown[]> {
     const rows = await this.prisma.paiementProfesseur.findMany({
       where: { tenantId, enseignantId },
+      select: this.paiementProfesseurBaseSelect(),
       orderBy: { createdAt: 'desc' },
       take: 200,
     });
@@ -292,9 +313,8 @@ export class PresenceProfesseurService {
         where: { id: paiement.id },
         data: {
           statut: 'VALIDE',
-          motifRejet: null,
-          reponduLe: new Date(),
         },
+        select: this.paiementProfesseurBaseSelect(),
       });
 
       if (paiement.initialisePar) {
@@ -328,9 +348,8 @@ export class PresenceProfesseurService {
         where: { id: paiement.id },
         data: {
           statut: 'REJETE',
-          motifRejet,
-          reponduLe: new Date(),
         },
+        select: this.paiementProfesseurBaseSelect(),
       });
 
       if (paiement.initialisePar) {
@@ -506,6 +525,10 @@ export class PresenceProfesseurService {
     if (!id) throw new BadRequestException('paiementId est requis');
     const paiement = await this.prisma.paiementProfesseur.findFirst({
       where: { id, tenantId, enseignantId },
+      select: {
+        ...this.paiementProfesseurBaseSelect(),
+        initialisePar: true,
+      },
     });
     if (!paiement) throw new NotFoundException('Paiement professeur introuvable');
     if (paiement.statut !== 'EN_ATTENTE') {
@@ -524,8 +547,8 @@ export class PresenceProfesseurService {
     montant: number;
     statut: string;
     observations: string | null;
-    motifRejet: string | null;
-    reponduLe: Date | null;
+    motifRejet?: string | null;
+    reponduLe?: Date | null;
     createdAt: Date;
     updatedAt: Date;
   }) {
@@ -539,10 +562,26 @@ export class PresenceProfesseurService {
       montant: row.montant,
       statut: row.statut,
       observations: row.observations,
-      motifRejet: row.motifRejet,
-      reponduLe: row.reponduLe,
+      motifRejet: row.motifRejet ?? null,
+      reponduLe: row.reponduLe ?? null,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
+    };
+  }
+
+  private paiementProfesseurBaseSelect() {
+    return {
+      id: true,
+      reference: true,
+      dateDebut: true,
+      dateFin: true,
+      heuresEffectuees: true,
+      heuresDeduites: true,
+      montant: true,
+      statut: true,
+      observations: true,
+      createdAt: true,
+      updatedAt: true,
     };
   }
 
