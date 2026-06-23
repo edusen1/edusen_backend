@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Headers,
   Param,
@@ -29,10 +30,12 @@ export class StudentController {
     return user ? this.domain.studentProfil(user.sub) : null;
   }
   @Patch("profil") updateProfil(
-    @CurrentUser() user: JwtUser,
-    @Body() body: { telephone?: string },
+    @CurrentUser() _user: JwtUser,
+    @Body() _body: { telephone?: string },
   ) {
-    return this.domain.studentUpdateProfil(user.sub, body);
+    throw new ForbiddenException(
+      "La modification du profil est réservée à l'administrateur. Utilisez la demande de correction.",
+    );
   }
   @Get("notes") notes(
     @Headers("x-tenant-id") tenantId: string,

@@ -284,6 +284,11 @@ export class DomainService {
 
     return {
       ...profile,
+      telephone: profile.telephone ?? null,
+      numeroIdentificationNational: profile.numeroIdentificationNational ?? null,
+      nni: profile.numeroIdentificationNational ?? null,
+      lieuNaissance: profile.lieuNaissance ?? null,
+      birthPlace: profile.lieuNaissance ?? null,
       classeId: inscription?.classeId ?? profile.classeId ?? classe?.id ?? null,
       classe,
       eleveClasse: classe,
@@ -302,6 +307,65 @@ export class DomainService {
           }
         : null,
     };
+  }
+
+  async requestProfileChange(userId: string, rawMessage: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        tenantId: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        matricule: true,
+      },
+    });
+    if (!user?.tenantId) throw new NotFoundException("Utilisateur ou établissement introuvable");
+
+    const message = String(rawMessage ?? "").replace(/\s+/g, " ").trim().slice(0, 500);
+    if (message.length < 5) {
+      throw new BadRequestException("Décrivez la correction demandée");
+    }
+
+    const admins = await this.prisma.user.findMany({
+      where: { tenantId: user.tenantId, role: "ADMIN", actif: true },
+      select: { id: true },
+    });
+    if (!admins.length) {
+      throw new NotFoundException("Aucun administrateur actif pour cet établissement");
+    }
+
+    const fullName = `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || "Utilisateur";
+    const roleLabels: Record<string, string> = {
+      ELEVE: "Élève",
+      ENSEIGNANT: "Enseignant",
+      PARENT: "Parent",
+      SURVEILLANT: "Surveillant",
+      CAISSIER: "Caissier",
+      RH: "Ressources humaines",
+    };
+    const content = [
+      "NouraSchool - Demande de correction de profil",
+      `Utilisateur: ${fullName}`,
+      `Rôle: ${roleLabels[user.role] ?? user.role}`,
+      user.matricule ? `Matricule: ${user.matricule}` : null,
+      `Correction demandée: ${message}`,
+      "Ouvrez la plateforme pour vérifier et mettre à jour le profil.",
+    ].filter(Boolean).join("\n");
+
+    await this.prisma.notification.createMany({
+      data: admins.map((admin) => ({
+        tenantId: user.tenantId!,
+        destinataireId: admin.id,
+        titre: "Demande de correction de profil",
+        contenu: content,
+        lu: false,
+      })),
+    });
+    await this.whatsapp.broadcastToRoles(user.tenantId, content, ["ADMIN"]);
+
+    return { success: true, administrateursNotifies: admins.length };
   }
   async studentUpdateProfil(userId: string, data: { telephone?: string }) {
     const user = await this.prisma.user.findUnique({
@@ -326,24 +390,65 @@ export class DomainService {
     });
     return this.studentProfil(userId);
   }
-  studentNotes(tenantId: string, eleveId: string, trimestre?: string) {
-    return this.prisma.note.findMany({
-      where: { tenantId, eleveId, ...(trimestre ? { trimestre } : {}) },
-      include: { matiere: { select: { id: true, code: true, libelle: true } } },
-      orderBy: [
-        { anneeScolaire: "desc" },
-        { trimestre: "asc" },
-        { matiere: { libelle: "asc" } },
-        { dateEvaluation: "asc" },
-      ],
+  async studentNotes(tenantId: string, eleveId: string, trimestre?: string) {
+    const [notes, inscriptions, currentYear] = await Promise.all([
+      this.prisma.note.findMany({
+        where: { tenantId, eleveId, ...(trimestre ? { trimestre } : {}) },
+        include: { matiere: { select: { id: true, code: true, libelle: true } } },
+        orderBy: [
+          { anneeScolaire: "desc" },
+          { trimestre: "asc" },
+          { matiere: { libelle: "asc" } },
+          { dateEvaluation: "asc" },
+        ],
+      }),
+      this.prisma.inscription.findMany({
+        where: { tenantId, eleveId },
+        include: {
+          classe: { select: { id: true, nom: true } },
+          anneeAcademique: { select: { id: true, libelle: true, estCourante: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+      this.prisma.anneeAcademique.findFirst({
+        where: { tenantId, estCourante: true },
+        select: { id: true, libelle: true },
+      }),
+    ]);
+
+    const inscriptionByYear = new Map(
+      inscriptions.map((inscription) => [inscription.anneeAcademique.libelle, inscription]),
+    );
+    return notes.map((note) => {
+      const inscription = inscriptionByYear.get(note.anneeScolaire);
+      return {
+        ...note,
+        classeId: inscription?.classeId ?? null,
+        classeNom: inscription?.classe?.nom ?? null,
+        classe: inscription?.classe ?? null,
+        anneeAcademiqueId: inscription?.anneeAcademiqueId ?? null,
+        anneeActuelle:
+          inscription?.anneeAcademique?.estCourante === true
+          || currentYear?.libelle === note.anneeScolaire,
+      };
     });
   }
-  studentBulletins(tenantId: string, eleveId: string) {
-    return this.prisma.bulletin.findMany({
-      where: { tenantId, eleveId },
-      include: { classe: { select: { id: true, nom: true } } },
-      orderBy: [{ anneeScolaire: "desc" }, { trimestre: "asc" }],
-    });
+  async studentBulletins(tenantId: string, eleveId: string) {
+    const [bulletins, currentYear] = await Promise.all([
+      this.prisma.bulletin.findMany({
+        where: { tenantId, eleveId },
+        include: { classe: { select: { id: true, nom: true } } },
+        orderBy: [{ anneeScolaire: "desc" }, { trimestre: "asc" }],
+      }),
+      this.prisma.anneeAcademique.findFirst({
+        where: { tenantId, estCourante: true },
+        select: { id: true, libelle: true },
+      }),
+    ]);
+    return bulletins.map((bulletin) => ({
+      ...bulletin,
+      anneeActuelle: currentYear?.libelle === bulletin.anneeScolaire,
+    }));
   }
   async studentBulletinExport(tenantId: string, eleveId: string, bulletinId: string) {
     const bulletin = await this.prisma.bulletin.findFirst({

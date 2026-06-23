@@ -9,7 +9,9 @@ import { LoginDto } from '@/modules/auth/dto/login.dto';
 import { ForgotPasswordDto } from '@/modules/auth/dto/forgot-password.dto';
 import { ResetPasswordDto } from '@/modules/auth/dto/reset-password.dto';
 import { ChangePasswordDto } from '@/modules/auth/dto/change-password.dto';
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
+import { Roles } from '@/common/decorators/roles.decorator';
+import { DomainService } from '@/modules/domain.service';
 
 class RefreshDto {
   @IsString()
@@ -17,10 +19,21 @@ class RefreshDto {
   refreshToken!: string;
 }
 
+class ProfileChangeRequestDto {
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(5)
+  @MaxLength(500)
+  message!: string;
+}
+
 @ApiTags('Auth')
 @Controller('v1/auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly domain: DomainService,
+  ) {}
 
   @Public()
   @Get('/health')
@@ -82,6 +95,7 @@ export class AuthController {
   }
 
   @Patch('me')
+  @Roles('ADMIN', 'SUPER_ADMIN', 'GESTIONNAIRE')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mise à jour du profil' })
   updateProfile(
@@ -89,6 +103,16 @@ export class AuthController {
     @Body() dto: { firstName?: string; lastName?: string; email?: string; telephone?: string | null },
   ) {
     return this.authService.updateProfile(user.sub, dto);
+  }
+
+  @Post('profile-change-request')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Signaler une correction de profil à l’administrateur de l’école' })
+  requestProfileChange(
+    @CurrentUser() user: JwtUser,
+    @Body() dto: ProfileChangeRequestDto,
+  ) {
+    return this.domain.requestProfileChange(user.sub, dto.message);
   }
 
   @Post('change-password')

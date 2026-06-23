@@ -52,6 +52,17 @@ export class ParentController {
     return this.domain.studentBulletins(tenantId, eleveId);
   }
 
+  @Get('enfants/:eleveId/bulletins/:bulletinId/export')
+  async exportEnfantBulletin(
+    @Headers('x-tenant-id') tenantId: string,
+    @CurrentUser() user: JwtUser,
+    @Param('eleveId') eleveId: string,
+    @Param('bulletinId') bulletinId: string,
+  ) {
+    await this.domain.assertParentChild(user.sub, eleveId);
+    return this.domain.studentBulletinExport(tenantId, eleveId, bulletinId);
+  }
+
   @Get('enfants/:eleveId/emploi-du-temps')
   async enfantEmploiDuTemps(
     @Headers('x-tenant-id') tenantId: string,

@@ -2150,6 +2150,16 @@ export class LegacyCrudService {
           data.numeroIdentificationNational = nin;
         }
       }
+      if (create && data.role === 'ELEVE') {
+        if (!data.numeroIdentificationNational) {
+          throw new BadRequestException("Le numéro d'identification national est obligatoire pour un élève");
+        }
+        const lieuNaissance = String(data.lieuNaissance ?? '').trim();
+        if (!lieuNaissance) {
+          throw new BadRequestException("Le lieu de naissance est obligatoire pour un élève");
+        }
+        data.lieuNaissance = lieuNaissance;
+      }
 
       const incomingFirstName = data.firstName ?? data.prenom ?? data.first_name;
       const incomingLastName = data.lastName ?? data.nom ?? data.last_name;
