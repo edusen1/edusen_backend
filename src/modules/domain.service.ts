@@ -6,6 +6,8 @@ import { StorageService } from "@/infrastructure/storage/storage.service";
 import { BulletinDocumentService } from "@/modules/bulletin-document.service";
 import { normalizePhoneForCountry } from "@/common/utils/phone.util";
 import { formatMru } from "@/common/utils/currency.util";
+import { PushNotificationService } from "@/modules/push-notification.service";
+import { buildDebtDashboardSummary, buildDebtSummary, DebtPaymentRow } from "@/modules/debt-summary.util";
 
 @Injectable()
 export class DomainService {
@@ -41,6 +43,7 @@ export class DomainService {
     private readonly whatsapp: WhatsappService,
     private readonly storage: StorageService,
     private readonly bulletinDocument: BulletinDocumentService,
+    private readonly pushNotifications: PushNotificationService,
   ) {}
 
   adminUsers(tenantId: string) {
@@ -363,6 +366,11 @@ export class DomainService {
         lu: false,
       })),
     });
+    await this.pushNotifications.sendToUsers(
+      user.tenantId,
+      admins.map((admin) => admin.id),
+      { title: "Demande de correction de profil", body: content },
+    );
     await this.whatsapp.broadcastToRoles(user.tenantId, content, ["ADMIN"]);
 
     return { success: true, administrateursNotifies: admins.length };
@@ -631,6 +639,11 @@ export class DomainService {
           lu: false,
         })),
       });
+      await this.pushNotifications.sendToUsers(
+        tenantId,
+        notifications.map((notification) => notification.destinataireId),
+        { title: 'Nouvelle note publiée', body: message },
+      );
     }
     this.whatsapp.broadcastToRoles(tenantId, message, ['ADMIN']).catch(() => {});
   }
@@ -736,7 +749,7 @@ export class DomainService {
     const now = new Date();
     const startDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const [todayCnt, todayAgg, monthCnt, monthAgg, enAttenteCnt, enAttenteAgg, rejeteCnt, totalCnt] =
+    const [todayCnt, todayAgg, monthCnt, monthAgg, enAttenteCnt, enAttenteAgg, rejeteCnt, totalCnt, debtRows] =
       await Promise.all([
         this.prisma.paiement.count({ where: { tenantId, statut: 'VALIDE', datePaiement: { gte: startDay } } }),
         this.prisma.paiement.aggregate({ where: { tenantId, statut: 'VALIDE', datePaiement: { gte: startDay } }, _sum: { montant: true } }),
@@ -746,6 +759,23 @@ export class DomainService {
         this.prisma.paiement.aggregate({ where: { tenantId, statut: 'EN_ATTENTE' }, _sum: { montant: true } }),
         this.prisma.paiement.count({ where: { tenantId, statut: 'REJETE' } }),
         this.prisma.paiement.count({ where: { tenantId } }),
+        this.prisma.paiement.findMany({
+          where: {
+            tenantId,
+            typePaiement: 'SCOLARITE',
+            statut: { in: ['EN_ATTENTE', 'REJETE'] },
+          },
+          select: {
+            eleveId: true,
+            montant: true,
+            anneeScolaire: true,
+            trimestre: true,
+            description: true,
+            reference: true,
+            statut: true,
+            createdAt: true,
+          },
+        }),
       ]);
     const recentRows = await this.prisma.paiement.findMany({
       where: { tenantId },
@@ -763,6 +793,21 @@ export class DomainService {
       take: 6,
     });
     const derniersPaiements = await this.attachEleveToPaiements(recentRows as any);
+    const debtStudentIds = [...new Set((debtRows as DebtPaymentRow[]).map((row) => row.eleveId))];
+    const debtStudents = debtStudentIds.length
+      ? await this.prisma.user.findMany({
+          where: { tenantId, role: 'ELEVE', id: { in: debtStudentIds } },
+          select: { id: true, firstName: true, lastName: true, matricule: true },
+        })
+      : [];
+    const dettes = buildDebtDashboardSummary(
+      debtRows as DebtPaymentRow[],
+      debtStudents.map((student) => ({
+        eleveId: student.id,
+        nom: `${student.firstName ?? ''} ${student.lastName ?? ''}`.trim() || 'Élève',
+        matricule: student.matricule ?? null,
+      })),
+    );
 
     return {
       today: { count: todayCnt, montant: todayAgg._sum.montant ?? 0 },
@@ -770,6 +815,7 @@ export class DomainService {
       enAttente: { count: enAttenteCnt, montant: enAttenteAgg._sum.montant ?? 0 },
       rejete: { count: rejeteCnt },
       total: totalCnt,
+      dettes,
       derniersPaiements,
     };
   }
@@ -925,6 +971,43 @@ export class DomainService {
       : [];
     const classeMap = new Map(classes.map((c) => [c.id, c]));
     return result.map((u) => ({ ...u, classe: u.classeId ? (classeMap.get(u.classeId) ?? null) : null }));
+  }
+
+  async caisseEleveDettes(tenantId: string, eleveId: string) {
+    const eleve = await this.prisma.user.findFirst({
+      where: { tenantId, id: eleveId, role: 'ELEVE' },
+      select: { id: true, firstName: true, lastName: true, matricule: true },
+    });
+    if (!eleve) throw new NotFoundException('Élève introuvable');
+
+    const dettes = await this.prisma.paiement.findMany({
+      where: {
+        tenantId,
+        eleveId,
+        typePaiement: 'SCOLARITE',
+        statut: { in: ['EN_ATTENTE', 'REJETE'] },
+      },
+      select: {
+        eleveId: true,
+        montant: true,
+        anneeScolaire: true,
+        trimestre: true,
+        description: true,
+        reference: true,
+        statut: true,
+        createdAt: true,
+      },
+      orderBy: [{ anneeScolaire: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    return {
+      eleve: {
+        id: eleve.id,
+        nom: `${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim() || 'Élève',
+        matricule: eleve.matricule ?? null,
+      },
+      ...buildDebtSummary(dettes as DebtPaymentRow[]),
+    };
   }
 
   async caisseHistorique(tenantId: string, dateFrom?: string, dateTo?: string) {

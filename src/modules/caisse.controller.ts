@@ -22,6 +22,15 @@ export class CaisseController {
     return this.domain.caisseEleves(tenantId, search);
   }
 
+  /** Détail des dettes d'un élève */
+  @Get("eleves/:id/dettes")
+  eleveDettes(
+    @Headers("x-tenant-id") tenantId: string,
+    @Param("id") id: string,
+  ) {
+    return this.domain.caisseEleveDettes(tenantId, id);
+  }
+
   /** Liste des paiements avec filtres */
   @Get("paiements")
   paiements(

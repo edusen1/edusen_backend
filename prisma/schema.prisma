@@ -204,6 +204,7 @@ model Tenant {
   cours               Cours[]
   inscriptions        Inscription[]
   paiements           Paiement[]
+  paiementsProfesseurs PaiementProfesseur[]
   absencesEleves      AbsenceEleve[]
   absencesEnseignants AbsenceEnseignant[]
   emploisDuTemps      EmploiDuTemps[]
@@ -220,8 +221,10 @@ model Tenant {
   personnels          Personnel[]
   personnelNiveauAffectations PersonnelNiveauAffectation[]
   pointages           Pointage[]
+  presencesCoursProfesseurs PresenceCoursProfesseur[]
   absencesPersonnel   AbsencePersonnel[]
   notifications       Notification[]
+  pushTokens          PushToken[]
   notificationLogs    NotificationLog[]
   auditLogs           AuditLog[]
   calendrier          CalendrierScolaire[]
@@ -269,6 +272,7 @@ model EcoleConfig {
   typeEtablissement String   @default("PRIVE") @db.VarChar(20)
   logoUrl           String?
   logoS3Key         String?
+  montantHoraireDefaut Float?
   // Apparence
   themeColor        String   @default("blue") @db.VarChar(20)
   sidebarMode       String   @default("light") @db.VarChar(10)
@@ -411,12 +415,17 @@ model User {
   parentEleves       EleveParent[]        @relation("ParentEleves")
   matiereClasses     MatiereClasse[]      @relation("EnseignantMatiereClasses")
   matieresEnseignees ProfesseurMatiere[]  @relation("ProfesseurMatieres")
+  presencesEnseignant PresenceCoursProfesseur[] @relation("PresenceCoursProfesseurEnseignant")
+  presencesControlees PresenceCoursProfesseur[] @relation("PresenceCoursProfesseurSurveillant")
+  paiementsProfesseur  PaiementProfesseur[] @relation("PaiementProfesseurEnseignant")
+  paiementsProfesseurCrees PaiementProfesseur[] @relation("PaiementProfesseurCreateur")
   absencesEnseignant AbsenceEnseignant[]
   surveillantCycles  SurveillantCycle[]
   auditLogs          AuditLog[]
   personnelRecord    Personnel?
   classesResponsable Classe[]             @relation("ClasseProfResponsable")
   stagiaireIn        ClasseStagiaire[]    @relation("UserStagiaires")
+  pushTokens          PushToken[]
 }
 
 // ==================== ELEVE-PARENT ====================
@@ -635,6 +644,7 @@ model Cours {
   anneeAcademiqueId String?          @db.Uuid
   anneeAcademique   AnneeAcademique? @relation(fields: [anneeAcademiqueId], references: [id])
   volumeHoraireHebdo Int?
+  montantHoraire    Float?
   coefficient       Float?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
@@ -644,6 +654,7 @@ model Cours {
   emploisDuTemps EmploiDuTemps[]
   appels         Appel[]
   cahiersTexte   CahierTexte[]
+  presencesProfesseur PresenceCoursProfesseur[]
 }
 
 // ==================== ENROLLMENT ====================
@@ -790,6 +801,38 @@ model EmploiDuTemps {
   publie            Boolean   @default(false)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+
+  presencesProfesseur PresenceCoursProfesseur[]
+}
+
+model PresenceCoursProfesseur {
+  id                    String          @id @default(uuid()) @db.Uuid
+  tenantId              String          @db.Uuid
+  tenant                Tenant          @relation(fields: [tenantId], references: [id])
+  coursId               String          @db.Uuid
+  cours                 Cours           @relation(fields: [coursId], references: [id])
+  emploiDuTempsId       String?         @db.Uuid
+  emploiDuTemps         EmploiDuTemps?  @relation(fields: [emploiDuTempsId], references: [id])
+  classeId              String          @db.Uuid
+  enseignantId          String          @db.Uuid
+  enseignant            User            @relation("PresenceCoursProfesseurEnseignant", fields: [enseignantId], references: [id])
+  dateCours             DateTime        @db.Date
+  heureDebut            String          @db.VarChar(10)
+  heureFin              String          @db.VarChar(10)
+  statut                StatutPresence
+  minutesPlanifiees     Int
+  minutesComptabilisees Int
+  montantHoraire        Float
+  salaireCalcule        Float
+  controlePar           String          @db.Uuid
+  surveillant           User            @relation("PresenceCoursProfesseurSurveillant", fields: [controlePar], references: [id])
+  observations          String?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  @@unique([tenantId, emploiDuTempsId, dateCours])
+  @@index([tenantId, dateCours])
+  @@index([tenantId, enseignantId, dateCours])
 }
 
 // ==================== TEACHER TOOLS ====================
@@ -883,6 +926,22 @@ model Notification {
   @@index([tenantId, destinataireId, lu, createdAt], map: "notifications_tenantId_destinataireId_lu_createdAt_idx")
 }
 
+model PushToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  platform  String?  @db.VarChar(40)
+  userAgent String?
+  actif     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, userId, actif])
+}
+
 model NotificationLog {
   id           String             @id @default(uuid()) @db.Uuid
   tenantId     String?            @db.Uuid
@@ -923,6 +982,32 @@ model Paiement {
 
   @@index([tenantId, statut, createdAt], map: "paiements_tenantId_statut_createdAt_idx")
   @@index([eleveId, typePaiement, anneeScolaire, trimestre], map: "paiements_mensualites_batch_idx")
+}
+
+model PaiementProfesseur {
+  id               String         @id @default(uuid()) @db.Uuid
+  tenantId         String         @db.Uuid
+  tenant           Tenant         @relation(fields: [tenantId], references: [id])
+  enseignantId     String         @db.Uuid
+  enseignant       User           @relation("PaiementProfesseurEnseignant", fields: [enseignantId], references: [id])
+  dateDebut        DateTime       @db.Date
+  dateFin          DateTime       @db.Date
+  heuresEffectuees Float
+  heuresDeduites   Float
+  montant          Float
+  statut           StatutPaiement @default(EN_ATTENTE)
+  reference        String         @unique @db.VarChar(80)
+  initialisePar    String?        @db.Uuid
+  createur         User?          @relation("PaiementProfesseurCreateur", fields: [initialisePar], references: [id])
+  notificationId   String?        @db.Uuid
+  observations     String?
+  motifRejet       String?
+  reponduLe        DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([tenantId, enseignantId, dateDebut, dateFin])
+  @@index([tenantId, statut])
 }
 
 model LienPaiementParent {

@@ -2,10 +2,12 @@ import { Transform } from 'class-transformer';
 import {
   IsEmail,
   IsIn,
+  IsNumber,
   IsOptional,
   IsString,
   IsUrl,
   Matches,
+  Min,
   MaxLength,
   MinLength,
   Validate,
@@ -22,6 +24,12 @@ const OptionalTrim = (): PropertyDecorator =>
     if (typeof value !== 'string') return value;
     const trimmed = value.trim();
     return trimmed === '' ? undefined : trimmed;
+  });
+const OptionalNumber = (): PropertyDecorator =>
+  Transform(({ value }) => {
+    if (value === null || value === undefined || value === '') return undefined;
+    const numberValue = Number(value);
+    return Number.isNaN(numberValue) ? value : numberValue;
   });
 const PHONE_RULES: Record<(typeof PAYS_SUPPORTES)[number], { indicatif: string; digits: number }> = {
   SN: { indicatif: '+221', digits: 9 },
@@ -127,6 +135,12 @@ export class UpdateEcoleConfigDto {
   @IsString()
   @MaxLength(100)
   numeroAgrement?: string;
+
+  @OptionalNumber()
+  @IsOptional()
+  @IsNumber({}, { message: 'Montant horaire par défaut invalide' })
+  @Min(0, { message: 'Le montant horaire par défaut doit être positif' })
+  montantHoraireDefaut?: number;
 
   @OptionalTrim()
   @IsOptional()

@@ -11,6 +11,8 @@ import { mapWithConcurrency } from '@/common/utils/async.util';
 import { calculateBulletinAverages } from '@/common/utils/bulletin-calculation.util';
 import { AppCacheService } from '@/infrastructure/cache/app-cache.service';
 import { BulletinDocumentService } from '@/modules/bulletin-document.service';
+import { PushNotificationService } from '@/modules/push-notification.service';
+import { buildDebtDashboardSummary, buildDebtSummary, DebtPaymentRow } from '@/modules/debt-summary.util';
 
 type QueryValue = string | string[] | undefined;
 type QueryParams = Record<string, QueryValue>;
@@ -114,6 +116,7 @@ export class LegacyCrudService {
     private readonly whatsappService: WhatsappService,
     private readonly cache: AppCacheService,
     private readonly bulletinDocument: BulletinDocumentService,
+    private readonly pushNotifications: PushNotificationService,
   ) {}
 
   async resolveTenantId(tenantId: string | undefined, user?: JwtUser): Promise<string | undefined> {
@@ -437,6 +440,11 @@ export class LegacyCrudService {
         || item.volumeHoraireHebdo === ''
         ? null
         : Number(item.volumeHoraireHebdo);
+      const montantHoraire = item.montantHoraire === null
+        || item.montantHoraire === undefined
+        || item.montantHoraire === ''
+        ? null
+        : Number(item.montantHoraire);
 
       if (!Number.isFinite(coefficient) || coefficient < 0.5) {
         throw new BadRequestException(`Coefficient invalide pour l'affectation ${index + 1}`);
@@ -444,7 +452,10 @@ export class LegacyCrudService {
       if (volumeHoraireHebdo !== null && (!Number.isFinite(volumeHoraireHebdo) || volumeHoraireHebdo < 0)) {
         throw new BadRequestException(`Volume horaire invalide pour l'affectation ${index + 1}`);
       }
-      return { classeId, enseignantId, coefficient, volumeHoraireHebdo };
+      if (montantHoraire !== null && (!Number.isFinite(montantHoraire) || montantHoraire < 0)) {
+        throw new BadRequestException(`Montant horaire invalide pour l'affectation ${index + 1}`);
+      }
+      return { classeId, enseignantId, coefficient, volumeHoraireHebdo, montantHoraire };
     });
 
     const uniqueClasseIds = new Set(assignments.map((assignment) => assignment.classeId));
@@ -509,6 +520,7 @@ export class LegacyCrudService {
             anneeAcademiqueId: annee.id,
             coefficient: assignment.coefficient,
             volumeHoraireHebdo: assignment.volumeHoraireHebdo,
+            montantHoraire: assignment.montantHoraire,
           },
           include: {
             classe: { select: { id: true, nom: true } },
@@ -1113,7 +1125,7 @@ export class LegacyCrudService {
       throw new BadRequestException('Cette demande a déjà été traitée');
     }
 
-    return this.prisma.$transaction(async (transaction) => {
+    const updated = await this.prisma.$transaction(async (transaction) => {
       const updated = await transaction.absencePersonnel.update({
         where: { id },
         data: { statut: 'APPROUVEE', validePar: userId, motifRefus: null },
@@ -1128,6 +1140,11 @@ export class LegacyCrudService {
       });
       return updated;
     });
+    await this.pushNotifications.sendToUser(absence.tenantId, absence.personnel.utilisateurId, {
+      title: 'Absence validée',
+      body: 'Votre demande d’absence a été validée par l’administration.',
+    });
+    return updated;
   }
 
   async refuseAbsencePersonnel(tenantId: string | undefined, id: string, motifRefus?: unknown, userId?: string) {
@@ -1141,7 +1158,7 @@ export class LegacyCrudService {
     }
 
     const reason = String(motifRefus ?? '').trim() || null;
-    return this.prisma.$transaction(async (transaction) => {
+    const updated = await this.prisma.$transaction(async (transaction) => {
       const updated = await transaction.absencePersonnel.update({
         where: { id },
         data: { statut: 'REJETEE', validePar: userId, motifRefus: reason },
@@ -1158,6 +1175,13 @@ export class LegacyCrudService {
       });
       return updated;
     });
+    await this.pushNotifications.sendToUser(absence.tenantId, absence.personnel.utilisateurId, {
+      title: 'Absence refusée',
+      body: reason
+        ? `Votre demande d’absence a été refusée. Motif : ${reason}`
+        : 'Votre demande d’absence a été refusée par l’administration.',
+    });
+    return updated;
   }
 
   async compteRenduConvocation(tenantId: string | undefined, id: string, compteRendu?: string) {
@@ -1226,10 +1250,14 @@ export class LegacyCrudService {
 
   private async loadStatsEtablissement(tenantId: string | undefined) {
     const tenantFilter = tenantId ? { tenantId } : {};
+    const today = new Date();
+    const startDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const endDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
     const [
       eleves,
       professeurs,
       parents,
+      personnels,
       classes,
       salles,
       inscriptionsActives,
@@ -1241,10 +1269,15 @@ export class LegacyCrudService {
       absencesEnAttente,
       retardsEleves,
       absencesJustifiees,
+      absencesDuJourEleves,
+      absencesDuJourPersonnel,
+      reclamationsEnAttente,
+      presenceCoursDuJour,
       convocationsEnAttente,
       bulletinsValides,
       bulletinsBrouillons,
       notes,
+      dettesRows,
       elevesParClasse,
       professeursParSpecialite,
       paiementsParStatut,
@@ -1256,6 +1289,7 @@ export class LegacyCrudService {
       this.prisma.user.count({ where: { ...tenantFilter, role: 'ELEVE' } }),
       this.prisma.user.count({ where: { ...tenantFilter, role: 'ENSEIGNANT' } }),
       this.prisma.user.count({ where: { ...tenantFilter, role: 'PARENT' } }),
+      this.prisma.user.count({ where: { ...tenantFilter, role: { in: ['ADMIN', 'CAISSIER', 'SURVEILLANT', 'RH', 'GESTIONNAIRE'] } } }),
       this.prisma.classe.count({ where: tenantFilter }),
       this.prisma.salle.count({ where: tenantFilter }),
       this.prisma.inscription.count({ where: { ...tenantFilter, statut: 'ACTIF' } }),
@@ -1267,10 +1301,35 @@ export class LegacyCrudService {
       this.prisma.absenceEleve.count({ where: { ...tenantFilter, statut: 'EN_ATTENTE' } }),
       this.prisma.absenceEleve.count({ where: { ...tenantFilter, typeAbsence: 'RETARD' } }),
       this.prisma.absenceEleve.count({ where: { ...tenantFilter, justifiee: true } }),
+      this.prisma.absenceEleve.count({ where: { ...tenantFilter, date: { gte: startDay, lte: endDay } } }),
+      this.prisma.absencePersonnel.count({ where: { ...tenantFilter, dateDebut: { lte: endDay }, dateFin: { gte: startDay } } }),
+      this.prisma.reclamation.count({ where: { ...tenantFilter, statut: 'EN_ATTENTE' } }),
+      this.prisma.presenceCoursProfesseur.aggregate({
+        where: { ...tenantFilter, dateCours: { gte: startDay, lte: endDay } },
+        _sum: { minutesPlanifiees: true, minutesComptabilisees: true },
+        _count: true,
+      }),
       this.prisma.convocation.count({ where: { ...tenantFilter, statut: 'EN_ATTENTE' } }),
       this.prisma.bulletin.count({ where: { ...tenantFilter, statut: 'VALIDE' } }),
       this.prisma.bulletin.count({ where: { ...tenantFilter, statut: 'BROUILLON' } }),
       this.prisma.note.aggregate({ where: tenantFilter, _avg: { note: true }, _count: true }),
+      this.prisma.paiement.findMany({
+        where: {
+          ...tenantFilter,
+          typePaiement: 'SCOLARITE',
+          statut: { in: ['EN_ATTENTE', 'REJETE'] },
+        },
+        select: {
+          eleveId: true,
+          montant: true,
+          anneeScolaire: true,
+          trimestre: true,
+          description: true,
+          reference: true,
+          statut: true,
+          createdAt: true,
+        },
+      }),
       this.prisma.classe.findMany({
         where: tenantFilter,
         select: { id: true, nom: true, _count: { select: { eleves: true, inscriptions: true } } },
@@ -1326,10 +1385,35 @@ export class LegacyCrudService {
         take: 6,
       }),
     ]);
+    const debtStudentIds = [...new Set((dettesRows as DebtPaymentRow[]).map((row) => row.eleveId))];
+    const debtStudents = debtStudentIds.length
+      ? await this.prisma.user.findMany({
+          where: {
+            ...tenantFilter,
+            role: 'ELEVE',
+            id: { in: debtStudentIds },
+          },
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            matricule: true,
+          },
+        })
+      : [];
+    const debtSummary = buildDebtDashboardSummary(
+      dettesRows as DebtPaymentRow[],
+      debtStudents.map((student) => ({
+        eleveId: student.id,
+        nom: `${student.firstName ?? ''} ${student.lastName ?? ''}`.trim() || 'Élève',
+        matricule: student.matricule ?? null,
+      })),
+    );
     return {
       eleves,
       professeurs,
       parents,
+      personnels,
       classes,
       salles,
       inscriptionsActives,
@@ -1337,6 +1421,14 @@ export class LegacyCrudService {
       absencesEnAttente,
       retardsEleves,
       absencesJustifiees,
+      absencesDuJour: Number(absencesDuJourEleves ?? 0) + Number(absencesDuJourPersonnel ?? 0),
+      absencesDuJourEleves,
+      absencesDuJourPersonnel,
+      reclamationsEnAttente,
+      presenceDuJour:
+        (presenceCoursDuJour._sum.minutesPlanifiees ?? 0) > 0
+          ? Math.round((((presenceCoursDuJour._sum.minutesComptabilisees ?? 0) / (presenceCoursDuJour._sum.minutesPlanifiees ?? 1)) * 100))
+          : 0,
       convocationsEnAttente,
       bulletinsValides,
       bulletinsBrouillons,
@@ -1369,6 +1461,7 @@ export class LegacyCrudService {
         statut: item.statut,
         total: item._count._all,
       })),
+      dettes: debtSummary,
       derniersPaiements,
       absencesRecentes: absencesRecentes.map((absence) => ({
         id: absence.id,
@@ -1383,7 +1476,7 @@ export class LegacyCrudService {
   }
 
   private dashboardCacheKey(tenantId: string | undefined): string {
-    return `tenant:${tenantId ?? 'platform'}:dashboard-stats:v2`;
+    return `tenant:${tenantId ?? 'platform'}:dashboard-stats:v3`;
   }
 
   async appbarSummary(tenantId: string | undefined, user?: JwtUser) {
@@ -1406,16 +1499,19 @@ export class LegacyCrudService {
     };
   }
 
-  async appbarNotifications(tenantId: string | undefined, user?: JwtUser) {
+  async appbarNotifications(tenantId: string | undefined, user?: JwtUser, query?: QueryParams) {
     if (!user?.sub) {
       return [];
     }
 
     const tenantFilter = tenantId ? { tenantId } : {};
+    const requestedLimit = Number(Array.isArray(query?.limit) ? query?.limit[0] : query?.limit);
+    const all = String(Array.isArray(query?.all) ? query?.all[0] : query?.all ?? '').toLowerCase() === 'true';
+    const take = all ? 200 : (Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 100) : 10);
     return this.prisma.notification.findMany({
       where: { ...tenantFilter, destinataireId: user.sub },
       orderBy: { createdAt: 'desc' },
-      take: 10,
+      take,
     });
   }
 
@@ -1582,7 +1678,7 @@ export class LegacyCrudService {
     });
     if (!eleve) throw new NotFoundException('Eleve introuvable');
 
-    const [inscriptions, bulletins, absences, allNotes] = await Promise.all([
+    const [inscriptions, bulletins, absences, allNotes, dettes] = await Promise.all([
       this.prisma.inscription.findMany({
         where: { tenantId, eleveId },
         include: {
@@ -1619,6 +1715,24 @@ export class LegacyCrudService {
         where: { tenantId, eleveId },
         include: { matiere: true },
         orderBy: [{ anneeScolaire: 'asc' }, { trimestre: 'asc' }, { matiere: { libelle: 'asc' } }, { dateEvaluation: 'asc' }],
+      }),
+      this.prisma.paiement.findMany({
+        where: {
+          tenantId,
+          eleveId,
+          typePaiement: 'SCOLARITE',
+          statut: { in: ['EN_ATTENTE', 'REJETE'] },
+        },
+        select: {
+          eleveId: true,
+          montant: true,
+          anneeScolaire: true,
+          trimestre: true,
+          description: true,
+          reference: true,
+          statut: true,
+          createdAt: true,
+        },
       }),
     ]);
 
@@ -1755,6 +1869,7 @@ export class LegacyCrudService {
     return {
       eleve,
       parcours,
+      dettes: buildDebtSummary(dettes as DebtPaymentRow[]),
       statistiques: {
         nombreClasses: parcours.length,
         nombreBulletins: bulletins.length,
@@ -1776,6 +1891,49 @@ export class LegacyCrudService {
           ? 'Eleve de bon comportement selon les absences, retards et appréciations disponibles.'
           : 'Comportement à surveiller selon les absences, retards ou appréciations disponibles.',
       },
+    };
+  }
+
+  async adminEleveDettes(tenantId: string | undefined, eleveId: string) {
+    this.assertUuid(eleveId, 'eleveId');
+    const eleve = await this.prisma.user.findFirst({
+      where: { id: eleveId, tenantId, role: 'ELEVE' },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        matricule: true,
+      },
+    });
+    if (!eleve) throw new NotFoundException('Eleve introuvable');
+
+    const dettes = await this.prisma.paiement.findMany({
+      where: {
+        tenantId,
+        eleveId,
+        typePaiement: 'SCOLARITE',
+        statut: { in: ['EN_ATTENTE', 'REJETE'] },
+      },
+      select: {
+        eleveId: true,
+        montant: true,
+        anneeScolaire: true,
+        trimestre: true,
+        description: true,
+        reference: true,
+        statut: true,
+        createdAt: true,
+      },
+      orderBy: [{ anneeScolaire: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    return {
+      eleve: {
+        id: eleve.id,
+        nom: `${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim() || 'Élève',
+        matricule: eleve.matricule ?? null,
+      },
+      ...buildDebtSummary(dettes as DebtPaymentRow[]),
     };
   }
 
@@ -2946,6 +3104,27 @@ export class LegacyCrudService {
       data.coefficient = null;
     }
 
+    if (data.montantParHeure !== undefined && data.montantHoraire === undefined) {
+      data.montantHoraire = data.montantParHeure;
+    }
+    if (data.montantHoraire !== undefined && data.montantHoraire !== null && data.montantHoraire !== '') {
+      const montant = Number(data.montantHoraire);
+      if (!Number.isFinite(montant) || montant < 0) {
+        throw new BadRequestException('Montant par heure invalide');
+      }
+      data.montantHoraire = montant;
+    } else if (data.montantHoraire === '' || data.montantHoraire === undefined) {
+      if (create) {
+        const config = await this.prisma.ecoleConfig.findUnique({
+          where: { tenantId },
+          select: { montantHoraireDefaut: true },
+        });
+        data.montantHoraire = config?.montantHoraireDefaut ?? null;
+      } else if (data.montantHoraire === '') {
+        data.montantHoraire = null;
+      }
+    }
+
     // Enseignant : champ obligatoire du modèle Cours
     const rawEnseignant = data.enseignantId ?? data.enseignant ?? data.professeurId;
     if (rawEnseignant !== undefined && rawEnseignant !== null && String(rawEnseignant).trim() !== '') {
@@ -3009,6 +3188,7 @@ export class LegacyCrudService {
     delete data.dateDebut;
     delete data.dateFin;
     delete data.heures;
+    delete data.montantParHeure;
   }
 
   private normalizeSalleData(data: Payload): void {

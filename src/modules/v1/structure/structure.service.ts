@@ -189,7 +189,7 @@ export class StructureService {
   }
 
   // ==================== COURS ====================
-  async createCours(tenantId: string, dto: { matiereId: string; classeId: string; enseignantId: string; anneeAcademiqueId?: string; volumeHoraireHebdo?: number; coefficient?: number }): Promise<unknown> {
+  async createCours(tenantId: string, dto: { matiereId: string; classeId: string; enseignantId: string; anneeAcademiqueId?: string; volumeHoraireHebdo?: number; coefficient?: number; montantHoraire?: number }): Promise<unknown> {
     return this.prisma.cours.create({
       data: { tenantId, ...dto },
       include: {
@@ -224,7 +224,7 @@ export class StructureService {
     return c;
   }
 
-  async updateCours(tenantId: string, id: string, dto: Partial<{ volumeHoraireHebdo: number; coefficient: number }>): Promise<unknown> {
+  async updateCours(tenantId: string, id: string, dto: Partial<{ volumeHoraireHebdo: number; coefficient: number; montantHoraire: number }>): Promise<unknown> {
     await this.findOneCours(tenantId, id);
     return this.prisma.cours.update({ where: { id }, data: dto });
   }

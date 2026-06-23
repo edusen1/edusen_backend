@@ -7,6 +7,7 @@ import { LegacyCrudService } from '@/modules/legacy-crud.service';
 import { ClasseService } from '@/modules/classes/classe.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
 import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
+import { PresenceProfesseurService } from '@/modules/presence-professeur.service';
 import type { FastifyRequest } from 'fastify';
 
 type QueryParams = Record<string, string | string[] | undefined>;
@@ -21,11 +22,36 @@ export class TeacherController {
     private readonly classeService: ClasseService,
     private readonly storage: StorageService,
     private readonly whatsapp: WhatsappService,
+    private readonly presenceProfesseurService: PresenceProfesseurService,
   ) {}
 
   @Get('profil')
   profil(@CurrentUser() user?: JwtUser) {
     return user ? this.domain.teacherProfil(user.sub) : null;
+  }
+
+  @Get('paiements')
+  paiementsProfesseur(@Headers('x-tenant-id') tenantId: string, @CurrentUser() user?: JwtUser) {
+    return this.presenceProfesseurService.paiementsProfesseurPourEnseignant(tenantId, user?.sub ?? '');
+  }
+
+  @Post('paiements/:id/valider')
+  validerPaiementProfesseur(
+    @Headers('x-tenant-id') tenantId: string,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.presenceProfesseurService.validerPaiementProfesseur(tenantId, id, user?.sub ?? '');
+  }
+
+  @Post('paiements/:id/rejeter')
+  rejeterPaiementProfesseur(
+    @Headers('x-tenant-id') tenantId: string,
+    @Param('id') id: string,
+    @Body() body: { motif?: string },
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.presenceProfesseurService.rejeterPaiementProfesseur(tenantId, id, user?.sub ?? '', body?.motif);
   }
 
   @Get('classes-matieres')

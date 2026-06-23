@@ -4,6 +4,7 @@ import { MailService } from '@/infrastructure/mail/mail.service';
 import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 import { buildPageResult, PageResult, PaginationQueryDto } from '@/shared/dto/pagination-query.dto';
 import { Prisma, StatutBulletin } from '@prisma/client';
+import { PushNotificationService } from '@/modules/push-notification.service';
 
 export interface CreateBulletinDto {
   eleveId: string;
@@ -27,6 +28,7 @@ export class BulletinService {
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
     private readonly whatsapp: WhatsappService,
+    private readonly pushNotifications: PushNotificationService,
   ) {}
 
   async create(tenantId: string, dto: CreateBulletinDto, soumisPar?: string): Promise<unknown> {
@@ -188,7 +190,23 @@ export class BulletinService {
       const trimestre = (bulletin.trimestre ?? '').replace(/_/g, ' ');
       const parents = await this.prisma.eleveParent.findMany({
         where: { eleveId: eleve.id },
-        include: { parent: { select: { email: true, firstName: true, telephone: true } } },
+        include: { parent: { select: { id: true, email: true, firstName: true, telephone: true } } },
+      });
+      const notificationTitle = 'Bulletin publié';
+      const notificationBody = `Votre bulletin du ${trimestre} est disponible.`;
+      const destinataires = [eleve.id, ...parents.map(({ parent }) => parent.id)];
+      await this.prisma.notification.createMany({
+        data: destinataires.map((destinataireId) => ({
+          tenantId,
+          destinataireId,
+          titre: notificationTitle,
+          contenu: notificationBody,
+          lu: false,
+        })),
+      });
+      await this.pushNotifications.sendToUsers(tenantId, destinataires, {
+        title: notificationTitle,
+        body: notificationBody,
       });
       for (const { parent } of parents) {
         if (parent.email) {

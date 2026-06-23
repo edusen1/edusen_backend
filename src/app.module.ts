@@ -37,6 +37,8 @@ import { EmploiDuTempsService } from '@/modules/v1/emploi-du-temps/emploi-du-tem
 import { BulletinService } from '@/modules/v1/bulletin/bulletin.service';
 import { MensualitesSchedulerService } from '@/modules/mensualites-scheduler.service';
 import { BulletinDocumentService } from '@/modules/bulletin-document.service';
+import { PresenceProfesseurService } from '@/modules/presence-professeur.service';
+import { PushNotificationService } from '@/modules/push-notification.service';
 
 @Module({
   imports: [
@@ -80,6 +82,8 @@ import { BulletinDocumentService } from '@/modules/bulletin-document.service';
     EmploiDuTempsService,
     BulletinService,
     BulletinDocumentService,
+    PresenceProfesseurService,
+    PushNotificationService,
     MensualitesSchedulerService,
     { provide: APP_GUARD, useClass: AppAuthGuard },
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },

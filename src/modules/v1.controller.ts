@@ -17,6 +17,7 @@ import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import type { JwtUser } from '@/common/types/auth.types';
 import { LegacyCrudService } from '@/modules/legacy-crud.service';
 import { AcademiqueConfigService } from '@/modules/configuration/academique-config.service';
+import { PushNotificationService } from '@/modules/push-notification.service';
 
 type QueryParams = Record<string, string | string[] | undefined>;
 type Payload = Record<string, unknown>;
@@ -26,6 +27,7 @@ export class V1Controller {
   constructor(
     private readonly crud: LegacyCrudService,
     private readonly academiqueConfig: AcademiqueConfigService,
+    private readonly pushNotifications: PushNotificationService,
   ) {}
 
   private resolveTenantId(tenantId: string | undefined, user?: JwtUser): string | undefined {
@@ -77,8 +79,12 @@ export class V1Controller {
   }
 
   @Get('appbar/notifications')
-  appbarNotifications(@Headers('x-tenant-id') tenantId: string | undefined, @CurrentUser() user?: JwtUser) {
-    return this.crud.appbarNotifications(this.resolveTenantId(tenantId, user), user);
+  appbarNotifications(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user?: JwtUser,
+    @Query() query?: QueryParams,
+  ) {
+    return this.crud.appbarNotifications(this.resolveTenantId(tenantId, user), user, query);
   }
 
   @Get('appbar/messages')
@@ -101,6 +107,20 @@ export class V1Controller {
     @CurrentUser() user?: JwtUser,
   ) {
     return this.crud.markAppbarNotificationRead(this.resolveTenantId(tenantId, user), id, user);
+  }
+
+  @Post('appbar/push-token')
+  registerPushToken(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user: JwtUser | undefined,
+    @Body() body: { token?: string; platform?: string; userAgent?: string },
+  ) {
+    return this.pushNotifications.registerToken(this.resolveTenantId(tenantId, user), user?.sub, body);
+  }
+
+  @Delete('appbar/push-token')
+  unregisterPushToken(@CurrentUser() user: JwtUser | undefined, @Body() body: { token?: string }) {
+    return this.pushNotifications.unregisterToken(body?.token, user?.sub);
   }
 
   @Get('annees-academiques/courante')

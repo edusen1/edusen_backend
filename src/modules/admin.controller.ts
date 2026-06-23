@@ -31,6 +31,7 @@ import { UpdateClasseDto } from '@/modules/classes/dto/update-classe.dto';
 import { EmploiDuTempsService } from '@/modules/v1/emploi-du-temps/emploi-du-temps.service';
 import { BulletinService } from '@/modules/v1/bulletin/bulletin.service';
 import { DomainService } from '@/modules/domain.service';
+import { PresenceProfesseurService } from '@/modules/presence-professeur.service';
 
 type QueryParams = Record<string, string | string[] | undefined>;
 type Payload = Record<string, unknown>;
@@ -47,6 +48,7 @@ export class AdminController {
     private readonly emploiService: EmploiDuTempsService,
     private readonly bulletinService: BulletinService,
     private readonly domain: DomainService,
+    private readonly presencesProfesseurs: PresenceProfesseurService,
   ) {}
 
   private resolveTenantId(tenantId: string | undefined, user?: JwtUser) {
@@ -331,6 +333,74 @@ export class AdminController {
     @CurrentUser() user?: JwtUser,
   ) {
     return this.crud.rejectAbsenceEleve(tenantId, id, user?.sub);
+  }
+
+  // ----------------------------------------------------------------
+  // Présences professeurs — contrôle surveillant et synthèse caisse
+  // ----------------------------------------------------------------
+
+  @Roles('ADMIN', 'SURVEILLANT')
+  @Get('presences-professeurs/cours-du-jour')
+  coursProfesseursDuJour(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Query('date') date: string | undefined,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.resolveTenantId(tenantId, user).then((tid) =>
+      this.presencesProfesseurs.coursDuJour(tid!, date || new Date().toISOString().slice(0, 10), user),
+    );
+  }
+
+  @Roles('ADMIN', 'SURVEILLANT')
+  @Post('presences-professeurs')
+  enregistrerPresenceProfesseur(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const date = String(body.dateCours ?? body.date ?? new Date().toISOString().slice(0, 10));
+    return this.resolveTenantId(tenantId, user).then((tid) =>
+      this.presencesProfesseurs.enregistrerPresence(tid!, date, body, user),
+    );
+  }
+
+  @Roles('ADMIN', 'CAISSIER', 'RH')
+  @Get('presences-professeurs/salaires')
+  salairesProfesseurs(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Query('dateDebut') dateDebut: string | undefined,
+    @Query('dateFin') dateFin: string | undefined,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const today = new Date();
+    const fallbackEnd = today.toISOString().slice(0, 10);
+    const fallbackStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)).toISOString().slice(0, 10);
+    return this.resolveTenantId(tenantId, user).then((tid) =>
+      this.presencesProfesseurs.salairesProfesseurs(tid!, dateDebut || fallbackStart, dateFin || fallbackEnd, user),
+    );
+  }
+
+  @Roles('ADMIN', 'CAISSIER', 'RH')
+  @Get('paiements-professeurs')
+  paiementsProfesseurs(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.resolveTenantId(tenantId, user).then((tid) =>
+      this.presencesProfesseurs.paiementsProfesseurs(tid!),
+    );
+  }
+
+  @Roles('ADMIN', 'CAISSIER', 'RH')
+  @Post('paiements-professeurs')
+  initialiserPaiementProfesseur(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.resolveTenantId(tenantId, user).then((tid) =>
+      this.presencesProfesseurs.initialiserPaiementProfesseur(tid!, body, user),
+    );
   }
 
   // ----------------------------------------------------------------
@@ -726,6 +796,14 @@ export class AdminController {
     @Param('id') id: string,
   ) {
     return this.crud.adminEleveParcours(tenantId, id);
+  }
+
+  @Get('eleves/:id/dettes')
+  eleveDettes(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+  ) {
+    return this.crud.adminEleveDettes(tenantId, id);
   }
 
   // ----------------------------------------------------------------

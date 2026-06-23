@@ -18,6 +18,7 @@ export interface EcoleConfigResponse {
   numeroAgrement?: string;
   typeEtablissement: string;
   logoUrl?: string;
+  montantHoraireDefaut?: number;
 }
 
 export interface EcoleIdentityResponse {
@@ -90,6 +91,7 @@ export class EcoleConfigService {
       email: tenant.emailContact ?? '',
       logoUrl: this.storage.resolveUrl(tenant.logoUrl) ?? undefined,
       typeEtablissement: 'PRIVE',
+      montantHoraireDefaut: undefined,
     };
   }
 
@@ -147,6 +149,7 @@ export class EcoleConfigService {
       siteWeb: dto.siteWeb ?? null,
       numeroAgrement: dto.numeroAgrement ?? null,
       typeEtablissement: 'PRIVE', // forced per business rules — never trust the client value
+      montantHoraireDefaut: dto.montantHoraireDefaut ?? null,
     };
 
     const config = await this.prisma.ecoleConfig.upsert({
@@ -368,6 +371,7 @@ export class EcoleConfigService {
     numeroAgrement: string | null;
     typeEtablissement: string;
     logoUrl: string | null;
+    montantHoraireDefaut: number | null;
   }): EcoleConfigResponse {
     return {
       nom: config.nom,
@@ -381,6 +385,7 @@ export class EcoleConfigService {
       numeroAgrement: config.numeroAgrement ?? undefined,
       typeEtablissement: 'PRIVE',
       logoUrl: this.storage.resolveUrl(config.logoUrl) ?? undefined,
+      montantHoraireDefaut: config.montantHoraireDefaut ?? undefined,
     };
   }
 
