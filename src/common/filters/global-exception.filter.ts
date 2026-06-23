@@ -34,11 +34,12 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         typeof response === 'string'
           ? response
           : (response as { message?: string | string[] }).message ?? 'Erreur';
+      const publicMessage = this.toPublicMessage(message, status);
 
       this.logHttpException(exception, status, code, message, req, correlationId);
       res.status(status).send({
         code,
-        message,
+        message: publicMessage,
         correlationId,
         timestamp: new Date().toISOString(),
       });
@@ -130,6 +131,69 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     this.logger.warn(logMessage, GlobalExceptionFilter.name);
   }
 
+  private toPublicMessage(message: string | string[], status: number): string {
+    const values = Array.isArray(message) ? message : [message];
+    const normalized = values
+      .map((value) => this.mapKnownMessage(String(value ?? '').trim(), status))
+      .filter(Boolean);
+
+    if (!normalized.length) return 'Erreur';
+    return Array.from(new Set(normalized)).join('. ');
+  }
+
+  private mapKnownMessage(message: string, status: number): string {
+    const dictionary: Record<string, string> = {
+      COMPTE_VERROUILLE: 'Compte temporairement bloqué',
+      IDENTIFIANTS_AMBIGUS: 'Email ou mot de passe incorrect',
+      IDENTIFIANTS_INVALIDES: 'Email ou mot de passe incorrect',
+      USER_INACTIVE: 'Compte désactivé',
+      TENANT_INACTIF: 'Établissement désactivé',
+      REFRESH_TOKEN_INVALID: 'Session invalide',
+      REFRESH_TOKEN_EXPIRED: 'Session expirée',
+      EMAIL_DEJA_UTILISE: 'Email déjà utilisé',
+      TOO_MANY_REQUESTS: 'Trop de demandes',
+      RESET_TOKEN_INVALIDE: 'Lien invalide ou expiré',
+      MOT_DE_PASSE_TROP_COURT: 'Mot de passe trop court',
+      MOT_DE_PASSE_ACTUEL_INCORRECT: 'Mot de passe actuel incorrect',
+      NOUVEAU_MOT_DE_PASSE_IDENTIQUE: 'Choisissez un autre mot de passe',
+      CLASSE_INTROUVABLE: 'Classe introuvable',
+      CLASSE_ANNEE_INVALIDE: 'Classe invalide pour cette année',
+      CLASSE_NON_AUTORISEE: 'Classe non autorisée',
+      DEMANDE_PASSAGE_REQUISE: 'Demande de passage requise',
+    };
+
+    if (dictionary[message]) return dictionary[message];
+
+    if (message.startsWith('INSCRIPTION_DEJA_EXISTANTE')) {
+      return 'Élève déjà inscrit cette année';
+    }
+    if (message.startsWith('IMPAYES_PRECEDENTS')) {
+      return 'Paiements précédents impayés';
+    }
+    if (message.startsWith('SUPPRESSION_INSCRIPTION_INTERDITE')) {
+      return 'Désactivez cette inscription';
+    }
+    if (message.includes(': UUID attendu')) {
+      return 'Identifiant invalide';
+    }
+
+    if (/^[A-Z0-9_:-]+$/.test(message)) {
+      if (status === HttpStatus.UNAUTHORIZED) return 'Connexion requise';
+      if (status === HttpStatus.FORBIDDEN) return 'Accès refusé';
+      if (status === HttpStatus.NOT_FOUND) return 'Ressource introuvable';
+      if (status === HttpStatus.CONFLICT) return 'Conflit de données';
+      return 'Données invalides';
+    }
+
+    return this.shortenMessage(message);
+  }
+
+  private shortenMessage(message: string): string {
+    const trimmed = message.trim();
+    if (trimmed.length <= 90) return trimmed;
+    return `${trimmed.slice(0, 87).trim()}...`;
+  }
+
   private mapPrismaStatus(code: string): HttpStatus {
     if (code === 'P1001') return HttpStatus.SERVICE_UNAVAILABLE;
     if (code === 'P2002') return HttpStatus.CONFLICT;
@@ -147,10 +211,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     ) {
       return 'INSCRIPTION_DEJA_EXISTANTE: cet élève est déjà inscrit pour cette année scolaire';
     }
-    if (code === 'P2002') return 'Conflit de données: une valeur unique existe déjà';
+    if (code === 'P2002') return 'Donnée déjà existante';
     if (code === 'P2025') return 'Ressource introuvable';
-    if (code === 'P2023') return 'Identifiant invalide: UUID attendu';
-    if (code === 'P1001') return 'Service temporairement indisponible. Réessayez dans quelques secondes';
-    return 'Erreur de persistance des données';
+    if (code === 'P2023') return 'Identifiant invalide';
+    if (code === 'P2022') return 'Donnée indisponible';
+    if (code === 'P1001') return 'Service indisponible';
+    return 'Enregistrement impossible';
   }
 }

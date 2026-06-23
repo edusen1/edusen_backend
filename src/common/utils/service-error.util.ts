@@ -14,13 +14,13 @@ export function rethrowServiceError(error: unknown, action: string): never {
 
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === 'P2002') {
-      throw new ConflictException(`Conflit de données pendant: ${action}`);
+      throw new ConflictException('Donnée déjà existante');
     }
     if (error.code === 'P2025') {
-      throw new NotFoundException(`Ressource introuvable pendant: ${action}`);
+      throw new NotFoundException('Ressource introuvable');
     }
-    throw new BadRequestException(`Erreur de données pendant: ${action}`);
+    throw new BadRequestException('Données invalides');
   }
 
-  throw new InternalServerErrorException(`Erreur inattendue pendant: ${action}`);
+  throw new InternalServerErrorException('Erreur serveur');
 }
