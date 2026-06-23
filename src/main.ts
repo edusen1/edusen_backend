@@ -75,6 +75,10 @@ async function bootstrap(): Promise<void> {
     'https://nouraschool.assanediallo.com',
     'https://nouraschool-plateforme.assanediallo.com',
     'https://noura-school-plateforme.assanediallo.com',
+    'https://medaaris.assanediallo.com',
+    'https://medaaris-plateforme.assanediallo.com',
+    'https://www.medaaris.assanediallo.com',
+    'https://www.nouraschool.assanediallo.com',
   ];
   const normalizeOrigin = (origin: string) => origin.trim().replace(/\/$/, '').toLowerCase();
   const allowedOrigins = new Set(
@@ -86,10 +90,26 @@ async function bootstrap(): Promise<void> {
       .map(normalizeOrigin)
       .filter(Boolean),
   );
+  const allowedDomainSuffixes = (process.env.CORS_ALLOWED_DOMAIN_SUFFIXES ?? '.assanediallo.com')
+    .split(',')
+    .map((suffix) => suffix.trim().toLowerCase())
+    .filter(Boolean);
+  const isAllowedOrigin = (origin: string) => {
+    if (allowedOrigins.has(origin) || allowedOrigins.has('*')) return true;
+    try {
+      const url = new URL(origin);
+      if (url.protocol !== 'https:' && !url.hostname.startsWith('localhost') && url.hostname !== '127.0.0.1') {
+        return false;
+      }
+      return allowedDomainSuffixes.some((suffix) => url.hostname === suffix.replace(/^\./, '') || url.hostname.endsWith(suffix));
+    } catch {
+      return false;
+    }
+  };
   await app.register(cors, {
     origin: (origin, cb) => {
       const normalizedOrigin = origin ? normalizeOrigin(origin) : '';
-      if (!origin || allowedOrigins.has(normalizedOrigin) || allowedOrigins.has('*')) {
+      if (!origin || isAllowedOrigin(normalizedOrigin)) {
         cb(null, true);
       } else {
         cb(null, false);
