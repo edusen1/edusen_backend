@@ -364,7 +364,7 @@ export class AdminController {
     );
   }
 
-  @Roles('ADMIN', 'CAISSIER', 'COMPTABLE', 'RH')
+  @Roles('ADMIN', 'CAISSIER', 'COMPTABLE', 'RH', 'SURVEILLANT')
   @Get('presences-professeurs/salaires')
   salairesProfesseurs(
     @Headers('x-tenant-id') tenantId: string | undefined,
