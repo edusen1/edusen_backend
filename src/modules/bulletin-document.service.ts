@@ -24,6 +24,7 @@ interface BulletinDocumentModel {
     phone: string;
     email: string;
     logoUrl: string | null;
+    primaryColor: string;
   };
   student: {
     name: string;
@@ -187,6 +188,7 @@ export class BulletinDocumentService implements OnModuleDestroy {
         phone: config?.telephone ?? tenant?.telephone ?? '',
         email: config?.email ?? tenant?.emailContact ?? '',
         logoUrl: this.storage.resolveUrl(config?.logoUrl ?? tenant?.logoUrl) ?? null,
+        primaryColor: this.bulletinPrimaryColor(config?.primaryColor),
       },
       student: {
         name: `${student.firstName} ${student.lastName}`.trim(),
@@ -245,10 +247,11 @@ export class BulletinDocumentService implements OnModuleDestroy {
     const browser = await this.getBrowser();
     const page = await browser.newPage();
     try {
-      await page.setViewport({ width: 1240, height: 1754, deviceScaleFactor: 1 });
+      await page.setViewport({ width: 1754, height: 1240, deviceScaleFactor: 1 });
       await page.setContent(html, { waitUntil: 'networkidle0' });
       const pdf = await page.pdf({
         format: 'A4',
+        landscape: true,
         printBackground: true,
         preferCSSPageSize: true,
         margin: { top: '0', right: '0', bottom: '0', left: '0' },
@@ -294,24 +297,20 @@ export class BulletinDocumentService implements OnModuleDestroy {
       .filter(Boolean).map((value) => this.escapeHtml(value)).join(' · ');
 
     return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><style>
-      @page { size: A4; margin: 0; }
-      * { box-sizing: border-box; } body { margin:0; color:#141b25; font-family: Arial, Helvetica, sans-serif; font-size:10.2px; background:#fff; }
-      .page { width:210mm; min-height:297mm; padding:10mm 10mm 8mm; overflow:hidden; }
-      .topbar { height:12mm; margin:-10mm -10mm 6mm; padding:3mm 5mm; display:flex; align-items:center; border-bottom:1px solid #dfe3e8; background:#f3f5f7; }
-      .topbar-logo { width:7mm; height:7mm; margin-right:2mm; border-radius:50%; overflow:hidden; background:#fff; display:flex; align-items:center; justify-content:center; font-size:7px; font-weight:700; }
-      .topbar-logo img { width:100%; height:100%; object-fit:contain; } .topbar-title { font-size:13px; font-weight:700; }
-      .brand { display:flex; justify-content:space-between; gap:8mm; min-height:29mm; align-items:flex-start; }
-      .brand-left { display:flex; gap:4mm; } .school-logo { width:21mm; height:21mm; display:flex; align-items:center; justify-content:center; overflow:hidden; font-size:16px; font-weight:800; color:#16824b; }
-      .school-logo img { width:100%; height:100%; object-fit:contain; } h1 { margin:0; font-size:19px; line-height:1.1; } .slogan { margin:2mm 0 1mm; font-size:11px; color:#147340; font-weight:700; }
-      .contact { margin:0; color:#4b5563; line-height:1.45; max-width:110mm; } .republic { text-align:right; min-width:52mm; } .republic strong { display:block; font-size:17px; } .republic span { display:block; margin-top:3mm; font-size:11px; font-weight:700; } .republic small { display:block; margin-top:1.5mm; color:#667085; }
-      .rule { height:1px; margin:5mm 0 6mm; background:#15934f; }
-      .overview { display:grid; grid-template-columns:1fr 1fr; gap:6mm; margin-bottom:6mm; } .card { min-height:46mm; padding:5mm; border-radius:3mm; background:#f8f9fb; } .card.results { background:#f0fdf4; } h2 { margin:0 0 4mm; font-size:13px; } .card p { margin:0 0 2.2mm; } .card strong { font-weight:700; } .green { color:#148343; font-weight:800; }
-      .notes-title { font-size:13px; margin:0 0 3mm; } table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:9.2px; } th,td { border:1px solid #9aa2ac; padding:3mm 1.5mm; text-align:center; vertical-align:middle; word-wrap:break-word; } th { background:#f0f2f5; font-weight:700; } td.subject, td.teacher { text-align:left; } td.subject { font-weight:700; } td.average { color:#148343; font-weight:800; } td.total { font-weight:800; } .empty { padding:8mm; color:#667085; }
-      tfoot td { background:#e7e9ed; font-weight:800; } .after-table { display:grid; grid-template-columns:1fr 1fr; gap:7mm; margin-top:6mm; } .appreciation { min-height:36mm; padding:5mm; background:#eef6ff; border-radius:3mm; } .appreciation h2 { margin-bottom:3mm; } .appreciation p { margin:0; font-style:italic; color:#475467; } .signatures { padding:2mm 0; } .signature { min-height:18mm; text-align:center; padding-top:1mm; border-bottom:1px solid #c9ced5; } .signature + .signature { margin-top:4mm; } .signature strong { display:block; margin-bottom:7mm; }
-      .footer { margin-top:6mm; padding-top:4mm; border-top:1px solid #d7dbe0; text-align:center; color:#5b6573; font-size:8.5px; line-height:1.5; } .footer small { display:block; }
+      @page { size: A4 landscape; margin: 0; }
+      * { box-sizing: border-box; } body { margin:0; color:#141b25; font-family: Arial, Helvetica, sans-serif; font-size:9px; background:#fff; }
+      .page { --primary:${model.school.primaryColor}; width:297mm; min-height:210mm; padding:8mm 10mm 7mm; overflow:hidden; }
+      .brand { display:flex; justify-content:space-between; gap:8mm; min-height:25mm; align-items:flex-start; }
+      .brand-left { display:flex; gap:4mm; } .school-logo { width:20mm; height:20mm; display:flex; align-items:center; justify-content:center; overflow:hidden; font-size:16px; font-weight:800; color:var(--primary); }
+      .school-logo img { width:100%; height:100%; object-fit:contain; } h1 { margin:0; font-size:18px; line-height:1.1; } .slogan { margin:1.5mm 0 1mm; font-size:10px; color:var(--primary); font-weight:700; }
+      .contact { margin:0; color:#4b5563; line-height:1.35; max-width:155mm; } .republic { text-align:right; min-width:52mm; } .republic strong { display:block; font-size:15px; } .republic span { display:block; margin-top:2.5mm; font-size:10px; font-weight:700; } .republic small { display:block; margin-top:1mm; color:#667085; }
+      .rule { height:1px; margin:4mm 0; background:var(--primary); }
+      .overview { display:grid; grid-template-columns:1fr 1fr; gap:5mm; margin-bottom:4mm; } .card { min-height:35mm; padding:4mm 5mm; border-radius:2mm; background:#f8f9fb; } .card.results { background:color-mix(in srgb, var(--primary) 9%, white); } h2 { margin:0 0 3mm; font-size:11px; } .card p { margin:0 0 1.6mm; } .card strong { font-weight:700; } .green { color:var(--primary); font-weight:800; }
+      .notes-title { font-size:11px; margin:0 0 2mm; } table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:8.2px; } th,td { border:1px solid #9aa2ac; padding:2.1mm 1.3mm; text-align:center; vertical-align:middle; word-wrap:break-word; } th { background:#f0f2f5; font-weight:700; } td.subject, td.teacher { text-align:left; } td.subject { font-weight:700; } td.average { color:var(--primary); font-weight:800; } td.total { font-weight:800; } .empty { padding:6mm; color:#667085; }
+      tfoot td { background:color-mix(in srgb, var(--primary) 8%, #e7e9ed); font-weight:800; } .after-table { display:grid; grid-template-columns:1fr 1fr; gap:7mm; margin-top:4mm; } .appreciation { min-height:24mm; padding:4mm 5mm; background:color-mix(in srgb, var(--primary) 7%, white); border-radius:2mm; } .appreciation h2 { margin-bottom:2mm; } .appreciation p { margin:0; font-style:italic; color:#475467; } .signatures { padding:1mm 0; } .signature { min-height:11mm; text-align:center; padding-top:1mm; border-bottom:1px solid #c9ced5; } .signature + .signature { margin-top:3mm; } .signature strong { display:block; margin-bottom:4mm; }
+      .footer { margin-top:4mm; padding-top:3mm; border-top:1px solid #d7dbe0; text-align:center; color:#5b6573; font-size:7.8px; line-height:1.35; } .footer small { display:block; }
       @media print { .page { page-break-after:avoid; } }
     </style></head><body><main class="page">
-      <div class="topbar"><div class="topbar-logo">${logo}</div><div class="topbar-title">Bulletin - ${this.escapeHtml(model.student.name)}</div></div>
       <header class="brand"><div class="brand-left"><div class="school-logo">${logo}</div><div><h1>${this.escapeHtml(model.school.name)}</h1>${model.school.slogan ? `<p class="slogan">${this.escapeHtml(model.school.slogan)}</p>` : ''}<p class="contact">${contact}</p></div></div>
       ${isMauritania ? `<div class="republic"><strong lang="ar">شرف إخاء عدل</strong><span>Honneur, Fraternité, Justice</span><small>République Islamique de Mauritanie</small></div>` : `<div class="republic"><strong>Bulletin scolaire</strong><span>${this.escapeHtml(model.bulletin.period)}</span><small>${this.escapeHtml(model.bulletin.year)}</small></div>`}</header>
       <div class="rule"></div><section class="overview"><div class="card"><h2>Informations de l'élève</h2><p><strong>Nom complet:</strong> ${this.escapeHtml(model.student.name)}</p>${model.student.matricule ? `<p><strong>Matricule:</strong> ${this.escapeHtml(model.student.matricule)}</p>` : ''}<p><strong>Classe:</strong> ${this.escapeHtml(model.student.classe)}</p><p><strong>Année scolaire:</strong> ${this.escapeHtml(model.bulletin.year)}</p><p><strong>Trimestre:</strong> ${this.escapeHtml(model.bulletin.period)}</p>${model.student.birthDate ? `<p><strong>Date de naissance:</strong> ${this.escapeHtml(model.student.birthDate)}</p>` : ''}${model.student.birthPlace ? `<p><strong>Lieu de naissance:</strong> ${this.escapeHtml(model.student.birthPlace)}</p>` : ''}</div>
@@ -339,6 +338,9 @@ export class BulletinDocumentService implements OnModuleDestroy {
   }
 
   private formatDate(date: Date): string { return new Intl.DateTimeFormat('fr-FR').format(date); }
+  private bulletinPrimaryColor(value: string | null | undefined): string {
+    return /^#[0-9a-f]{6}$/i.test(value ?? '') ? value! : '#03a9f3';
+  }
   private formatNumber(value: number): string { return Number(value.toFixed(2)).toFixed(2).replace('.', ','); }
   private round(value: number): number { return Math.round(value * 100) / 100; }
   private slug(value: string): string { return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/gi, '-').replace(/(^-|-$)/g, '').toLowerCase() || 'document'; }
