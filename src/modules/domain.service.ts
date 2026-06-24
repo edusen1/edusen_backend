@@ -402,35 +402,43 @@ export class DomainService {
     return this.studentProfil(userId);
   }
   async studentNotes(tenantId: string, eleveId: string, trimestre?: string) {
+    const startedAt = Date.now();
+    this.logger.log(`Chargement notes élève démarré eleveId=${eleveId}`);
     const [notes, inscriptions, currentYear] = await Promise.all([
-      this.prisma.note.findMany({
-        where: { tenantId, eleveId, ...(trimestre ? { trimestre } : {}) },
-        include: { matiere: { select: { id: true, code: true, libelle: true } } },
-        orderBy: [
-          { anneeScolaire: "desc" },
-          { trimestre: "asc" },
-          { matiere: { libelle: "asc" } },
-          { dateEvaluation: "asc" },
-        ],
-      }),
-      this.prisma.inscription.findMany({
-        where: { tenantId, eleveId },
-        include: {
-          classe: { select: { id: true, nom: true } },
-          anneeAcademique: { select: { id: true, libelle: true, estCourante: true } },
-        },
-        orderBy: { createdAt: "desc" },
-      }),
-      this.prisma.anneeAcademique.findFirst({
-        where: { tenantId, estCourante: true },
-        select: { id: true, libelle: true },
-      }),
+      this.prisma.withReadRetry("studentNotes.notes", () =>
+        this.prisma.note.findMany({
+          where: { tenantId, eleveId, ...(trimestre ? { trimestre } : {}) },
+          include: { matiere: { select: { id: true, code: true, libelle: true } } },
+          orderBy: [
+            { anneeScolaire: "desc" },
+            { trimestre: "asc" },
+            { matiere: { libelle: "asc" } },
+            { dateEvaluation: "asc" },
+          ],
+        }),
+      ),
+      this.prisma.withReadRetry("studentNotes.inscriptions", () =>
+        this.prisma.inscription.findMany({
+          where: { tenantId, eleveId },
+          include: {
+            classe: { select: { id: true, nom: true } },
+            anneeAcademique: { select: { id: true, libelle: true, estCourante: true } },
+          },
+          orderBy: { createdAt: "desc" },
+        }),
+      ),
+      this.prisma.withReadRetry("studentNotes.currentYear", () =>
+        this.prisma.anneeAcademique.findFirst({
+          where: { tenantId, estCourante: true },
+          select: { id: true, libelle: true },
+        }),
+      ),
     ]);
 
     const inscriptionByYear = new Map(
       inscriptions.map((inscription) => [inscription.anneeAcademique.libelle, inscription]),
     );
-    return notes.map((note) => {
+    const result = notes.map((note) => {
       const inscription = inscriptionByYear.get(note.anneeScolaire);
       return {
         ...note,
@@ -443,6 +451,10 @@ export class DomainService {
           || currentYear?.libelle === note.anneeScolaire,
       };
     });
+    this.logger.log(
+      `Chargement notes élève terminé eleveId=${eleveId} count=${result.length} durationMs=${Date.now() - startedAt}`,
+    );
+    return result;
   }
   async studentBulletins(tenantId: string, eleveId: string) {
     const startedAt = Date.now();
