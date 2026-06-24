@@ -11,7 +11,7 @@ import {
   Query,
   Req,
 } from "@nestjs/common";
-import type { FastifyRequest } from "fastify";
+import type { MultipartFastifyRequest } from "@/common/types/multipart-request.types";
 import { Roles } from "@/common/decorators/roles.decorator";
 import { CurrentUser } from "@/common/decorators/current-user.decorator";
 import type { JwtUser } from "@/common/types/auth.types";
@@ -89,7 +89,7 @@ export class StudentController {
   async uploadJustificatif(
     @Headers("x-tenant-id") tenantId: string,
     @CurrentUser() user: JwtUser,
-    @Req() req: FastifyRequest,
+    @Req() req: MultipartFastifyRequest,
   ) {
     if (!req.isMultipart()) {
       throw new BadRequestException("La requête doit être multipart/form-data");

@@ -446,8 +446,8 @@ export class DomainService {
   }
   async studentBulletins(tenantId: string, eleveId: string) {
     const [bulletins, currentYear] = await Promise.all([
-      this.prisma.bulletin.findMany({
-        where: { tenantId, eleveId },
+        this.prisma.bulletin.findMany({
+          where: { tenantId, eleveId, statut: "PUBLIE" },
         include: { classe: { select: { id: true, nom: true } } },
         orderBy: [{ anneeScolaire: "desc" }, { trimestre: "asc" }],
       }),
@@ -462,8 +462,8 @@ export class DomainService {
     }));
   }
   async studentBulletinExport(tenantId: string, eleveId: string, bulletinId: string) {
-    const bulletin = await this.prisma.bulletin.findFirst({
-      where: { id: bulletinId, tenantId, eleveId },
+      const bulletin = await this.prisma.bulletin.findFirst({
+        where: { id: bulletinId, tenantId, eleveId, statut: "PUBLIE" },
       include: { classe: { select: { id: true, nom: true } } },
     });
     if (!bulletin) throw new NotFoundException("Bulletin introuvable");

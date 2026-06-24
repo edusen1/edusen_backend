@@ -2111,6 +2111,9 @@ export class LegacyCrudService {
         nombreRetards: absence.retards,
         moyenneClasse: 0,
         soumisPar: userId,
+        statut: 'BROUILLON' as const,
+        validePar: null,
+        fichierPdfUrl: null,
       };
 
       return this.prisma.bulletin.upsert({
@@ -2124,7 +2127,6 @@ export class LegacyCrudService {
           classeId,
           trimestre,
           anneeScolaire,
-          statut: 'BROUILLON',
           ...data,
         },
       });

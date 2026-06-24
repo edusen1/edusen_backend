@@ -8,7 +8,7 @@ import { ClasseService } from '@/modules/classes/classe.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
 import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 import { PresenceProfesseurService } from '@/modules/presence-professeur.service';
-import type { FastifyRequest } from 'fastify';
+import type { MultipartFastifyRequest } from '@/common/types/multipart-request.types';
 
 type QueryParams = Record<string, string | string[] | undefined>;
 type Payload = Record<string, unknown>;
@@ -290,7 +290,7 @@ export class TeacherController {
   @Post('absences/justificatif')
   async uploadAbsenceJustificatif(
     @Headers('x-tenant-id') tenantId: string,
-    @Req() req: FastifyRequest,
+    @Req() req: MultipartFastifyRequest,
     @CurrentUser() user?: JwtUser,
   ) {
     if (!req.isMultipart()) throw new BadRequestException('La requête doit être multipart/form-data');

@@ -29,7 +29,7 @@ import { ClasseService } from '@/modules/classes/classe.service';
 import { CreateClasseDto } from '@/modules/classes/dto/create-classe.dto';
 import { UpdateClasseDto } from '@/modules/classes/dto/update-classe.dto';
 import { EmploiDuTempsService } from '@/modules/v1/emploi-du-temps/emploi-du-temps.service';
-import { BulletinService } from '@/modules/v1/bulletin/bulletin.service';
+import { BulletinService, PublishBulletinsDto } from '@/modules/v1/bulletin/bulletin.service';
 import { DomainService } from '@/modules/domain.service';
 import { PresenceProfesseurService } from '@/modules/presence-professeur.service';
 
@@ -288,6 +288,20 @@ export class AdminController {
     @CurrentUser() user?: JwtUser,
   ) {
     return this.crud.generateBulletinsForClasse(tenantId, body, user?.sub);
+  }
+
+  @Roles('ADMIN')
+  @Post('bulletins/publier')
+  publierBulletins(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.bulletinService.publierPlusieurs(
+      tenantId!,
+      body as unknown as PublishBulletinsDto,
+      user?.sub ?? 'admin',
+    );
   }
 
   @Post('bulletins/:id/valider')

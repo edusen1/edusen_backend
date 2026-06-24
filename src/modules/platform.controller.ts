@@ -1,5 +1,5 @@
 ﻿import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req } from '@nestjs/common';
-import type { FastifyRequest } from 'fastify';
+import type { MultipartFastifyRequest } from '@/common/types/multipart-request.types';
 import { Roles } from '@/common/decorators/roles.decorator';
 import { PlatformService } from '@/modules/platform/platform.service';
 import { CreateTenantDto } from '@/modules/platform/dto/create-tenant.dto';
@@ -34,7 +34,7 @@ export class PlatformController {
   reactivateTenant(@Param('id') id: string) { return this.platformService.reactivateTenant(id); }
 
   @Post('tenants/:id/logo')
-  async uploadLogo(@Param('id') id: string, @Req() req: FastifyRequest, @Body() body?: { logoUrl?: string }) {
+  async uploadLogo(@Param('id') id: string, @Req() req: MultipartFastifyRequest, @Body() body?: { logoUrl?: string }) {
     if (req.isMultipart()) {
       const file = await req.file();
       if (!file) throw new BadRequestException('Aucun logo fourni');

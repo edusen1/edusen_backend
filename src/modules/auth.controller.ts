@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Patch, Post, Req } from '@nestjs/common';
-import type { FastifyRequest } from 'fastify';
+import type { MultipartFastifyRequest } from '@/common/types/multipart-request.types';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '@/common/decorators/public.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
@@ -126,7 +126,7 @@ export class AuthController {
   @Post('me/photo')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Upload de la photo de profil' })
-  async uploadPhoto(@CurrentUser() user: JwtUser, @Req() req: FastifyRequest) {
+  async uploadPhoto(@CurrentUser() user: JwtUser, @Req() req: MultipartFastifyRequest) {
     if (!req.isMultipart()) throw new BadRequestException('La requête doit être multipart/form-data');
     const file = await req.file();
     if (!file) throw new BadRequestException('Aucun fichier fourni');

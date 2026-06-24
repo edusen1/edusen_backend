@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@/config/prisma.service';
 import { MailService } from '@/infrastructure/mail/mail.service';
 import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
@@ -18,6 +18,14 @@ export interface CreateBulletinDto {
   appreciation?: string;
   nombreAbsences?: number;
   nombreRetards?: number;
+}
+
+export interface PublishBulletinsDto {
+  portee: 'CLASSE' | 'CYCLE' | 'TOUS';
+  trimestre: string;
+  anneeScolaire: string;
+  classeId?: string;
+  cycleId?: string;
 }
 
 @Injectable()
@@ -87,7 +95,14 @@ export class BulletinService {
       if (existing) {
         bulletin = await this.prisma.bulletin.update({
           where: { id: existing.id },
-          data: { moyenne, totalEleves, nombreAbsences: absences },
+          data: {
+            moyenne,
+            totalEleves,
+            nombreAbsences: absences,
+            statut: StatutBulletin.BROUILLON,
+            validePar: null,
+            fichierPdfUrl: null,
+          },
         });
       } else {
         bulletin = await this.prisma.bulletin.create({
@@ -179,11 +194,73 @@ export class BulletinService {
     const bulletin = await this.prisma.bulletin.findFirst({ where: { id, tenantId } });
     if (!bulletin) throw new NotFoundException('Bulletin introuvable');
 
-    const updated = await this.prisma.bulletin.update({
-      where: { id },
+    const transition = await this.prisma.bulletin.updateMany({
+      where: { id, tenantId, statut: { not: StatutBulletin.PUBLIE } },
       data: { statut: StatutBulletin.PUBLIE, validePar },
     });
+    if (transition.count === 0) return bulletin;
 
+    await this.notifyPublication(tenantId, bulletin).catch((error: unknown) => {
+      this.logger.error(`Notifications bulletin ${id} incomplètes`, error instanceof Error ? error.stack : String(error));
+    });
+
+    return this.prisma.bulletin.findUnique({ where: { id } });
+  }
+
+  async publierPlusieurs(
+    tenantId: string,
+    dto: PublishBulletinsDto,
+    validePar: string,
+  ): Promise<{ publishedCount: number; matchedDraftCount: number }> {
+    const portee = String(dto.portee ?? '').toUpperCase();
+    const trimestre = String(dto.trimestre ?? '').trim().toUpperCase();
+    const anneeScolaire = String(dto.anneeScolaire ?? '').trim();
+    if (!['CLASSE', 'CYCLE', 'TOUS'].includes(portee)) {
+      throw new BadRequestException('Portée de publication invalide');
+    }
+    if (!trimestre || !anneeScolaire) {
+      throw new BadRequestException('Le trimestre et l’année scolaire sont obligatoires');
+    }
+    if (portee === 'CLASSE' && !dto.classeId) {
+      throw new BadRequestException('La classe est obligatoire pour une publication par classe');
+    }
+    if (portee === 'CYCLE' && !dto.cycleId) {
+      throw new BadRequestException('Le cycle est obligatoire pour une publication par cycle');
+    }
+
+    const where: Prisma.BulletinWhereInput = {
+      tenantId,
+      statut: StatutBulletin.BROUILLON,
+      trimestre,
+      anneeScolaire,
+      ...(portee === 'CLASSE' ? { classeId: dto.classeId } : {}),
+      ...(portee === 'CYCLE' ? { classe: { niveau: { cycleId: dto.cycleId } } } : {}),
+    };
+    const bulletins = await this.prisma.bulletin.findMany({ where });
+    let publishedCount = 0;
+
+    for (const bulletin of bulletins) {
+      const transition = await this.prisma.bulletin.updateMany({
+        where: { id: bulletin.id, tenantId, statut: StatutBulletin.BROUILLON },
+        data: { statut: StatutBulletin.PUBLIE, validePar },
+      });
+      if (transition.count === 0) continue;
+      publishedCount += 1;
+      await this.notifyPublication(tenantId, bulletin).catch((error: unknown) => {
+        this.logger.error(
+          `Notifications bulletin ${bulletin.id} incomplètes`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      });
+    }
+
+    return { publishedCount, matchedDraftCount: bulletins.length };
+  }
+
+  private async notifyPublication(
+    tenantId: string,
+    bulletin: { id: string; eleveId: string; trimestre: string },
+  ): Promise<void> {
     const eleve = await this.prisma.user.findUnique({ where: { id: bulletin.eleveId } });
     if (eleve) {
       const nomEleve = `${eleve.firstName} ${eleve.lastName}`;
@@ -229,7 +306,6 @@ export class BulletinService {
       }
     }
 
-    return updated;
   }
 
   async genererDuplicata(tenantId: string, id: string, demandePar: string): Promise<unknown> {
