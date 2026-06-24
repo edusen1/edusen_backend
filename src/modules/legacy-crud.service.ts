@@ -257,7 +257,7 @@ export class LegacyCrudService {
         orderBy: { createdAt: 'desc' },
       },
     } : config.model === 'bulletin' ? {
-      classe: { select: { id: true, nom: true } },
+      classe: { select: { id: true, nom: true, anneeAcademiqueId: true } },
     } : config.model === 'absenceEleve' ? {
       classe: { select: { id: true, nom: true } },
     } : config.model === 'cours' ? {
@@ -406,6 +406,33 @@ export class LegacyCrudService {
     });
     if (!entity) throw new NotFoundException('Ressource introuvable');
     const [hydrated] = await this.attachEleveIfNeeded(config.model, [entity], tenantId);
+    if (config.model === 'bulletin') {
+      const bulletin = hydrated as Payload & { eleveId: string; trimestre: string; anneeScolaire: string; classeId: string; classe?: { anneeAcademiqueId?: string } };
+      const [notes, affectations] = await Promise.all([
+        this.prisma.note.findMany({
+          where: { tenantId: String(bulletin.tenantId), eleveId: bulletin.eleveId, trimestre: bulletin.trimestre, anneeScolaire: bulletin.anneeScolaire },
+          include: { matiere: { select: { id: true, code: true, libelle: true } } },
+          orderBy: [{ dateEvaluation: 'asc' }, { createdAt: 'asc' }],
+        }),
+        this.prisma.matiereClasse.findMany({
+          where: {
+            tenantId: String(bulletin.tenantId),
+            classeId: bulletin.classeId,
+            anneeScolaire: bulletin.anneeScolaire,
+            ...(bulletin.classe?.anneeAcademiqueId ? { anneeAcademiqueId: bulletin.classe.anneeAcademiqueId } : {}),
+          },
+          include: { enseignant: { select: { firstName: true, lastName: true } } },
+        }),
+      ]);
+      const teachers = new Map(affectations.map((affectation) => [
+        affectation.matiereId,
+        `${affectation.enseignant.firstName} ${affectation.enseignant.lastName}`.trim() || '—',
+      ]));
+      return this.sanitizeEntity(config.model, {
+        ...bulletin,
+        notes: notes.map((note) => ({ ...note, enseignantNom: teachers.get(note.matiereId) ?? '—' })),
+      });
+    }
     return this.sanitizeEntity(config.model, hydrated);
   }
 

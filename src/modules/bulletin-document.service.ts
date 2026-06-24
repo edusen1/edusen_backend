@@ -7,6 +7,7 @@ interface BulletinSubjectRow {
   label: string;
   devoir1: string;
   devoir2: string;
+  devoir3: string;
   composition: string;
   moyenne: number | null;
   coefficient: number;
@@ -175,6 +176,7 @@ export class BulletinDocumentService implements OnModuleDestroy {
     const weightedTotal = validRows.reduce((sum, row) => sum + (row.total ?? 0), 0);
     const computedAverage = totalCoefficient > 0 ? this.round(weightedTotal / totalCoefficient) : null;
 
+    const storedLogo = config?.logoUrl ?? tenant?.logoUrl;
     const schoolName = config?.nom ?? tenant?.nom ?? 'Noura School';
     const country = config?.pays ?? 'MR';
     const address = config?.adresse ?? tenant?.adresse ?? '';
@@ -187,7 +189,7 @@ export class BulletinDocumentService implements OnModuleDestroy {
         country,
         phone: config?.telephone ?? tenant?.telephone ?? '',
         email: config?.email ?? tenant?.emailContact ?? '',
-        logoUrl: this.storage.resolveUrl(config?.logoUrl ?? tenant?.logoUrl) ?? null,
+        logoUrl: (await this.embedSchoolLogo(storedLogo)) ?? this.storage.resolveUrl(storedLogo) ?? null,
         primaryColor: this.bulletinPrimaryColor(config?.primaryColor),
       },
       student: {
@@ -234,7 +236,8 @@ export class BulletinDocumentService implements OnModuleDestroy {
     return {
       label: subject.label,
       devoir1: value(devoirs[0]),
-      devoir2: devoirs.length <= 1 ? '—' : devoirs.slice(1).map(value).join(' · '),
+      devoir2: value(devoirs[1]),
+      devoir3: value(devoirs[2]),
       composition: compositionAverage === null ? '—' : `${this.formatNumber(compositionAverage)}/20`,
       moyenne,
       coefficient: subject.coefficient,
@@ -288,7 +291,7 @@ export class BulletinDocumentService implements OnModuleDestroy {
       : `<span>${this.escapeHtml(model.school.name.slice(0, 1).toUpperCase() || 'N')}</span>`;
     const rows = model.rows.length
       ? model.rows.map((row) => `<tr>
-          <td class="subject">${this.escapeHtml(row.label)}</td><td>${row.devoir1}</td><td>${row.devoir2}</td><td>${row.composition}</td>
+          <td class="subject">${this.escapeHtml(row.label)}</td><td>${row.devoir1}</td><td>${row.devoir2}</td><td>${row.devoir3}</td><td>${row.composition}</td>
           <td class="average">${row.moyenne === null ? '—' : `${this.formatNumber(row.moyenne)}/20`}</td><td>${this.formatNumber(row.coefficient)}</td>
           <td class="total">${row.total === null ? '—' : this.formatNumber(row.total)}</td><td class="teacher">${this.escapeHtml(row.enseignant)}</td>
         </tr>`).join('')
@@ -315,7 +318,7 @@ export class BulletinDocumentService implements OnModuleDestroy {
       ${isMauritania ? `<div class="republic"><strong lang="ar">شرف إخاء عدل</strong><span>Honneur, Fraternité, Justice</span><small>République Islamique de Mauritanie</small></div>` : `<div class="republic"><strong>Bulletin scolaire</strong><span>${this.escapeHtml(model.bulletin.period)}</span><small>${this.escapeHtml(model.bulletin.year)}</small></div>`}</header>
       <div class="rule"></div><section class="overview"><div class="card"><h2>Informations de l'élève</h2><p><strong>Nom complet:</strong> ${this.escapeHtml(model.student.name)}</p>${model.student.matricule ? `<p><strong>Matricule:</strong> ${this.escapeHtml(model.student.matricule)}</p>` : ''}<p><strong>Classe:</strong> ${this.escapeHtml(model.student.classe)}</p><p><strong>Année scolaire:</strong> ${this.escapeHtml(model.bulletin.year)}</p><p><strong>Trimestre:</strong> ${this.escapeHtml(model.bulletin.period)}</p>${model.student.birthDate ? `<p><strong>Date de naissance:</strong> ${this.escapeHtml(model.student.birthDate)}</p>` : ''}${model.student.birthPlace ? `<p><strong>Lieu de naissance:</strong> ${this.escapeHtml(model.student.birthPlace)}</p>` : ''}</div>
       <div class="card results"><h2>Résultats généraux</h2><p><strong>Moyenne générale:</strong> <span class="green">${model.bulletin.average === null ? '—' : `${this.formatNumber(model.bulletin.average)}/20`}</span></p>${model.bulletin.classAverage !== null ? `<p><strong>Moyenne de la classe:</strong> ${this.formatNumber(model.bulletin.classAverage)}/20</p>` : ''}${model.bulletin.rank !== null ? `<p><strong>Rang:</strong> ${model.bulletin.rank}${model.bulletin.totalStudents ? ` sur ${model.bulletin.totalStudents} élèves` : ''}</p>` : ''}<p><strong>Date d'émission:</strong> ${model.bulletin.issueDate}</p><p><strong>École:</strong> ${this.escapeHtml(model.school.name)}${model.school.city ? ` - ${this.escapeHtml(model.school.city)}` : ''}</p></div></section>
-      <section><h2 class="notes-title">Détail des notes par matière</h2><table><colgroup><col style="width:16%"><col style="width:9.5%"><col style="width:10%"><col style="width:12%"><col style="width:11%"><col style="width:10%"><col style="width:8.5%"><col style="width:23%"></colgroup><thead><tr><th>Matière</th><th>Devoir 1</th><th>Devoir 2</th><th>Composition</th><th>Moyenne</th><th>Coefficient</th><th>Total</th><th>Enseignant</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td class="subject">TOTAL GÉNÉRAL</td><td>—</td><td>—</td><td>—</td><td class="average">${model.bulletin.average === null ? '—' : `${this.formatNumber(model.bulletin.average)}/20`}</td><td>${this.formatNumber(model.totalCoefficient)}</td><td class="total">${this.formatNumber(model.weightedTotal)}</td><td>—</td></tr></tfoot></table></section>
+      <section><h2 class="notes-title">Détail des notes par matière</h2><table><colgroup><col style="width:15%"><col style="width:8.5%"><col style="width:8.5%"><col style="width:8.5%"><col style="width:11%"><col style="width:10%"><col style="width:9%"><col style="width:8%"><col style="width:21.5%"></colgroup><thead><tr><th>Matière</th><th>Devoir 1</th><th>Devoir 2</th><th>Devoir 3</th><th>Composition</th><th>Moyenne</th><th>Coefficient</th><th>Total</th><th>Enseignant</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td class="subject">TOTAL GÉNÉRAL</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="average">${model.bulletin.average === null ? '—' : `${this.formatNumber(model.bulletin.average)}/20`}</td><td>${this.formatNumber(model.totalCoefficient)}</td><td class="total">${this.formatNumber(model.weightedTotal)}</td><td>—</td></tr></tfoot></table></section>
       <section class="after-table"><div class="appreciation"><h2>Appréciation générale</h2><p>"${this.escapeHtml(model.bulletin.appreciation)}"</p></div><div class="signatures"><div class="signature"><strong>Le Directeur</strong><span>${this.escapeHtml(model.bulletin.director)}</span></div><div class="signature"><strong>Signature des parents</strong></div></div></section>
       <footer class="footer"><div>${this.escapeHtml(model.school.name)}${contact ? ` - ${contact}` : ''}</div><small>Bulletin édité le ${model.bulletin.issueDate} · Référence ${model.bulletin.reference}</small></footer>
     </main></body></html>`;
@@ -338,6 +341,43 @@ export class BulletinDocumentService implements OnModuleDestroy {
   }
 
   private formatDate(date: Date): string { return new Intl.DateTimeFormat('fr-FR').format(date); }
+  private async embedSchoolLogo(storedLogo: string | null | undefined): Promise<string | null> {
+    const key = this.storageKey(storedLogo);
+    if (!key) return null;
+
+    try {
+      const buffer = await this.storage.getPrivateBuffer(key);
+      if (!buffer?.length) return null;
+      return `data:${this.imageMimeType(buffer)};base64,${buffer.toString('base64')}`;
+    } catch (error) {
+      this.logger.warn(`Impossible d'intégrer le logo au PDF: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
+  private storageKey(value: string | null | undefined): string | null {
+    if (!value) return null;
+    if (!value.startsWith('http')) return value;
+    try {
+      const url = new URL(value);
+      const storageKey = url.searchParams.get('key');
+      if (storageKey) return storageKey;
+      const segments = url.pathname.split('/').filter(Boolean);
+      const bucketIndex = segments.indexOf(process.env.S3_BUCKET ?? 'noura-school-files');
+      return bucketIndex >= 0 ? segments.slice(bucketIndex + 1).join('/') || null : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private imageMimeType(buffer: Buffer): string {
+    if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+    if (buffer.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) return 'image/jpeg';
+    if (buffer.subarray(0, 6).toString('ascii') === 'GIF87a' || buffer.subarray(0, 6).toString('ascii') === 'GIF89a') return 'image/gif';
+    if (buffer.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+    if (buffer.subarray(0, 256).toString('utf8').trimStart().includes('<svg')) return 'image/svg+xml';
+    return 'image/png';
+  }
   private bulletinPrimaryColor(value: string | null | undefined): string {
     return /^#[0-9a-f]{6}$/i.test(value ?? '') ? value! : '#03a9f3';
   }
