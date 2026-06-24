@@ -3,6 +3,7 @@ export type UserRole =
   | 'GESTIONNAIRE'
   | 'ADMIN'
   | 'CAISSIER'
+  | 'COMPTABLE'
   | 'SURVEILLANT'
   | 'ENSEIGNANT'
   | 'ELEVE'

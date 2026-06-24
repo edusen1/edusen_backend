@@ -364,7 +364,7 @@ export class AdminController {
     );
   }
 
-  @Roles('ADMIN', 'CAISSIER', 'RH')
+  @Roles('ADMIN', 'CAISSIER', 'COMPTABLE', 'RH')
   @Get('presences-professeurs/salaires')
   salairesProfesseurs(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -380,7 +380,7 @@ export class AdminController {
     );
   }
 
-  @Roles('ADMIN', 'CAISSIER', 'RH')
+  @Roles('ADMIN', 'CAISSIER', 'COMPTABLE', 'RH')
   @Get('paiements-professeurs')
   paiementsProfesseurs(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -391,7 +391,7 @@ export class AdminController {
     );
   }
 
-  @Roles('ADMIN', 'CAISSIER', 'RH')
+  @Roles('ADMIN', 'CAISSIER', 'COMPTABLE', 'RH')
   @Post('paiements-professeurs')
   initialiserPaiementProfesseur(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -786,8 +786,10 @@ export class AdminController {
   parentChildren(
     @Headers('x-tenant-id') tenantId: string | undefined,
     @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.crud.adminParentChildren(tenantId, id);
+    return this.resolveTenantId(tenantId, user)
+      .then((tid) => this.crud.adminParentChildren(tid, id));
   }
 
   @Get('eleves/:id/parcours')

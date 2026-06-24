@@ -3109,7 +3109,7 @@ export class LegacyCrudService {
     }
     if (data.montantHoraire !== undefined && data.montantHoraire !== null && data.montantHoraire !== '') {
       const montant = Number(data.montantHoraire);
-      if (!Number.isFinite(montant) || montant < 0) {
+      if (!Number.isFinite(montant) || montant <= 0) {
         throw new BadRequestException('Montant par heure invalide');
       }
       data.montantHoraire = montant;
@@ -3123,6 +3123,10 @@ export class LegacyCrudService {
       } else if (data.montantHoraire === '') {
         data.montantHoraire = null;
       }
+    }
+
+    if (create && (data.montantHoraire === null || data.montantHoraire === undefined)) {
+      throw new BadRequestException('Le montant par heure est obligatoire pour créer un cours');
     }
 
     // Enseignant : champ obligatoire du modèle Cours
@@ -3149,11 +3153,11 @@ export class LegacyCrudService {
         ]);
         const legacySpecialites = String(enseignant.specialite ?? '')
           .split(',')
-          .map((value) => value.trim().toLocaleLowerCase())
+          .map((value) => this.normalizeSubjectName(value))
           .filter(Boolean);
         const legacyMatch = matiere
-          ? legacySpecialites.includes(String(matiere.libelle ?? '').toLocaleLowerCase())
-            || legacySpecialites.includes(String(matiere.code ?? '').toLocaleLowerCase())
+          ? legacySpecialites.includes(this.normalizeSubjectName(matiere.libelle))
+            || legacySpecialites.includes(this.normalizeSubjectName(matiere.code))
           : false;
         if (!habilitation && !legacyMatch) {
           throw new BadRequestException('Ce professeur n’est pas habilité à enseigner cette matière');
@@ -3189,6 +3193,14 @@ export class LegacyCrudService {
     delete data.dateFin;
     delete data.heures;
     delete data.montantParHeure;
+  }
+
+  private normalizeSubjectName(value: unknown): string {
+    return String(value ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLocaleLowerCase();
   }
 
   private normalizeSalleData(data: Payload): void {

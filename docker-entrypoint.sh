@@ -49,23 +49,10 @@ migrate_exit=$?
 echo "$migrate_log"
 
 if [ $migrate_exit -ne 0 ]; then
-  # Extraire le nom de la migration échouée (single quotes pour éviter l'interprétation des backticks)
-  failed=$(echo "$migrate_log" | sed -n 's/.*The `\([^`]*\)` migration.*/\1/p' | head -1)
-
-  if [ -n "$failed" ]; then
-    log_warn "Migration échouée : $failed"
-    # Pour les migrations seed (données seulement), on les marque comme appliquées
-    # afin qu'elles ne bloquent pas les migrations de schéma suivantes.
-    log_step "🔧 Marquage comme appliquée (--applied) pour débloquer les migrations suivantes"
-    npx prisma migrate resolve --applied "$failed"
-
-    log_step "🔄 Nouvelle tentative de migration"
-    npx prisma migrate deploy
-    log_ok "Migrations appliquées après résolution"
-  else
-    log_error "Migrations Prisma échouées (cause inconnue). Arrêt."
-    exit 1
-  fi
+  # Ne jamais marquer automatiquement une migration comme appliquée : cela peut
+  # laisser le schéma incomplet alors que Prisma croit la migration exécutée.
+  log_error "Migrations Prisma échouées. Arrêt du démarrage pour préserver l'intégrité du schéma."
+  exit 1
 else
   log_ok "Migrations Prisma à jour"
 fi

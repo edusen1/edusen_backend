@@ -14,6 +14,7 @@ type PaiementProfesseurPayload = {
   enseignantId?: string;
   dateDebut?: string;
   dateFin?: string;
+  montant?: unknown;
   observations?: string | null;
 };
 
@@ -226,6 +227,13 @@ export class PresenceProfesseurService {
     if (Number(summary.salaireCalcule ?? 0) <= 0) {
       throw new BadRequestException('Le salaire calculé doit être supérieur à 0');
     }
+    const requestedAmount = payload.montant === undefined || payload.montant === null || payload.montant === ''
+      ? Number(summary.salaireCalcule)
+      : Number(payload.montant);
+    if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
+      throw new BadRequestException('Le montant du paiement doit être supérieur à 0');
+    }
+    const montant = this.roundMoney(requestedAmount);
 
     const existing = await this.prisma.paiementProfesseur.findFirst({
       where: { tenantId, enseignantId, dateDebut, dateFin, statut: 'EN_ATTENTE' },
@@ -237,7 +245,7 @@ export class PresenceProfesseurService {
 
     const reference = `PAY-PROF-${Date.now().toString(36).toUpperCase()}`;
     const title = 'Paiement professeur initialisé';
-    const content = `Un paiement de ${this.roundMoney(summary.salaireCalcule).toLocaleString('fr-FR')} MRU a été initialisé pour la période du ${dateDebutIso} au ${dateFinIso}. Souhaitez-vous valider ou rejeter ce paiement ?`;
+    const content = `Un paiement de ${montant.toLocaleString('fr-FR')} MRU a été initialisé pour la période du ${dateDebutIso} au ${dateFinIso}. Souhaitez-vous valider ou rejeter ce paiement ?`;
     const created = await this.prisma.$transaction(async (tx) => {
       const notification = await tx.notification.create({
         data: {
@@ -255,7 +263,7 @@ export class PresenceProfesseurService {
           dateFin,
           heuresEffectuees: Number(summary.heuresEffectuees ?? 0),
           heuresDeduites: Number(summary.heuresDeduites ?? 0),
-          montant: this.roundMoney(summary.salaireCalcule),
+          montant,
           reference,
           initialisePar: user?.sub,
           notificationId: notification.id,
@@ -445,13 +453,18 @@ export class PresenceProfesseurService {
       byTeacher.set(row.enseignantId, entry);
     }
 
-    return [...byTeacher.values()].map((entry) => ({
-      ...entry,
-      heuresPlanifiees: this.roundHours(entry.heuresPlanifiees),
-      heuresEffectuees: this.roundHours(entry.heuresEffectuees),
-      heuresDeduites: this.roundHours(entry.heuresDeduites),
-      salaireCalcule: this.roundMoney(entry.salaireCalcule),
-    }));
+    return [...byTeacher.values()].map((entry) => {
+      const heuresEffectuees = this.roundHours(entry.heuresEffectuees);
+      const salaireCalcule = this.roundMoney(entry.salaireCalcule);
+      return {
+        ...entry,
+        heuresPlanifiees: this.roundHours(entry.heuresPlanifiees),
+        heuresEffectuees,
+        heuresDeduites: this.roundHours(entry.heuresDeduites),
+        salaireCalcule,
+        montantHoraireMoyen: heuresEffectuees > 0 ? this.roundMoney(salaireCalcule / heuresEffectuees) : 0,
+      };
+    });
   }
 
   private async assertCanControlSlot(tenantId: string, classeId: string, user?: JwtUser): Promise<void> {
