@@ -735,6 +735,7 @@ model Bulletin {
 
   @@unique([eleveId, classeId, trimestre, anneeScolaire])
   @@index([tenantId, statut], map: "bulletins_tenantId_statut_idx")
+  @@index([tenantId, eleveId, statut, anneeScolaire], map: "bulletins_student_visibility_idx")
   @@index([tenantId, classeId, trimestre, anneeScolaire], map: "bulletins_class_period_idx")
 
   liensBulletin LienBulletinParent[]

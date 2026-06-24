@@ -445,20 +445,22 @@ export class DomainService {
     });
   }
   async studentBulletins(tenantId: string, eleveId: string) {
-    const [bulletins, currentYear] = await Promise.all([
-        this.prisma.bulletin.findMany({
-          where: { tenantId, eleveId, statut: "PUBLIE" },
+    const startedAt = Date.now();
+    this.logger.log(`Chargement bulletins élève démarré eleveId=${eleveId}`);
+    const bulletins = await this.prisma.withReadRetry("studentBulletins", () =>
+      this.prisma.bulletin.findMany({
+        where: { tenantId, eleveId, statut: "PUBLIE" },
         include: { classe: { select: { id: true, nom: true } } },
         orderBy: [{ anneeScolaire: "desc" }, { trimestre: "asc" }],
       }),
-      this.prisma.anneeAcademique.findFirst({
-        where: { tenantId, estCourante: true },
-        select: { id: true, libelle: true },
-      }),
-    ]);
+    );
+    const currentYear = bulletins[0]?.anneeScolaire;
+    this.logger.log(
+      `Chargement bulletins élève terminé eleveId=${eleveId} count=${bulletins.length} durationMs=${Date.now() - startedAt}`,
+    );
     return bulletins.map((bulletin) => ({
       ...bulletin,
-      anneeActuelle: currentYear?.libelle === bulletin.anneeScolaire,
+      anneeActuelle: currentYear === bulletin.anneeScolaire,
     }));
   }
   async studentBulletinExport(tenantId: string, eleveId: string, bulletinId: string) {
