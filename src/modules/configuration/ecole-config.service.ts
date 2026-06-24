@@ -18,6 +18,7 @@ export interface EcoleConfigResponse {
   numeroAgrement?: string;
   typeEtablissement: string;
   logoUrl?: string;
+  cachetUrl?: string;
   montantHoraireDefaut?: number;
 }
 
@@ -90,6 +91,7 @@ export class EcoleConfigService {
       telephone: tenant.telephone ?? '',
       email: tenant.emailContact ?? '',
       logoUrl: this.storage.resolveUrl(tenant.logoUrl) ?? undefined,
+      cachetUrl: undefined,
       typeEtablissement: 'PRIVE',
       montantHoraireDefaut: undefined,
     };
@@ -135,9 +137,10 @@ export class EcoleConfigService {
   async updateEcoleConfig(tenantId: string, dto: UpdateEcoleConfigDto): Promise<EcoleConfigResponse> {
     const previousConfig = await this.prisma.ecoleConfig.findUnique({
       where: { tenantId },
-      select: { logoS3Key: true },
+      select: { logoS3Key: true, cachetS3Key: true },
     });
     const logoPatch = await this.resolveLogoPatch(tenantId, dto.logoUrl);
+    const cachetPatch = await this.resolveCachetPatch(tenantId, dto.cachetUrl);
     const data = {
       nom: dto.nom,
       slogan: dto.slogan ?? null,
@@ -154,15 +157,24 @@ export class EcoleConfigService {
 
     const config = await this.prisma.ecoleConfig.upsert({
       where: { tenantId },
-      create: { tenantId, ...data, ...(logoPatch ?? { logoUrl: null, logoS3Key: null }) },
+      create: {
+        tenantId,
+        ...data,
+        ...(logoPatch ?? { logoUrl: null, logoS3Key: null }),
+        ...(cachetPatch ?? { cachetUrl: null, cachetS3Key: null }),
+      },
       update: {
         ...data,
         ...(logoPatch ?? {}),
+        ...(cachetPatch ?? {}),
       },
     });
 
     if (logoPatch?.logoS3Key && previousConfig?.logoS3Key && previousConfig.logoS3Key !== logoPatch.logoS3Key) {
       await this.storage.delete(previousConfig.logoS3Key).catch(() => undefined);
+    }
+    if (cachetPatch?.cachetS3Key && previousConfig?.cachetS3Key && previousConfig.cachetS3Key !== cachetPatch.cachetS3Key) {
+      await this.storage.delete(previousConfig.cachetS3Key).catch(() => undefined);
     }
 
     // Keep Tenant base fields in sync for coherence across the platform
@@ -371,6 +383,7 @@ export class EcoleConfigService {
     numeroAgrement: string | null;
     typeEtablissement: string;
     logoUrl: string | null;
+    cachetUrl: string | null;
     montantHoraireDefaut: number | null;
   }): EcoleConfigResponse {
     return {
@@ -385,6 +398,7 @@ export class EcoleConfigService {
       numeroAgrement: config.numeroAgrement ?? undefined,
       typeEtablissement: 'PRIVE',
       logoUrl: this.storage.resolveUrl(config.logoUrl) ?? undefined,
+      cachetUrl: this.storage.resolveUrl(config.cachetUrl) ?? undefined,
       montantHoraireDefaut: config.montantHoraireDefaut ?? undefined,
     };
   }
@@ -428,22 +442,39 @@ export class EcoleConfigService {
     tenantId: string,
     logoUrl?: string,
   ): Promise<{ logoUrl: string | null; logoS3Key: string | null } | null> {
-    if (logoUrl === undefined) {
+    return (await this.resolveImagePatch(tenantId, 'logos', 'logo', logoUrl, 'Logo')) as { logoUrl: string | null; logoS3Key: string | null } | null;
+  }
+
+  private async resolveCachetPatch(
+    tenantId: string,
+    cachetUrl?: string,
+  ): Promise<{ cachetUrl: string | null; cachetS3Key: string | null } | null> {
+    return (await this.resolveImagePatch(tenantId, 'cachets', 'cachet', cachetUrl, 'Cachet')) as { cachetUrl: string | null; cachetS3Key: string | null } | null;
+  }
+
+  private async resolveImagePatch(
+    tenantId: string,
+    folder: string,
+    basename: string,
+    imageUrl?: string,
+    label = 'Image',
+  ): Promise<Record<string, string | null> | null> {
+    if (imageUrl === undefined) {
       return null;
     }
 
-    if (!logoUrl) {
-      return { logoUrl: null, logoS3Key: null };
+    if (!imageUrl) {
+      return { [`${basename}Url`]: null, [`${basename}S3Key`]: null };
     }
 
-    if (/^https?:\/\//i.test(logoUrl)) {
+    if (/^https?:\/\//i.test(imageUrl)) {
       // URL complète (déjà stockée en base ou envoyée telle quelle) — normaliser l'hôte
-      return { logoUrl: this.storage.resolveUrl(logoUrl) ?? logoUrl, logoS3Key: null };
+      return { [`${basename}Url`]: this.storage.resolveUrl(imageUrl) ?? imageUrl, [`${basename}S3Key`]: null };
     }
 
-    const match = logoUrl.match(/^data:image\/(png|jpe?g|svg\+xml|webp);base64,(.+)$/i);
+    const match = imageUrl.match(/^data:image\/(png|jpe?g|svg\+xml|webp);base64,(.+)$/i);
     if (!match) {
-      throw new BadRequestException('Logo invalide');
+      throw new BadRequestException(`${label} invalide`);
     }
 
     const subtype = match[1].toLowerCase();
@@ -452,12 +483,12 @@ export class EcoleConfigService {
     const buffer = Buffer.from(match[2], 'base64');
 
     if (!buffer.length || buffer.length > 2_000_000) {
-      throw new BadRequestException('Logo invalide ou trop volumineux');
+      throw new BadRequestException(`${label} invalide ou trop volumineux`);
     }
 
-    const key = this.storage.buildKey('logos', tenantId, `logo.${extension}`);
+    const key = this.storage.buildKey(folder, tenantId, `${basename}.${extension}`);
     await this.storage.upload(key, buffer, contentType);
     // Stocker la clé brute — resolveUrl() est appliqué à la lecture
-    return { logoUrl: key, logoS3Key: key };
+    return { [`${basename}Url`]: key, [`${basename}S3Key`]: key };
   }
 }

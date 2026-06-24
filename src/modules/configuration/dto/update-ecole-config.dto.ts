@@ -148,4 +148,11 @@ export class UpdateEcoleConfigDto {
   @MaxLength(2_000_000)
   @Matches(/^(https?:\/\/|data:image\/(png|jpeg|jpg|webp|svg\+xml);base64,).+/i, { message: 'Logo invalide' })
   logoUrl?: string;
+
+  @OptionalTrim()
+  @IsOptional()
+  @IsString()
+  @MaxLength(2_000_000)
+  @Matches(/^(https?:\/\/|data:image\/(png|jpeg|jpg|webp|svg\+xml);base64,).+/i, { message: 'Cachet invalide' })
+  cachetUrl?: string;
 }

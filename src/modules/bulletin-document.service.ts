@@ -26,6 +26,7 @@ interface BulletinDocumentModel {
     email: string;
     logoUrl: string | null;
     primaryColor: string;
+    cachetUrl: string | null;
   };
   student: {
     name: string;
@@ -96,6 +97,17 @@ export class BulletinDocumentService implements OnModuleDestroy {
     });
     if (!bulletin) throw new NotFoundException('Bulletin introuvable');
 
+    const directorPromise = bulletin.validePar
+      ? this.prisma.user.findUnique({
+        where: { id: bulletin.validePar },
+        select: { firstName: true, lastName: true },
+      })
+      : this.prisma.user.findFirst({
+        where: { tenantId, role: 'ADMIN', actif: true },
+        select: { firstName: true, lastName: true },
+        orderBy: { createdAt: 'asc' },
+      });
+
     const [student, config, tenant, notes, courses, assignments, director] = await Promise.all([
       this.prisma.user.findFirst({
         where: { id: bulletin.eleveId, tenantId },
@@ -137,11 +149,7 @@ export class BulletinDocumentService implements OnModuleDestroy {
           enseignant: { select: { firstName: true, lastName: true } },
         },
       }),
-      this.prisma.user.findFirst({
-        where: { tenantId, role: 'ADMIN', actif: true },
-        select: { firstName: true, lastName: true },
-        orderBy: { createdAt: 'asc' },
-      }),
+      directorPromise,
     ]);
 
     if (!student) throw new NotFoundException('Élève introuvable');
@@ -191,6 +199,7 @@ export class BulletinDocumentService implements OnModuleDestroy {
         email: config?.email ?? tenant?.emailContact ?? '',
         logoUrl: (await this.embedSchoolLogo(storedLogo)) ?? this.storage.resolveUrl(storedLogo) ?? null,
         primaryColor: this.bulletinPrimaryColor(config?.primaryColor),
+        cachetUrl: this.storage.resolveUrl(config?.cachetUrl) ?? null,
       },
       student: {
         name: `${student.firstName} ${student.lastName}`.trim(),
@@ -289,13 +298,16 @@ export class BulletinDocumentService implements OnModuleDestroy {
     const logo = model.school.logoUrl
       ? `<img src="${this.escapeAttribute(model.school.logoUrl)}" alt="Logo ${this.escapeHtml(model.school.name)}">`
       : `<span>${this.escapeHtml(model.school.name.slice(0, 1).toUpperCase() || 'N')}</span>`;
+    const stamp = model.school.cachetUrl
+      ? `<img class="director-stamp" src="${this.escapeAttribute(model.school.cachetUrl)}" alt="Cachet du directeur">`
+      : '';
     const rows = model.rows.length
       ? model.rows.map((row) => `<tr>
           <td class="subject">${this.escapeHtml(row.label)}</td><td>${row.devoir1}</td><td>${row.devoir2}</td><td>${row.devoir3}</td><td>${row.composition}</td>
           <td class="average">${row.moyenne === null ? '—' : `${this.formatNumber(row.moyenne)}/20`}</td><td>${this.formatNumber(row.coefficient)}</td>
           <td class="total">${row.total === null ? '—' : this.formatNumber(row.total)}</td><td class="teacher">${this.escapeHtml(row.enseignant)}</td>
         </tr>`).join('')
-      : `<tr><td colspan="8" class="empty">Aucune note saisie pour cette période.</td></tr>`;
+      : `<tr><td colspan="9" class="empty">Aucune note saisie pour cette période.</td></tr>`;
     const contact = [model.school.address, model.school.city, model.school.phone && `Tél. ${model.school.phone}`, model.school.email && `Email: ${model.school.email}`]
       .filter(Boolean).map((value) => this.escapeHtml(value)).join(' · ');
 
@@ -310,16 +322,15 @@ export class BulletinDocumentService implements OnModuleDestroy {
       .rule { height:1px; margin:4mm 0; background:var(--primary); }
       .overview { display:grid; grid-template-columns:1fr 1fr; gap:5mm; margin-bottom:4mm; } .card { min-height:35mm; padding:4mm 5mm; border-radius:2mm; background:#f8f9fb; } .card.results { background:color-mix(in srgb, var(--primary) 9%, white); } h2 { margin:0 0 3mm; font-size:11px; } .card p { margin:0 0 1.6mm; } .card strong { font-weight:700; } .green { color:var(--primary); font-weight:800; }
       .notes-title { font-size:11px; margin:0 0 2mm; } table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:8.2px; } th,td { border:1px solid #9aa2ac; padding:2.1mm 1.3mm; text-align:center; vertical-align:middle; word-wrap:break-word; } th { background:#f0f2f5; font-weight:700; } td.subject, td.teacher { text-align:left; } td.subject { font-weight:700; } td.average { color:var(--primary); font-weight:800; } td.total { font-weight:800; } .empty { padding:6mm; color:#667085; }
-      tfoot td { background:color-mix(in srgb, var(--primary) 8%, #e7e9ed); font-weight:800; } .after-table { display:grid; grid-template-columns:1fr 1fr; gap:7mm; margin-top:4mm; } .appreciation { min-height:24mm; padding:4mm 5mm; background:color-mix(in srgb, var(--primary) 7%, white); border-radius:2mm; } .appreciation h2 { margin-bottom:2mm; } .appreciation p { margin:0; font-style:italic; color:#475467; } .signatures { padding:1mm 0; } .signature { min-height:11mm; text-align:center; padding-top:1mm; border-bottom:1px solid #c9ced5; } .signature + .signature { margin-top:3mm; } .signature strong { display:block; margin-bottom:4mm; }
+      tfoot td { background:color-mix(in srgb, var(--primary) 8%, #e7e9ed); font-weight:800; } .after-table { display:grid; grid-template-columns:1fr 1fr; gap:7mm; margin-top:4mm; } .appreciation { min-height:24mm; padding:4mm 5mm; background:color-mix(in srgb, var(--primary) 7%, white); border-radius:2mm; } .appreciation h2 { margin-bottom:2mm; } .appreciation p { margin:0; font-style:italic; color:#475467; } .signatures { padding:1mm 0; } .signature { min-height:11mm; text-align:center; padding-top:1mm; border-bottom:1px solid #c9ced5; } .signature + .signature { margin-top:3mm; } .signature strong { display:block; margin-bottom:4mm; } .director-stamp { display:block; width:30mm; max-height:18mm; margin:0 auto 3mm; object-fit:contain; }
       .footer { margin-top:4mm; padding-top:3mm; border-top:1px solid #d7dbe0; text-align:center; color:#5b6573; font-size:7.8px; line-height:1.35; } .footer small { display:block; }
-      @media print { .page { page-break-after:avoid; } }
     </style></head><body><main class="page">
       <header class="brand"><div class="brand-left"><div class="school-logo">${logo}</div><div><h1>${this.escapeHtml(model.school.name)}</h1>${model.school.slogan ? `<p class="slogan">${this.escapeHtml(model.school.slogan)}</p>` : ''}<p class="contact">${contact}</p></div></div>
       ${isMauritania ? `<div class="republic"><strong lang="ar">شرف إخاء عدل</strong><span>Honneur, Fraternité, Justice</span><small>République Islamique de Mauritanie</small></div>` : `<div class="republic"><strong>Bulletin scolaire</strong><span>${this.escapeHtml(model.bulletin.period)}</span><small>${this.escapeHtml(model.bulletin.year)}</small></div>`}</header>
       <div class="rule"></div><section class="overview"><div class="card"><h2>Informations de l'élève</h2><p><strong>Nom complet:</strong> ${this.escapeHtml(model.student.name)}</p>${model.student.matricule ? `<p><strong>Matricule:</strong> ${this.escapeHtml(model.student.matricule)}</p>` : ''}<p><strong>Classe:</strong> ${this.escapeHtml(model.student.classe)}</p><p><strong>Année scolaire:</strong> ${this.escapeHtml(model.bulletin.year)}</p><p><strong>Trimestre:</strong> ${this.escapeHtml(model.bulletin.period)}</p>${model.student.birthDate ? `<p><strong>Date de naissance:</strong> ${this.escapeHtml(model.student.birthDate)}</p>` : ''}${model.student.birthPlace ? `<p><strong>Lieu de naissance:</strong> ${this.escapeHtml(model.student.birthPlace)}</p>` : ''}</div>
       <div class="card results"><h2>Résultats généraux</h2><p><strong>Moyenne générale:</strong> <span class="green">${model.bulletin.average === null ? '—' : `${this.formatNumber(model.bulletin.average)}/20`}</span></p>${model.bulletin.classAverage !== null ? `<p><strong>Moyenne de la classe:</strong> ${this.formatNumber(model.bulletin.classAverage)}/20</p>` : ''}${model.bulletin.rank !== null ? `<p><strong>Rang:</strong> ${model.bulletin.rank}${model.bulletin.totalStudents ? ` sur ${model.bulletin.totalStudents} élèves` : ''}</p>` : ''}<p><strong>Date d'émission:</strong> ${model.bulletin.issueDate}</p><p><strong>École:</strong> ${this.escapeHtml(model.school.name)}${model.school.city ? ` - ${this.escapeHtml(model.school.city)}` : ''}</p></div></section>
       <section><h2 class="notes-title">Détail des notes par matière</h2><table><colgroup><col style="width:15%"><col style="width:8.5%"><col style="width:8.5%"><col style="width:8.5%"><col style="width:11%"><col style="width:10%"><col style="width:9%"><col style="width:8%"><col style="width:21.5%"></colgroup><thead><tr><th>Matière</th><th>Devoir 1</th><th>Devoir 2</th><th>Devoir 3</th><th>Composition</th><th>Moyenne</th><th>Coefficient</th><th>Total</th><th>Enseignant</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td class="subject">TOTAL GÉNÉRAL</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="average">${model.bulletin.average === null ? '—' : `${this.formatNumber(model.bulletin.average)}/20`}</td><td>${this.formatNumber(model.totalCoefficient)}</td><td class="total">${this.formatNumber(model.weightedTotal)}</td><td>—</td></tr></tfoot></table></section>
-      <section class="after-table"><div class="appreciation"><h2>Appréciation générale</h2><p>"${this.escapeHtml(model.bulletin.appreciation)}"</p></div><div class="signatures"><div class="signature"><strong>Le Directeur</strong><span>${this.escapeHtml(model.bulletin.director)}</span></div><div class="signature"><strong>Signature des parents</strong></div></div></section>
+      <section class="after-table"><div class="appreciation"><h2>Appréciation générale</h2><p>"${this.escapeHtml(model.bulletin.appreciation)}"</p></div><div class="signatures"><div class="signature"><strong>Le Directeur</strong>${stamp}<span>${this.escapeHtml(model.bulletin.director)}</span></div><div class="signature"><strong>Signature des parents</strong></div></div></section>
       <footer class="footer"><div>${this.escapeHtml(model.school.name)}${contact ? ` - ${contact}` : ''}</div><small>Bulletin édité le ${model.bulletin.issueDate} · Référence ${model.bulletin.reference}</small></footer>
     </main></body></html>`;
   }
@@ -341,6 +352,24 @@ export class BulletinDocumentService implements OnModuleDestroy {
   }
 
   private formatDate(date: Date): string { return new Intl.DateTimeFormat('fr-FR').format(date); }
+  private formatNumber(value: number): string { return Number(value.toFixed(2)).toFixed(2).replace('.', ','); }
+  private round(value: number): number { return Math.round(value * 100) / 100; }
+  private slug(value: string): string { return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/gi, '-').replace(/(^-|-$)/g, '').toLowerCase() || 'document'; }
+  private escapeHtml(value: string): string { return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;'); }
+  private escapeAttribute(value: string): string { return this.escapeHtml(value); }
+
+  private bulletinPrimaryColor(value?: string | null): string {
+    const normalized = String(value ?? '').trim();
+    if (!normalized) return '#148343';
+    const match = normalized.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (!match) return '#148343';
+    if (match[1].length === 3) {
+      const [r, g, b] = match[1].split('').map((char) => char + char).join('');
+      return `#${r}${g}${b}`;
+    }
+    return normalized.toLowerCase();
+  }
+
   private async embedSchoolLogo(storedLogo: string | null | undefined): Promise<string | null> {
     const key = this.storageKey(storedLogo);
     if (!key) return null;
@@ -378,12 +407,4 @@ export class BulletinDocumentService implements OnModuleDestroy {
     if (buffer.subarray(0, 256).toString('utf8').trimStart().includes('<svg')) return 'image/svg+xml';
     return 'image/png';
   }
-  private bulletinPrimaryColor(value: string | null | undefined): string {
-    return /^#[0-9a-f]{6}$/i.test(value ?? '') ? value! : '#03a9f3';
-  }
-  private formatNumber(value: number): string { return Number(value.toFixed(2)).toFixed(2).replace('.', ','); }
-  private round(value: number): number { return Math.round(value * 100) / 100; }
-  private slug(value: string): string { return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/gi, '-').replace(/(^-|-$)/g, '').toLowerCase() || 'document'; }
-  private escapeHtml(value: string): string { return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;'); }
-  private escapeAttribute(value: string): string { return this.escapeHtml(value); }
 }

@@ -5,6 +5,8 @@ import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 import { buildPageResult, PageResult, PaginationQueryDto } from '@/shared/dto/pagination-query.dto';
 import { Prisma, StatutBulletin } from '@prisma/client';
 import { PushNotificationService } from '@/modules/push-notification.service';
+import { BulletinDocumentService } from '@/modules/bulletin-document.service';
+import { StorageService } from '@/infrastructure/storage/storage.service';
 
 export interface CreateBulletinDto {
   eleveId: string;
@@ -37,6 +39,8 @@ export class BulletinService {
     private readonly mailService: MailService,
     private readonly whatsapp: WhatsappService,
     private readonly pushNotifications: PushNotificationService,
+    private readonly bulletinDocument: BulletinDocumentService,
+    private readonly storage: StorageService,
   ) {}
 
   async create(tenantId: string, dto: CreateBulletinDto, soumisPar?: string): Promise<unknown> {
@@ -207,6 +211,31 @@ export class BulletinService {
     return this.prisma.bulletin.findUnique({ where: { id } });
   }
 
+  async publierParClasse(
+    tenantId: string,
+    classeId: string,
+    validePar: string,
+    trimestre?: string,
+    anneeScolaire?: string,
+  ): Promise<{ classeId: string; trimestre: string; anneeScolaire: string; total: number; bulletins: unknown[] }> {
+    return this.publierPlusieurs(
+      tenantId,
+      {
+        portee: 'CLASSE',
+        classeId,
+        trimestre: trimestre ?? '',
+        anneeScolaire: anneeScolaire ?? '',
+      },
+      validePar,
+    ).then((result) => ({
+      classeId,
+      trimestre: trimestre ?? '',
+      anneeScolaire: anneeScolaire ?? '',
+      total: result.publishedCount,
+      bulletins: [],
+    }));
+  }
+
   async publierPlusieurs(
     tenantId: string,
     dto: PublishBulletinsDto,
@@ -262,50 +291,60 @@ export class BulletinService {
     bulletin: { id: string; eleveId: string; trimestre: string },
   ): Promise<void> {
     const eleve = await this.prisma.user.findUnique({ where: { id: bulletin.eleveId } });
-    if (eleve) {
-      const nomEleve = `${eleve.firstName} ${eleve.lastName}`;
-      const trimestre = (bulletin.trimestre ?? '').replace(/_/g, ' ');
-      const parents = await this.prisma.eleveParent.findMany({
-        where: { eleveId: eleve.id },
-        include: { parent: { select: { id: true, email: true, firstName: true, telephone: true } } },
-      });
-      const notificationTitle = 'Bulletin publié';
-      const notificationBody = `Votre bulletin du ${trimestre} est disponible.`;
-      const destinataires = [eleve.id, ...parents.map(({ parent }) => parent.id)];
-      await this.prisma.notification.createMany({
-        data: destinataires.map((destinataireId) => ({
-          tenantId,
-          destinataireId,
-          titre: notificationTitle,
-          contenu: notificationBody,
-          lu: false,
-        })),
-      });
-      await this.pushNotifications.sendToUsers(tenantId, destinataires, {
-        title: notificationTitle,
-        body: notificationBody,
-      });
-      for (const { parent } of parents) {
-        if (parent.email) {
-          this.mailService.sendBulletinDisponible(parent.email, nomEleve, bulletin.trimestre);
-        }
-        if (parent.telephone) {
-          const msg = `📋 *Bulletin disponible*\nBonjour ${parent.firstName ?? ''},\nLe bulletin de *${nomEleve}* pour le *${trimestre}* est maintenant disponible. Connectez-vous pour le consulter.`;
-          this.whatsapp.sendMessage(tenantId, parent.telephone, msg).catch((e) =>
-            this.logger.warn(`WhatsApp bulletin parent ${parent.telephone}: ${e?.message}`),
-          );
-        }
+    if (!eleve) return;
+
+    const generated = await this.bulletinDocument.generate(tenantId, bulletin.id);
+    const key = this.storage.buildBulletinKey(tenantId, bulletin.eleveId, bulletin.trimestre);
+    const fichierPdfUrl = await this.storage.upload(key, generated.buffer, 'application/pdf').catch(() => null);
+    if (fichierPdfUrl) {
+      await this.prisma.bulletin.update({ where: { id: bulletin.id }, data: { fichierPdfUrl } }).catch(() => undefined);
+    }
+
+    const nomEleve = `${eleve.firstName} ${eleve.lastName}`;
+    const trimestre = (bulletin.trimestre ?? '').replace(/_/g, ' ');
+    const parents = await this.prisma.eleveParent.findMany({
+      where: { eleveId: eleve.id },
+      include: { parent: { select: { id: true, email: true, firstName: true, telephone: true } } },
+    });
+    const notificationTitle = 'Bulletin publié';
+    const notificationBody = `Votre bulletin du ${trimestre} est disponible.`;
+    const destinataires = [eleve.id, ...parents.map(({ parent }) => parent.id)];
+    await this.prisma.notification.createMany({
+      data: destinataires.map((destinataireId) => ({
+        tenantId,
+        destinataireId,
+        titre: notificationTitle,
+        contenu: notificationBody,
+        lu: false,
+      })),
+    });
+    await this.pushNotifications.sendToUsers(tenantId, destinataires, {
+      title: notificationTitle,
+      body: notificationBody,
+    });
+    for (const { parent } of parents) {
+      if (parent.email) {
+        this.mailService.sendBulletinDisponible(parent.email, nomEleve, bulletin.trimestre);
       }
-      // Notify the student if they have a phone
-      const eleveFull = await this.prisma.user.findUnique({ where: { id: eleve.id }, select: { telephone: true } });
-      if (eleveFull?.telephone) {
-        const msg = `📋 *Ton bulletin est disponible*\nBonjour ${eleve.firstName ?? ''},\nTon bulletin de *${trimestre}* est disponible. Connecte-toi pour le consulter.`;
-        this.whatsapp.sendMessage(tenantId, eleveFull.telephone, msg).catch((e) =>
-          this.logger.warn(`WhatsApp bulletin élève ${eleveFull.telephone}: ${e?.message}`),
+      if (parent.telephone) {
+        const caption = `Bulletin du ${trimestre} publié pour ${nomEleve}.`;
+        this.whatsapp.sendDocument(tenantId, parent.telephone, {
+          filename: generated.filename,
+          mimeType: 'application/pdf',
+          data: generated.buffer,
+          caption,
+        }).catch((e) =>
+          this.logger.warn(`WhatsApp bulletin parent ${parent.telephone}: ${e?.message}`),
         );
       }
     }
-
+    const eleveFull = await this.prisma.user.findUnique({ where: { id: eleve.id }, select: { telephone: true } });
+    if (eleveFull?.telephone) {
+      const msg = `📋 *Ton bulletin est disponible*\nBonjour ${eleve.firstName ?? ''},\nTon bulletin de *${trimestre}* est disponible. Connecte-toi pour le consulter.`;
+      this.whatsapp.sendMessage(tenantId, eleveFull.telephone, msg).catch((e) =>
+        this.logger.warn(`WhatsApp bulletin élève ${eleveFull.telephone}: ${e?.message}`),
+      );
+    }
   }
 
   async genererDuplicata(tenantId: string, id: string, demandePar: string): Promise<unknown> {
@@ -318,7 +357,6 @@ export class BulletinService {
     });
     if (!bulletin) throw new NotFoundException('Bulletin introuvable');
     this.logger.log(`Duplicata demandé pour bulletin ${id} par ${demandePar}`);
-    // Return the bulletin with a duplicata flag for the frontend to generate a new PDF
     return { ...bulletin, isDuplicata: true, duplicataDate: new Date(), duplicataDemandePar: demandePar };
   }
 

@@ -304,6 +304,23 @@ export class AdminController {
     );
   }
 
+  @Post('bulletins/classes/:classeId/publier')
+  publierBulletinsParClasse(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('classeId') classeId: string,
+    @Query('trimestre') trimestre?: string,
+    @Query('anneeScolaire') anneeScolaire?: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.bulletinService.publierParClasse(
+      tenantId!,
+      classeId,
+      user?.sub ?? 'admin',
+      trimestre,
+      anneeScolaire,
+    );
+  }
+
   @Post('bulletins/:id/valider')
   validerBulletin(
     @Headers('x-tenant-id') tenantId: string | undefined,

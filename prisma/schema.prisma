@@ -273,6 +273,8 @@ model EcoleConfig {
   typeEtablissement String   @default("PRIVE") @db.VarChar(20)
   logoUrl           String?
   logoS3Key         String?
+  cachetUrl         String?
+  cachetS3Key       String?
   montantHoraireDefaut Float?
   // Apparence
   themeColor        String   @default("blue") @db.VarChar(20)
