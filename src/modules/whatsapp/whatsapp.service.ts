@@ -20,6 +20,12 @@ import { RedisRemoteAuthTenantStore } from './redis-remote-auth-tenant.store';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let WWebClient: any, WWebRemoteAuth: any, WWebMessageMedia: any, QRCodeLib: any, PuppeteerLib: any;
 
+function loadQRCodeDep(): void {
+  if (QRCodeLib) return;
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  QRCodeLib = require('qrcode');
+}
+
 function loadWWebDeps(): void {
   if (WWebClient) return;
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -27,8 +33,7 @@ function loadWWebDeps(): void {
   WWebClient = wweb.Client;
   WWebRemoteAuth = wweb.RemoteAuth;
   WWebMessageMedia = wweb.MessageMedia;
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  QRCodeLib = require('qrcode');
+  loadQRCodeDep();
 }
 
 function loadPuppeteerDep(): any {
@@ -60,6 +65,14 @@ export interface WhatsappFeaturesResponse {
 export interface WhatsappQrResponse {
   qrCode: string;
   expiresInSeconds: number;
+}
+
+export interface WhatsappPairingCodeResponse {
+  sessionId?: string;
+  phoneNumber: string;
+  code: string;
+  expiresAt?: string;
+  expiresInSeconds?: number;
 }
 
 export interface WhatsappQueueResponse {
@@ -156,6 +169,62 @@ interface TenantWaState {
   qrRequestExpiresAt: number | null;
 }
 
+interface RelayioSessionBinding {
+  sessionId: string;
+  phoneNumber: string | null;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface RelayioSession {
+  id: string;
+  tenantId?: string;
+  name?: string;
+  phoneNumber?: string;
+  status?: string;
+  clientId?: string;
+  lastReadyAt?: string | Date;
+  lastDisconnectedAt?: string | Date;
+  failureReason?: string;
+  createdAt?: string | Date;
+  updatedAt?: string | Date;
+}
+
+interface RelayioStatusPayload {
+  sessionId: string;
+  status?: string;
+  activeInWorker?: boolean;
+  checkedAt?: string | Date;
+}
+
+interface RelayioQrPayload {
+  sessionId: string;
+  qr?: string | {
+    value?: string;
+    imageDataUrl?: string;
+    expiresAt?: string | Date;
+  } | null;
+}
+
+interface RelayioPairingCodePayload {
+  sessionId?: string;
+  phoneNumber?: string;
+  code?: string;
+  expiresAt?: string | Date;
+}
+
+interface RelayioMessagePayload {
+  id?: string;
+  status?: string;
+  createdAt?: string | Date;
+  updatedAt?: string | Date;
+}
+
+interface RelayioMediaUploadPayload {
+  id: string;
+}
+
 const QR_TTL_SECONDS = 120;
 const QR_TTL_MS = QR_TTL_SECONDS * 1000;
 const QR_MAX_RETRIES_REACHED = 'Max qrcode retries reached';
@@ -193,6 +262,7 @@ const WA_HISTORY_PREFIX = 'wa:history:';
 const WA_FLUSH_LOCK_PREFIX = 'wa:lock:flush:';
 const WA_OTP_PREFIX = 'wa:otp:';
 const WA_ACTIVE_TENANTS_KEY = 'wa:tenants:active';
+const WA_RELAYIO_SESSION_PREFIX = 'wa:relayio:session:';
 
 @Injectable()
 export class WhatsappService implements OnApplicationBootstrap, OnApplicationShutdown {
@@ -213,6 +283,11 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    if (this.useRelayioProvider()) {
+      this.logger.log('Provider WhatsApp Relayio actif : les sessions et envois passent par l API Relayio.');
+      return;
+    }
+
     if (!this.isClientWorkerEnabled()) {
       this.logger.log('Worker WhatsApp désactivé pour cette instance API : les messages restent en file Redis.');
       return;
@@ -280,6 +355,10 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
   }
 
   async getStatus(tenantId: string): Promise<WhatsappStatusResponse> {
+    if (this.useRelayioProvider()) {
+      return this.getRelayioStatus(tenantId);
+    }
+
     await this.assertTenantExists(tenantId);
     await this.ensureRedisTenantState(tenantId);
 
@@ -302,6 +381,10 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
   }
 
   async getQrCode(tenantId: string): Promise<WhatsappQrResponse> {
+    if (this.useRelayioProvider()) {
+      return this.getRelayioQrCode(tenantId);
+    }
+
     await this.assertTenantExists(tenantId);
 
     const state = this.getOrCreateState(tenantId);
@@ -331,7 +414,18 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     return { qrCode: dataUrl, expiresInSeconds: QR_TTL_SECONDS };
   }
 
+  async requestPairingCode(tenantId: string, phoneNumber?: string): Promise<WhatsappPairingCodeResponse> {
+    if (!this.useRelayioProvider()) {
+      throw new ServiceUnavailableException('Le pairing code est disponible avec le provider WhatsApp Relayio.');
+    }
+    return this.requestRelayioPairingCode(tenantId, phoneNumber);
+  }
+
   async logout(tenantId: string): Promise<void> {
+    if (this.useRelayioProvider()) {
+      return this.logoutRelayio(tenantId);
+    }
+
     await this.assertTenantExists(tenantId);
     const state = this.states.get(tenantId);
     if (state) {
@@ -379,6 +473,10 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
   }
 
   async sendMessage(tenantId: string, phone: string, message: string): Promise<WhatsappQueueResponse> {
+    if (this.useRelayioProvider()) {
+      return this.sendRelayioTextMessage(tenantId, phone, message);
+    }
+
     await this.assertTenantExists(tenantId);
 
     const normalizedPhone = this.normalizePhone(phone);
@@ -422,6 +520,10 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       caption?: string;
     },
   ): Promise<WhatsappQueueResponse> {
+    if (this.useRelayioProvider()) {
+      return this.sendRelayioDocument(tenantId, phone, document);
+    }
+
     await this.assertTenantExists(tenantId);
 
     const normalizedPhone = this.normalizePhone(phone);
@@ -503,6 +605,10 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
   }
 
   async broadcastToRoles(tenantId: string, message: string, roles: string[]): Promise<void> {
+    if (this.useRelayioProvider()) {
+      return this.broadcastRelayioToRoles(tenantId, message, roles);
+    }
+
     const users = await this.prisma.user.findMany({
       where: { tenantId, role: { in: roles as any }, actif: true, telephone: { not: null } },
       select: { telephone: true },
@@ -609,7 +715,675 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
   }
 
   isReady(tenantId: string): boolean {
+    if (this.useRelayioProvider()) return false;
     return this.states.get(tenantId)?.ready ?? false;
+  }
+
+  private async getRelayioStatus(tenantId: string): Promise<WhatsappStatusResponse> {
+    await this.assertTenantExists(tenantId);
+    const [features, binding] = await Promise.all([
+      this.getFeatures(tenantId),
+      this.resolveRelayioSession(tenantId, false),
+    ]);
+
+    if (!binding) {
+      return {
+        connected: false,
+        initializing: false,
+        hasSession: false,
+        reconnectAttempts: 0,
+        features,
+      };
+    }
+
+    const [health, session] = await Promise.all([
+      this.relayioRequest<RelayioStatusPayload>(`/v1/sessions/${binding.sessionId}/status`, {
+        allowNotFound: true,
+      }),
+      this.relayioRequest<RelayioSession>(`/v1/sessions/${binding.sessionId}`, {
+        allowNotFound: true,
+      }),
+    ]);
+
+    if (!health && !session) {
+      await this.clearRelayioSessionBinding(tenantId);
+      return {
+        connected: false,
+        initializing: false,
+        hasSession: false,
+        reconnectAttempts: 0,
+        lastError: 'Session Relayio introuvable',
+        features,
+      };
+    }
+
+    const status = String(health?.status ?? session?.status ?? '').toUpperCase();
+    const connected = status === 'READY';
+    const initializing = ['CREATED', 'STARTING', 'QR_PENDING', 'PAIRING_PENDING', 'AUTHENTICATED', 'RECONNECTING'].includes(status);
+    const disconnected = ['FAILED', 'DISCONNECTED', 'LOGGED_OUT', 'STOPPED'].includes(status);
+
+    return {
+      connected,
+      initializing,
+      hasSession: true,
+      reconnectAttempts: status === 'RECONNECTING' ? 1 : 0,
+      lastError: disconnected ? (session?.failureReason ?? status) : undefined,
+      phoneNumber: session?.phoneNumber ?? binding.phoneNumber ?? undefined,
+      displayName: session?.name ?? binding.name,
+      connectedAt: this.toIsoString(session?.lastReadyAt),
+      features,
+    };
+  }
+
+  private async getRelayioQrCode(tenantId: string): Promise<WhatsappQrResponse> {
+    let binding = await this.resolveRelayioSession(tenantId, true);
+    if (!binding) {
+      throw new ServiceUnavailableException('Session Relayio indisponible');
+    }
+
+    const currentStatus = await this.relayioRequest<RelayioStatusPayload>(`/v1/sessions/${binding.sessionId}/status`, {
+      allowNotFound: true,
+    });
+
+    if (!currentStatus) {
+      await this.clearRelayioSessionBinding(tenantId);
+      binding = await this.resolveRelayioSession(tenantId, true);
+      if (!binding) {
+        throw new ServiceUnavailableException('Session Relayio indisponible');
+      }
+    } else if (String(currentStatus.status ?? '').toUpperCase() === 'READY') {
+      throw new ServiceUnavailableException('WhatsApp déjà connecté — déconnectez avant de rescanner');
+    }
+
+    await this.relayioRequest<RelayioSession>(`/v1/sessions/${binding.sessionId}/start`, {
+      method: 'POST',
+    });
+
+    const attempts = Math.max(1, Number(this.readConfig('RELAYIO_QR_POLL_ATTEMPTS', 'WHATSAPP_RELAYIO_QR_POLL_ATTEMPTS') ?? 10));
+    const delayMs = Math.max(250, Number(this.readConfig('RELAYIO_QR_POLL_INTERVAL_MS', 'WHATSAPP_RELAYIO_QR_POLL_INTERVAL_MS') ?? 1_000));
+
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const payload = await this.relayioRequest<RelayioQrPayload>(`/v1/sessions/${binding.sessionId}/qr`, {
+        allowNotFound: true,
+      });
+      const qrCode = payload ? await this.extractRelayioQrDataUrl(payload) : null;
+      if (payload && qrCode) {
+        return {
+          qrCode,
+          expiresInSeconds: this.resolveRelayioQrTtl(payload, QR_TTL_SECONDS),
+        };
+      }
+
+      const status = await this.relayioRequest<RelayioStatusPayload>(`/v1/sessions/${binding.sessionId}/status`, {
+        allowNotFound: true,
+      });
+      if (String(status?.status ?? '').toUpperCase() === 'READY') {
+        throw new ServiceUnavailableException('WhatsApp déjà connecté — déconnectez avant de rescanner');
+      }
+
+      if (attempt < attempts - 1) {
+        await this.sleep(delayMs);
+      }
+    }
+
+    throw new ServiceUnavailableException('QR code Relayio indisponible — réessayez dans quelques secondes');
+  }
+
+  private async requestRelayioPairingCode(
+    tenantId: string,
+    phoneNumber?: string,
+  ): Promise<WhatsappPairingCodeResponse> {
+    const binding = await this.resolveRelayioSession(tenantId, true);
+    if (!binding) {
+      throw new ServiceUnavailableException('Session Relayio indisponible');
+    }
+
+    await this.relayioRequest<RelayioSession>(`/v1/sessions/${binding.sessionId}/start`, {
+      method: 'POST',
+    });
+
+    const targetPhone = this.normalizeRelayioPlainPhone(phoneNumber)
+      ?? binding.phoneNumber
+      ?? await this.resolveRelayioPhoneNumber(tenantId);
+    if (!targetPhone) {
+      throw new BadRequestException('Numéro WhatsApp requis pour générer un code pairing');
+    }
+
+    const payload = await this.relayioRequest<RelayioPairingCodePayload>(`/v1/sessions/${binding.sessionId}/pairing-code`, {
+      method: 'POST',
+      body: { phoneNumber: targetPhone },
+    });
+    const code = String(payload?.code ?? '').trim();
+    if (!code) {
+      throw new ServiceUnavailableException('Code pairing Relayio indisponible');
+    }
+
+    const expiresAt = this.toIsoString(payload?.expiresAt);
+    return {
+      sessionId: payload?.sessionId ?? binding.sessionId,
+      phoneNumber: payload?.phoneNumber ?? targetPhone,
+      code,
+      expiresAt,
+      expiresInSeconds: expiresAt ? this.secondsUntil(expiresAt, 300) : 300,
+    };
+  }
+
+  private async logoutRelayio(tenantId: string): Promise<void> {
+    await this.assertTenantExists(tenantId);
+    const binding = await this.resolveRelayioSession(tenantId, false);
+    if (!binding) return;
+
+    await this.relayioRequest<RelayioSession>(`/v1/sessions/${binding.sessionId}/logout`, {
+      method: 'POST',
+      allowNotFound: true,
+    });
+
+    if (!this.getRelayioConfiguredSessionId()) {
+      await this.clearRelayioSessionBinding(tenantId);
+    }
+    this.logger.log(`WhatsApp Relayio déconnecté (tenant=${tenantId}, session=${binding.sessionId})`);
+  }
+
+  private async sendRelayioTextMessage(
+    tenantId: string,
+    phone: string,
+    message: string,
+  ): Promise<WhatsappQueueResponse> {
+    await this.assertTenantExists(tenantId);
+
+    const normalizedPhone = this.normalizePhone(phone);
+    const content = String(message ?? '').trim();
+    if (!content) {
+      throw new BadRequestException('Message WhatsApp vide');
+    }
+
+    const localMessageId = randomUUID();
+    try {
+      const binding = await this.resolveRelayioSession(tenantId, true);
+      if (!binding) {
+        throw new ServiceUnavailableException('Session Relayio indisponible');
+      }
+
+      const response = await this.relayioRequest<RelayioMessagePayload>(`/v1/sessions/${binding.sessionId}/messages/text`, {
+        method: 'POST',
+        body: {
+          chatId: normalizedPhone,
+          body: content,
+        },
+      });
+      const messageId = await this.saveRelayioMessageResult({
+        localMessageId,
+        tenantId,
+        phone: normalizedPhone,
+        kind: 'text',
+        message: content,
+        response,
+      });
+
+      this.logger.log(`Message WhatsApp Relayio accepté → ${normalizedPhone} (tenant=${tenantId}, message=${messageId})`);
+      return { queued: true, messageId };
+    } catch (error) {
+      await this.saveRelayioFailureRecord(localMessageId, tenantId, normalizedPhone, 'text', content, null, error);
+      throw error;
+    }
+  }
+
+  private async sendRelayioDocument(
+    tenantId: string,
+    phone: string,
+    document: {
+      filename: string;
+      mimeType: string;
+      data: Buffer;
+      caption?: string;
+    },
+  ): Promise<WhatsappQueueResponse> {
+    await this.assertTenantExists(tenantId);
+
+    const normalizedPhone = this.normalizePhone(phone);
+    const filename = String(document?.filename ?? '').trim();
+    const mimeType = String(document?.mimeType ?? '').trim();
+    const data = Buffer.isBuffer(document?.data) ? document.data : Buffer.from(document?.data ?? []);
+    const caption = String(document?.caption ?? '').trim();
+
+    if (!filename || !mimeType || !data.length) {
+      throw new BadRequestException('Document WhatsApp invalide');
+    }
+
+    const localMessageId = randomUUID();
+    const recordDocument = { filename, mimeType, dataBase64: '' };
+    try {
+      const binding = await this.resolveRelayioSession(tenantId, true);
+      if (!binding) {
+        throw new ServiceUnavailableException('Session Relayio indisponible');
+      }
+
+      const media = await this.uploadRelayioDocument(binding.sessionId, filename, mimeType, data);
+      const response = await this.relayioRequest<RelayioMessagePayload>(`/v1/sessions/${binding.sessionId}/messages/media`, {
+        method: 'POST',
+        body: {
+          chatId: normalizedPhone,
+          mediaId: media.id,
+          caption: caption || undefined,
+        },
+      });
+      const messageId = await this.saveRelayioMessageResult({
+        localMessageId,
+        tenantId,
+        phone: normalizedPhone,
+        kind: 'document',
+        message: caption,
+        document: recordDocument,
+        response,
+      });
+
+      this.logger.log(`Document WhatsApp Relayio accepté → ${normalizedPhone} (tenant=${tenantId}, message=${messageId})`);
+      return { queued: true, messageId };
+    } catch (error) {
+      await this.saveRelayioFailureRecord(localMessageId, tenantId, normalizedPhone, 'document', caption, recordDocument, error);
+      throw error;
+    }
+  }
+
+  private async broadcastRelayioToRoles(tenantId: string, message: string, roles: string[]): Promise<void> {
+    await this.assertTenantExists(tenantId);
+    const content = String(message ?? '').trim();
+    if (!content) return;
+
+    const users = await this.prisma.user.findMany({
+      where: { tenantId, role: { in: roles as any }, actif: true, telephone: { not: null } },
+      select: { telephone: true },
+    });
+
+    const phones = [...new Set(users.map((u) => u.telephone!).filter(Boolean))];
+    this.logger.log(`[WA Relayio Broadcast] tenant=${tenantId} roles=${roles.join(',')} destinataires=${phones.length}`);
+
+    const concurrency = Math.max(1, Number(this.readConfig('RELAYIO_BROADCAST_CONCURRENCY', 'WHATSAPP_RELAYIO_BROADCAST_CONCURRENCY') ?? 5));
+    for (let index = 0; index < phones.length; index += concurrency) {
+      const batch = phones.slice(index, index + concurrency);
+      const results = await Promise.allSettled(batch.map((phone) => this.sendRelayioTextMessage(tenantId, phone, content)));
+      results.forEach((result, offset) => {
+        if (result.status === 'rejected') {
+          this.logger.warn(`[WA Relayio Broadcast] phone ignoré ${batch[offset]}: ${this.errorMessage(result.reason)}`);
+        }
+      });
+    }
+  }
+
+  private async uploadRelayioDocument(
+    sessionId: string,
+    filename: string,
+    mimeType: string,
+    data: Buffer,
+  ): Promise<RelayioMediaUploadPayload> {
+    const formData = new FormData();
+    formData.append('file', new Blob([new Uint8Array(data)], { type: mimeType }), filename);
+    const media = await this.relayioRequest<RelayioMediaUploadPayload>(`/v1/sessions/${sessionId}/media`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!media?.id) {
+      throw new ServiceUnavailableException('Upload média Relayio invalide');
+    }
+    return media;
+  }
+
+  private async resolveRelayioSession(
+    tenantId: string,
+    createIfMissing: boolean,
+  ): Promise<RelayioSessionBinding | null> {
+    const configuredSessionId = this.getRelayioConfiguredSessionId();
+    if (configuredSessionId) {
+      const binding: RelayioSessionBinding = {
+        sessionId: configuredSessionId,
+        phoneNumber: this.normalizeRelayioPlainPhone(this.readConfig('RELAYIO_PHONE_NUMBER', 'WHATSAPP_RELAYIO_PHONE_NUMBER')) ?? null,
+        name: this.readConfig('RELAYIO_SESSION_NAME', 'WHATSAPP_RELAYIO_SESSION_NAME') ?? 'Relayio WhatsApp',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      await this.redis.setJson(this.getRelayioSessionBindingKey(tenantId), binding);
+      return binding;
+    }
+
+    const stored = await this.redis.getJson<RelayioSessionBinding>(this.getRelayioSessionBindingKey(tenantId));
+    if (stored?.sessionId) return stored;
+    if (!createIfMissing) return null;
+
+    return this.createRelayioSession(tenantId);
+  }
+
+  private async createRelayioSession(tenantId: string): Promise<RelayioSessionBinding> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true, nom: true, telephone: true },
+    });
+    if (!tenant) throw new NotFoundException('Tenant introuvable');
+
+    const phoneNumber = await this.resolveRelayioPhoneNumber(tenantId, tenant.telephone);
+    const name = this.resolveRelayioSessionName(tenant.nom);
+    const body: Record<string, string> = {
+      name,
+      authType: this.getRelayioSessionAuthType(),
+    };
+    if (phoneNumber) body.phoneNumber = phoneNumber;
+
+    const session = await this.relayioRequest<RelayioSession>('/v1/sessions', {
+      method: 'POST',
+      body,
+    });
+    if (!session?.id) {
+      throw new ServiceUnavailableException('Création session Relayio invalide');
+    }
+
+    const now = new Date().toISOString();
+    const binding: RelayioSessionBinding = {
+      sessionId: session.id,
+      phoneNumber: session.phoneNumber ?? phoneNumber ?? null,
+      name: session.name ?? name,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await this.redis.setJson(this.getRelayioSessionBindingKey(tenantId), binding);
+    this.logger.log(`Session WhatsApp Relayio créée (tenant=${tenantId}, session=${session.id})`);
+    return binding;
+  }
+
+  private async clearRelayioSessionBinding(tenantId: string): Promise<void> {
+    await this.redis.del(this.getRelayioSessionBindingKey(tenantId));
+  }
+
+  private async resolveRelayioPhoneNumber(tenantId: string, tenantPhone?: string | null): Promise<string | null> {
+    const configured = this.normalizeRelayioPlainPhone(this.readConfig('RELAYIO_PHONE_NUMBER', 'WHATSAPP_RELAYIO_PHONE_NUMBER'));
+    if (configured) return configured;
+    if (tenantPhone) return this.normalizeRelayioPlainPhone(tenantPhone);
+
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { telephone: true },
+    });
+    return this.normalizeRelayioPlainPhone(tenant?.telephone);
+  }
+
+  private resolveRelayioSessionName(tenantName?: string | null): string {
+    const configured = this.readConfig('RELAYIO_SESSION_NAME', 'WHATSAPP_RELAYIO_SESSION_NAME');
+    if (configured) return configured;
+    const suffix = String(tenantName ?? '').trim();
+    return suffix ? `Medaaris - ${suffix}` : 'Medaaris WhatsApp';
+  }
+
+  private getRelayioSessionAuthType(): string {
+    const value = String(this.readConfig('RELAYIO_SESSION_AUTH_TYPE', 'WHATSAPP_RELAYIO_SESSION_AUTH_TYPE') ?? 'local').trim();
+    return value === 'remote' ? 'remote' : 'local';
+  }
+
+  private async saveRelayioMessageResult(input: {
+    localMessageId: string;
+    tenantId: string;
+    phone: string;
+    kind: WhatsappQueueRecord['kind'];
+    message: string;
+    document?: WhatsappQueueRecord['document'];
+    response: RelayioMessagePayload | null;
+  }): Promise<string> {
+    const now = new Date().toISOString();
+    const status = this.mapRelayioMessageStatus(input.response?.status);
+    const messageId = String(input.response?.id ?? '').trim() || input.localMessageId;
+    const sentAt = status === 'SENT' ? this.toIsoString(input.response?.updatedAt) ?? now : null;
+    const record: WhatsappQueueRecord = {
+      id: messageId,
+      tenantId: input.tenantId,
+      phone: input.phone,
+      kind: input.kind,
+      message: input.message,
+      document: input.document ?? null,
+      status,
+      attempts: 1,
+      createdAt: this.toIsoString(input.response?.createdAt) ?? now,
+      queuedAt: now,
+      lastAttemptAt: now,
+      nextAttemptAt: null,
+      lastError: status === 'FAILED' ? 'Relayio a refusé le message' : null,
+      sentAt,
+      updatedAt: this.toIsoString(input.response?.updatedAt) ?? now,
+    };
+    await this.saveMessageRecord(record, MESSAGE_HISTORY_TTL_SECONDS);
+    return messageId;
+  }
+
+  private async saveRelayioFailureRecord(
+    messageId: string,
+    tenantId: string,
+    phone: string,
+    kind: WhatsappQueueRecord['kind'],
+    message: string,
+    document: WhatsappQueueRecord['document'],
+    error: unknown,
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    await this.saveMessageRecord({
+      id: messageId,
+      tenantId,
+      phone,
+      kind,
+      message,
+      document,
+      status: 'FAILED',
+      attempts: 1,
+      createdAt: now,
+      queuedAt: now,
+      lastAttemptAt: now,
+      nextAttemptAt: null,
+      lastError: this.errorMessage(error),
+      sentAt: null,
+      updatedAt: now,
+    }, MESSAGE_HISTORY_TTL_SECONDS);
+  }
+
+  private mapRelayioMessageStatus(status: unknown): WhatsappQueueRecord['status'] {
+    const value = String(status ?? '').trim().toLowerCase();
+    if (['sent', 'delivered', 'read'].includes(value)) return 'SENT';
+    if (value === 'failed') return 'FAILED';
+    if (['pending', 'queued'].includes(value)) return 'QUEUED';
+    return 'QUEUED';
+  }
+
+  private async relayioRequest<T>(
+    path: string,
+    options: {
+      method?: string;
+      body?: unknown;
+      allowNotFound?: boolean;
+    } = {},
+  ): Promise<T | null> {
+    const headers = this.getRelayioAuthHeaders();
+    const method = options.method ?? (options.body === undefined ? 'GET' : 'POST');
+    const controller = new AbortController();
+    const timeoutMs = Math.max(1_000, Number(this.readConfig('RELAYIO_TIMEOUT_MS', 'WHATSAPP_RELAYIO_TIMEOUT_MS') ?? 15_000));
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const init: RequestInit = {
+      method,
+      headers,
+      signal: controller.signal,
+    };
+
+    if (options.body !== undefined) {
+      if (this.isFormData(options.body)) {
+        init.body = options.body;
+      } else {
+        headers['Content-Type'] = 'application/json';
+        init.body = JSON.stringify(options.body);
+      }
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.getRelayioBaseUrl()}${path.startsWith('/') ? path : `/${path}`}`, init);
+    } catch (error) {
+      throw new ServiceUnavailableException(`Relayio indisponible: ${this.errorMessage(error)}`);
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    const text = await response.text();
+    if (response.status === 404 && options.allowNotFound) {
+      return null;
+    }
+    if (!response.ok) {
+      this.throwRelayioHttpException(response.status, this.extractRelayioErrorMessage(text, response.statusText));
+    }
+    if (!text.trim()) return null;
+
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new ServiceUnavailableException('Réponse Relayio invalide');
+    }
+  }
+
+  private getRelayioBaseUrl(): string {
+    const configured = this.readConfig('RELAYIO_BASE_URL', 'WHATSAPP_RELAYIO_BASE_URL') ?? 'https://relayio-backend.medaaris.com';
+    return configured.replace(/\/+$/, '');
+  }
+
+  private getRelayioAuthHeaders(): Record<string, string> {
+    const apiKey = this.getRelayioApiKey();
+    if (apiKey) {
+      return { 'x-api-key': apiKey };
+    }
+
+    const sessionToken = this.readConfig('RELAYIO_SESSION_TOKEN', 'WHATSAPP_RELAYIO_SESSION_TOKEN');
+    if (sessionToken) {
+      return { Authorization: `Bearer ${sessionToken}` };
+    }
+
+    throw new ServiceUnavailableException('Configuration Relayio manquante: définissez RELAYIO_API_KEY côté serveur');
+  }
+
+  private getRelayioApiKey(): string | null {
+    return this.readConfig('RELAYIO_API_KEY', 'WHATSAPP_RELAYIO_API_KEY');
+  }
+
+  private getRelayioConfiguredSessionId(): string | null {
+    return this.readConfig('RELAYIO_SESSION_ID', 'WHATSAPP_RELAYIO_SESSION_ID');
+  }
+
+  private useRelayioProvider(): boolean {
+    const provider = String(this.readConfig('WHATSAPP_PROVIDER', 'WHATSAPP_BACKEND_PROVIDER') ?? '').trim().toLowerCase();
+    if (provider) return ['relayio', 'relay'].includes(provider);
+    return Boolean(this.getRelayioApiKey() || this.getRelayioConfiguredSessionId());
+  }
+
+  private readConfig(...keys: string[]): string | null {
+    for (const key of keys) {
+      const value = this.config.get<string>(key) ?? process.env[key];
+      if (typeof value === 'string' && value.trim()) {
+        return value.trim();
+      }
+    }
+    return null;
+  }
+
+  private isFormData(body: unknown): body is FormData {
+    return typeof FormData !== 'undefined' && body instanceof FormData;
+  }
+
+  private async extractRelayioQrDataUrl(payload: RelayioQrPayload): Promise<string | null> {
+    const qr = payload.qr;
+    if (!qr) return null;
+    if (typeof qr === 'string') {
+      if (qr.startsWith('data:image/')) return qr;
+      loadQRCodeDep();
+      return QRCodeLib.toDataURL(qr, { width: 300, margin: 1 });
+    }
+    if (qr.imageDataUrl) return qr.imageDataUrl;
+    if (qr.value) {
+      loadQRCodeDep();
+      return QRCodeLib.toDataURL(qr.value, { width: 300, margin: 1 });
+    }
+    return null;
+  }
+
+  private resolveRelayioQrTtl(payload: RelayioQrPayload, fallbackSeconds: number): number {
+    if (payload.qr && typeof payload.qr === 'object' && payload.qr.expiresAt) {
+      return this.secondsUntil(payload.qr.expiresAt, fallbackSeconds);
+    }
+    return fallbackSeconds;
+  }
+
+  private normalizeRelayioPlainPhone(phone: unknown): string | null {
+    let digits = String(phone ?? '').replace(/\D/g, '');
+    if (!digits) return null;
+    if (digits.startsWith('00')) digits = digits.slice(2);
+    if (digits.startsWith('0') && digits.length > 9) digits = digits.slice(1);
+    if (digits.length === 9 && digits.startsWith('7')) {
+      const countryCode = this.config.get<string>('WHATSAPP_DEFAULT_COUNTRY_CODE', '221');
+      digits = `${countryCode}${digits}`;
+    }
+    if (digits.length < 11) return null;
+    return `+${digits}`;
+  }
+
+  private getRelayioSessionBindingKey(tenantId: string): string {
+    return `${WA_RELAYIO_SESSION_PREFIX}${tenantId}`;
+  }
+
+  private secondsUntil(value: string | Date, fallbackSeconds: number): number {
+    const time = new Date(value).getTime();
+    if (!Number.isFinite(time)) return fallbackSeconds;
+    return Math.max(1, Math.ceil((time - Date.now()) / 1000));
+  }
+
+  private toIsoString(value: string | Date | undefined | null): string | undefined {
+    if (!value) return undefined;
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private throwRelayioHttpException(status: number, message: string): never {
+    if (status === 400) {
+      throw new BadRequestException(message);
+    }
+    if (status === 404) {
+      throw new NotFoundException(message);
+    }
+    if (status === 401 || status === 403) {
+      throw new ServiceUnavailableException(`Authentification Relayio refusée: ${message}`);
+    }
+    throw new ServiceUnavailableException(`Relayio ${status}: ${message}`);
+  }
+
+  private extractRelayioErrorMessage(raw: string, fallback: string): string {
+    if (!raw.trim()) return fallback || 'Erreur Relayio';
+    try {
+      const parsed = JSON.parse(raw) as { message?: unknown; error?: unknown };
+      const message = parsed.message ?? parsed.error;
+      if (Array.isArray(message)) return message.map((item) => String(item)).join('. ');
+      if (message) return String(message);
+    } catch {
+      // keep raw body below
+    }
+    return raw.slice(0, 500);
+  }
+
+  private errorMessage(error: unknown): string {
+    if (error instanceof BadRequestException || error instanceof NotFoundException || error instanceof ServiceUnavailableException) {
+      const response = error.getResponse();
+      if (typeof response === 'string') return response;
+      const message = (response as { message?: unknown }).message;
+      if (Array.isArray(message)) return message.map((item) => String(item)).join('. ');
+      if (message) return String(message);
+    }
+    if (error instanceof Error) return error.message;
+    if (typeof error === 'string') return error;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
   }
 
   private async queueMessageRecord(record: WhatsappQueueRecord): Promise<void> {

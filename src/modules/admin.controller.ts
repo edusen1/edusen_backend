@@ -32,6 +32,7 @@ import { EmploiDuTempsService } from '@/modules/v1/emploi-du-temps/emploi-du-tem
 import { BulletinService, PublishBulletinsDto } from '@/modules/v1/bulletin/bulletin.service';
 import { DomainService } from '@/modules/domain.service';
 import { PresenceProfesseurService } from '@/modules/presence-professeur.service';
+import { StatutPresence } from '@prisma/client';
 
 type QueryParams = Record<string, string | string[] | undefined>;
 type Payload = Record<string, unknown>;
@@ -100,6 +101,11 @@ export class AdminController {
     return this.resolveTenantId(tenantId, user).then((tid) => this.classeService.getClasseEleves(tid!, id));
   }
 
+  @Get('classes/:id/appels')
+  getClasseAppels(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string, @CurrentUser() user?: JwtUser) {
+    return this.resolveTenantId(tenantId, user).then((tid) => this.classeService.getClasseAppels(tid!, id));
+  }
+
   @Get('classes/:id/eleves/:eleveId/notes')
   getClasseEleveNotes(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -113,6 +119,38 @@ export class AdminController {
   @Get('classes/:id')
   getClasse(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string, @CurrentUser() user?: JwtUser) {
     return this.resolveTenantId(tenantId, user).then((tid) => this.classeService.getClasse(tid!, id));
+  }
+
+  @Post('classes/:id/appels')
+  createClasseAppel(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') classeId: string,
+    @Body() body: { coursId?: string | null; session?: string | null; dateCours: string; heureDebut?: string | null; absents?: string[]; lignes?: { eleveId: string; statut: StatutPresence }[] },
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.resolveTenantId(tenantId, user).then((tid) =>
+      this.classeService.createAppelWithLignes(tid!, classeId, user?.sub ?? '', {
+        coursId: body.coursId ?? null,
+        session: body.session ?? null,
+        dateCours: body.dateCours,
+        heureDebut: body.heureDebut ?? null,
+        absents: body.absents ?? [],
+        lignes: body.lignes ?? [],
+      }),
+    );
+  }
+
+  @Patch('classes/:id/appels/:appelId')
+  updateClasseAppel(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') classeId: string,
+    @Param('appelId') appelId: string,
+    @Body() body: { lignes?: { eleveId: string; statut: StatutPresence }[] },
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.resolveTenantId(tenantId, user).then((tid) =>
+      this.classeService.updateAppelLignes(tid!, classeId, appelId, body.lignes ?? []),
+    );
   }
 
   @Roles('ADMIN')
@@ -767,6 +805,18 @@ export class AdminController {
   ) {
     const tid = tenantId?.trim() || user?.tenantId;
     return this.whatsapp.getQrCode(tid!);
+  }
+
+  @Roles('ADMIN')
+  @Post('whatsapp/pairing-code')
+  getWhatsappPairingCode(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = tenantId?.trim() || user?.tenantId;
+    const phoneNumber = body.phoneNumber ? String(body.phoneNumber) : undefined;
+    return this.whatsapp.requestPairingCode(tid!, phoneNumber);
   }
 
   @Roles('ADMIN')

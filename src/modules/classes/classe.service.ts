@@ -4,6 +4,7 @@ import { StorageService } from '@/infrastructure/storage/storage.service';
 import { BulletinDocumentService } from '@/modules/bulletin-document.service';
 import { CreateClasseDto } from './dto/create-classe.dto';
 import { UpdateClasseDto } from './dto/update-classe.dto';
+import { StatutPresence } from '@prisma/client';
 
 type QueryValue = string | string[] | undefined;
 type TeacherQueryParams = Record<string, QueryValue>;
@@ -533,7 +534,14 @@ export class ClasseService {
     tenantId: string,
     classeId: string,
     enseignantId: string,
-    payload: { coursId?: string | null; session?: string | null; dateCours: string; heureDebut?: string; absents: string[] },
+    payload: {
+      coursId?: string | null;
+      session?: string | null;
+      dateCours: string;
+      heureDebut?: string | null;
+      absents?: string[];
+      lignes?: { eleveId: string; statut: StatutPresence }[];
+    },
   ) {
     // For collège/lycée: validate coursId; for maternelle/primaire: coursId is null
     if (payload.coursId) {
@@ -548,6 +556,7 @@ export class ClasseService {
       select: { eleveId: true },
     });
 
+    const explicitLines = payload.lignes?.length ? new Map(payload.lignes.map((ligne) => [ligne.eleveId, ligne.statut])) : null;
     const appel = await this.prisma.appel.create({
       data: {
         tenantId,
@@ -560,7 +569,7 @@ export class ClasseService {
         lignes: {
           create: inscriptions.map((i) => ({
             eleveId: i.eleveId,
-            statut: payload.absents.includes(i.eleveId) ? 'ABSENT' : 'PRESENT',
+            statut: explicitLines?.get(i.eleveId) ?? (payload.absents?.includes(i.eleveId) ? 'ABSENT' : 'PRESENT'),
           })),
         },
       },
