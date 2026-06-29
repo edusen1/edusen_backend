@@ -44,11 +44,51 @@ repair_teacher_payment_response_migration() {
 
   log_warn "Migration Prisma $migration_name marquée en échec. Réparation contrôlée du schéma..."
 
+  if [ -z "$DATABASE_URL" ]; then
+    log_error "DATABASE_URL manquant : impossible d'exécuter la réparation SQL."
+    return 1
+  fi
+
   repair_log=$(
-    npx prisma db execute --schema prisma/schema.prisma --stdin 2>&1 <<'SQL'
+    npx prisma db execute --url "$DATABASE_URL" --stdin 2>&1 <<'SQL'
+DO $$
+BEGIN
+  IF to_regclass('"PaiementProfesseur"') IS NULL THEN
+    CREATE TABLE "PaiementProfesseur" (
+      "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+      "tenantId" UUID NOT NULL,
+      "enseignantId" UUID NOT NULL,
+      "dateDebut" DATE NOT NULL,
+      "dateFin" DATE NOT NULL,
+      "heuresEffectuees" DOUBLE PRECISION NOT NULL,
+      "heuresDeduites" DOUBLE PRECISION NOT NULL,
+      "montant" DOUBLE PRECISION NOT NULL,
+      "statut" "StatutPaiement" NOT NULL DEFAULT 'EN_ATTENTE',
+      "reference" VARCHAR(80) NOT NULL,
+      "initialisePar" UUID,
+      "notificationId" UUID,
+      "observations" TEXT,
+      "motifRejet" TEXT,
+      "reponduLe" TIMESTAMP(3),
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "PaiementProfesseur_pkey" PRIMARY KEY ("id")
+    );
+  END IF;
+END $$;
+
 ALTER TABLE "PaiementProfesseur"
   ADD COLUMN IF NOT EXISTS "motifRejet" TEXT,
   ADD COLUMN IF NOT EXISTS "reponduLe" TIMESTAMP(3);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "PaiementProfesseur_reference_key"
+  ON "PaiementProfesseur"("reference");
+
+CREATE INDEX IF NOT EXISTS "PaiementProfesseur_tenantId_enseignantId_dateDebut_dateFin_idx"
+  ON "PaiementProfesseur"("tenantId", "enseignantId", "dateDebut", "dateFin");
+
+CREATE INDEX IF NOT EXISTS "PaiementProfesseur_tenantId_statut_idx"
+  ON "PaiementProfesseur"("tenantId", "statut");
 SQL
   )
   repair_exit=$?
