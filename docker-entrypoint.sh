@@ -34,6 +34,44 @@ log_error() {
   printf '%b\n' "${RED}❌ $1${RESET}"
 }
 
+repair_teacher_payment_response_migration() {
+  migration_name="20260623_add_teacher_payment_response"
+
+  case "$migrate_log" in
+    *P3009*"$migration_name"*) ;;
+    *) return 1 ;;
+  esac
+
+  log_warn "Migration Prisma $migration_name marquée en échec. Réparation contrôlée du schéma..."
+
+  repair_log=$(
+    npx prisma db execute --schema prisma/schema.prisma --stdin 2>&1 <<'SQL'
+ALTER TABLE "PaiementProfesseur"
+  ADD COLUMN IF NOT EXISTS "motifRejet" TEXT,
+  ADD COLUMN IF NOT EXISTS "reponduLe" TIMESTAMP(3);
+SQL
+  )
+  repair_exit=$?
+  echo "$repair_log"
+
+  if [ $repair_exit -ne 0 ]; then
+    log_error "Réparation SQL de $migration_name échouée."
+    return 1
+  fi
+
+  resolve_log=$(npx prisma migrate resolve --applied "$migration_name" 2>&1)
+  resolve_exit=$?
+  echo "$resolve_log"
+
+  if [ $resolve_exit -ne 0 ]; then
+    log_error "Impossible de marquer $migration_name comme appliquée."
+    return 1
+  fi
+
+  log_ok "Migration Prisma $migration_name réparée"
+  return 0
+}
+
 printf '\n%b\n' "${CYAN}╔══════════════════════════════════════════════════════╗${RESET}"
 printf '%b\n' "${CYAN}║        🎓  NouraSchool Backend — Démarrage           ║${RESET}"
 printf '%b\n\n' "${CYAN}╚══════════════════════════════════════════════════════╝${RESET}"
@@ -49,13 +87,20 @@ migrate_exit=$?
 echo "$migrate_log"
 
 if [ $migrate_exit -ne 0 ]; then
-  # Ne jamais marquer automatiquement une migration comme appliquée : cela peut
-  # laisser le schéma incomplet alors que Prisma croit la migration exécutée.
-  log_error "Migrations Prisma échouées. Arrêt du démarrage pour préserver l'intégrité du schéma."
-  exit 1
-else
-  log_ok "Migrations Prisma à jour"
+  if repair_teacher_payment_response_migration; then
+    log_step "📦 Relance des migrations Prisma après réparation"
+    migrate_log=$(npx prisma migrate deploy 2>&1)
+    migrate_exit=$?
+    echo "$migrate_log"
+  fi
+
+  if [ $migrate_exit -ne 0 ]; then
+    log_error "Migrations Prisma échouées. Arrêt du démarrage pour préserver l'intégrité du schéma."
+    exit 1
+  fi
 fi
+
+log_ok "Migrations Prisma à jour"
 
 echo ""
 
