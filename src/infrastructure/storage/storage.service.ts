@@ -174,7 +174,7 @@ export class StorageService {
       process.env.BACKEND_PUBLIC_URL ??
       process.env.APP_PUBLIC_URL ??
       (process.env.NODE_ENV === 'production'
-        ? 'https://nouraschool-backend.assanediallo.com/api'
+        ? 'https://backend.medaaris.com/api'
         : 'http://localhost:3000/api');
     return `${base.replace(/\/$/, '')}/storage/file?key=${encodeURIComponent(key)}`;
   }

@@ -75,14 +75,11 @@ async function bootstrap(): Promise<void> {
     'http://127.0.0.1:3001',
     'http://localhost:4300',
     'http://127.0.0.1:4300',
-    'https://noura-school.assanediallo.com',
-    'https://nouraschool.assanediallo.com',
-    'https://nouraschool-plateforme.assanediallo.com',
-    'https://noura-school-plateforme.assanediallo.com',
-    'https://medaaris.assanediallo.com',
-    'https://medaaris-plateforme.assanediallo.com',
-    'https://www.medaaris.assanediallo.com',
-    'https://www.nouraschool.assanediallo.com',
+    'https://medaaris.com',
+    'https://sablettes.medaaris.com',
+    'https://noukhbetelasr.medaaris.com',
+    'https://noura.medaaris.com',
+    'https://zeinelabidine.medaaris.com',
   ];
   const normalizeOrigin = (origin: string) => origin.trim().replace(/\/$/, '').toLowerCase();
   const allowedOrigins = new Set(
@@ -94,7 +91,7 @@ async function bootstrap(): Promise<void> {
       .map(normalizeOrigin)
       .filter(Boolean),
   );
-  const allowedDomainSuffixes = (process.env.CORS_ALLOWED_DOMAIN_SUFFIXES ?? '.assanediallo.com')
+  const allowedDomainSuffixes = (process.env.CORS_ALLOWED_DOMAIN_SUFFIXES ?? '.medaaris.com')
     .split(',')
     .map((suffix) => suffix.trim().toLowerCase())
     .filter(Boolean);
