@@ -73,6 +73,15 @@ export class V1Controller {
     return this.crud.statsEtablissement(this.resolveTenantId(tenantId, user), user);
   }
 
+  @Get('stats/mensuel')
+  statsMensuel(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user?: JwtUser,
+    @Query('annee') annee?: string,
+  ) {
+    return this.crud.statsMensuel(this.resolveTenantId(tenantId, user), annee);
+  }
+
   @Get('appbar/summary')
   appbarSummary(@Headers('x-tenant-id') tenantId: string | undefined, @CurrentUser() user?: JwtUser) {
     return this.crud.appbarSummary(this.resolveTenantId(tenantId, user), user);

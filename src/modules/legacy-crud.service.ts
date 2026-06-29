@@ -1316,6 +1316,17 @@ export class LegacyCrudService {
     return { ...stats, notificationsNonLues };
   }
 
+  async statsMensuel(tenantId: string | undefined, annee?: string) {
+    const year = Number(annee);
+    const selectedYear = Number.isFinite(year) && year > 1900 ? year : new Date().getFullYear();
+    const cacheKey = `tenant:${tenantId ?? 'platform'}:dashboard-stats-mensuel:${selectedYear}:v1`;
+    return this.cache.getOrSet(cacheKey, 8, () =>
+      this.prisma.withReadRetry('dashboard etablissement mensuel', () =>
+        this.loadStatsMensuel(tenantId, selectedYear),
+      ),
+    );
+  }
+
   private async loadStatsEtablissement(tenantId: string | undefined) {
     const tenantFilter = tenantId ? { tenantId } : {};
     const today = new Date();
@@ -1353,6 +1364,12 @@ export class LegacyCrudService {
       bulletinsParStatut,
       derniersPaiements,
       absencesRecentes,
+      totalFilles,
+      totalGarcons,
+      classesSansProfPrincipal,
+      elevesSansParent,
+      enseignantsAvecEmploiDuTemps,
+      classesCycles,
     ] = await Promise.all([
       this.prisma.user.count({ where: { ...tenantFilter, role: 'ELEVE' } }),
       this.prisma.user.count({ where: { ...tenantFilter, role: 'ENSEIGNANT' } }),
@@ -1452,7 +1469,45 @@ export class LegacyCrudService {
         orderBy: [{ createdAt: 'desc' }],
         take: 6,
       }),
+      this.prisma.user.count({ where: { ...tenantFilter, role: 'ELEVE', genre: 'F' } }),
+      this.prisma.user.count({ where: { ...tenantFilter, role: 'ELEVE', genre: 'M' } }),
+      this.prisma.classe.count({ where: { ...tenantFilter, actif: true, professeurResponsableId: null } }),
+      this.prisma.user.count({ where: { ...tenantFilter, role: 'ELEVE', elevParents: { none: {} } } }),
+      this.prisma.emploiDuTemps.findMany({
+        where: { ...tenantFilter, enseignantId: { not: null } },
+        distinct: ['enseignantId'],
+        select: { enseignantId: true },
+      }),
+      this.prisma.classe.findMany({
+        where: tenantFilter,
+        select: {
+          id: true,
+          nom: true,
+          _count: { select: { eleves: true, inscriptions: true } },
+          niveau: {
+            select: {
+              libelle: true,
+              cycle: { select: { code: true, libelle: true } },
+            },
+          },
+        },
+      }),
     ]);
+    const enseignantsAvecEdtIds = new Set(
+      enseignantsAvecEmploiDuTemps
+        .map((item) => item.enseignantId)
+        .filter((id): id is string => !!id),
+    );
+    const enseignantsSansEmploiDuTemps = Math.max(Number(professeurs ?? 0) - enseignantsAvecEdtIds.size, 0);
+    const repartitionCyclesMap = new Map<string, { cycle: string; label: string; nb: number }>();
+    for (const classe of classesCycles) {
+      const cycleLabel = classe.niveau?.cycle?.libelle ?? classe.niveau?.libelle ?? 'Non renseigné';
+      const cycleCode = classe.niveau?.cycle?.code ?? cycleLabel;
+      const current = repartitionCyclesMap.get(cycleCode) ?? { cycle: cycleCode, label: cycleLabel, nb: 0 };
+      current.nb += classe._count.eleves || classe._count.inscriptions || 0;
+      repartitionCyclesMap.set(cycleCode, current);
+    }
+    const repartitionCycles = [...repartitionCyclesMap.values()];
     const debtStudentIds = [...new Set((dettesRows as DebtPaymentRow[]).map((row) => row.eleveId))];
     const debtStudents = debtStudentIds.length
       ? await this.prisma.user.findMany({
@@ -1479,10 +1534,16 @@ export class LegacyCrudService {
     );
     return {
       eleves,
+      totalEleves: eleves,
+      totalFilles,
+      totalGarcons,
       professeurs,
+      totalProfesseurs: professeurs,
       parents,
       personnels,
+      totalPersonnel: personnels,
       classes,
+      totalClasses: classes,
       salles,
       inscriptionsActives,
       absencesEleves,
@@ -1500,6 +1561,10 @@ export class LegacyCrudService {
       convocationsEnAttente,
       bulletinsValides,
       bulletinsBrouillons,
+      classesSansProfPrincipal,
+      elevesSansParent,
+      enseignantsSansEmploiDuTemps,
+      repartitionCycles,
       moyenneNotes: notes._avg.note ?? 0,
       nombreNotes: notes._count,
       montantPaiements: paiementsValidesAggregate._sum.montant ?? 0,
@@ -1540,7 +1605,103 @@ export class LegacyCrudService {
         createdAt: absence.createdAt,
         classeNom: absence.classe?.nom ?? null,
       })),
+      alertes: [
+        ...(classesSansProfPrincipal > 0 ? [{
+          type: 'danger',
+          texte: `${classesSansProfPrincipal} classe(s) sans professeur principal`,
+          href: '/admin/classes',
+        }] : []),
+        ...(absencesDuJourEleves > 0 ? [{
+          type: 'danger',
+          texte: `${absencesDuJourEleves} absence(s) élève aujourd'hui`,
+          href: '/admin/absences-eleves',
+        }] : []),
+        ...(absencesDuJourPersonnel > 0 ? [{
+          type: 'warning',
+          texte: `${absencesDuJourPersonnel} absence(s) personnel aujourd'hui`,
+          href: '/admin/absences-personnel',
+        }] : []),
+        ...(convocationsEnAttente > 0 ? [{
+          type: 'warning',
+          texte: `${convocationsEnAttente} convocation(s) en attente`,
+          href: '/admin/convocations',
+        }] : []),
+        ...(reclamationsEnAttente > 0 ? [{
+          type: 'warning',
+          texte: `${reclamationsEnAttente} réclamation(s) non traitée(s)`,
+          href: '/admin/reclamations',
+        }] : []),
+        ...(bulletinsBrouillons > 0 ? [{
+          type: 'warning',
+          texte: `${bulletinsBrouillons} bulletin(s) en brouillon`,
+          href: '/admin/bulletins',
+        }] : []),
+        ...(enseignantsSansEmploiDuTemps > 0 ? [{
+          type: 'info',
+          texte: `${enseignantsSansEmploiDuTemps} enseignant(s) sans emploi du temps`,
+          href: '/admin/emplois-du-temps',
+        }] : []),
+        ...(elevesSansParent > 0 ? [{
+          type: 'info',
+          texte: `${elevesSansParent} élève(s) sans parent/tuteur associé`,
+          href: '/admin/eleves',
+        }] : []),
+        ...(paiementsEnAttente > 0 ? [{
+          type: 'info',
+          texte: `${paiementsEnAttente} paiement(s) en attente`,
+          href: '/admin/paiements',
+        }] : []),
+      ],
     };
+  }
+
+  private async loadStatsMensuel(tenantId: string | undefined, year: number) {
+    const tenantFilter = tenantId ? { tenantId } : {};
+    const start = new Date(year, 0, 1);
+    const end = new Date(year, 11, 31, 23, 59, 59, 999);
+    const [paiements, absences, eleves] = await Promise.all([
+      this.prisma.paiement.findMany({
+        where: { ...tenantFilter, createdAt: { gte: start, lte: end } },
+        select: { montant: true, statut: true, createdAt: true, datePaiement: true },
+      }),
+      this.prisma.absenceEleve.findMany({
+        where: { ...tenantFilter, date: { gte: start, lte: end } },
+        select: { date: true, typeAbsence: true },
+      }),
+      this.prisma.user.count({ where: { ...tenantFilter, role: 'ELEVE' } }),
+    ]);
+    const months = Array.from({ length: 12 }, (_, index) => ({
+      mois: index + 1,
+      encaissements: 0,
+      fraisAttendus: 0,
+      absences: 0,
+      retards: 0,
+      tauxPresence: 0,
+    }));
+
+    for (const paiement of paiements) {
+      const date = paiement.datePaiement ?? paiement.createdAt;
+      const item = months[date.getMonth()];
+      item.fraisAttendus += Number(paiement.montant ?? 0);
+      if (paiement.statut === 'VALIDE') {
+        item.encaissements += Number(paiement.montant ?? 0);
+      }
+    }
+
+    for (const absence of absences) {
+      const item = months[absence.date.getMonth()];
+      if (absence.typeAbsence === 'RETARD') item.retards += 1;
+      else item.absences += 1;
+    }
+
+    for (const item of months) {
+      const totalIncidents = item.absences + item.retards;
+      item.tauxPresence = eleves > 0 ? Math.max(0, Math.round(((eleves - totalIncidents) / eleves) * 100)) : 0;
+      item.encaissements = Math.round(item.encaissements);
+      item.fraisAttendus = Math.round(item.fraisAttendus);
+    }
+
+    return months;
   }
 
   private dashboardCacheKey(tenantId: string | undefined): string {
