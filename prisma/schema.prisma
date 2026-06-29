@@ -455,6 +455,7 @@ model Cycle {
   updatedAt DateTime @updatedAt
 
   niveaux           Niveau[]
+  classes           Classe[] @relation("ClasseCycle")
   surveillantCycles SurveillantCycle[]
   calendriers       CalendrierScolaire[]
 
@@ -538,6 +539,8 @@ model Classe {
   tenantId          String           @db.Uuid
   tenant            Tenant           @relation(fields: [tenantId], references: [id])
   nom               String
+  cycleId           String?          @db.Uuid
+  cycle             Cycle?           @relation("ClasseCycle", fields: [cycleId], references: [id], onDelete: SetNull)
   niveauId          String?          @db.Uuid
   niveau            Niveau?          @relation(fields: [niveauId], references: [id])
   anneeAcademiqueId String?          @db.Uuid
@@ -550,6 +553,7 @@ model Classe {
   updatedAt         DateTime         @updatedAt
 
   @@unique([tenantId, nom, anneeAcademiqueId])
+  @@index([tenantId, cycleId])
 
   professeurResponsableId String? @db.Uuid
   professeurResponsable   User?   @relation("ClasseProfResponsable", fields: [professeurResponsableId], references: [id])

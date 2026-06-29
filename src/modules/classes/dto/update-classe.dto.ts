@@ -9,7 +9,11 @@ export class UpdateClasseDto {
 
   @IsOptional()
   @IsUUID()
-  niveauId?: string;
+  cycleId?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  niveauId?: string | null;
 
   @IsOptional()
   @IsUUID()

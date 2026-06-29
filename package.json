@@ -18,6 +18,7 @@
     "seed": "node scripts/seed.cjs",
     "seed:platform": "node scripts/seed-platform-super-admin.cjs",
     "db:clear": "node scripts/clear-db.cjs",
+    "db:backup-transfer": "bash scripts/postgres-backup-transfer.sh",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio"

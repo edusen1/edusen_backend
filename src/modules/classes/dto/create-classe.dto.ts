@@ -6,8 +6,13 @@ export class CreateClasseDto {
   @MaxLength(100)
   nom!: string;
 
+  @IsOptional()
   @IsUUID()
-  niveauId!: string;
+  cycleId?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  niveauId?: string | null;
 
   @IsUUID()
   anneeAcademiqueId!: string;

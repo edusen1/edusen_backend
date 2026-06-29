@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@/config/prisma.service';
 import {
   CreateAnneeDto,
@@ -76,7 +76,28 @@ export class SchoolService {
   }
   async createClasse(tenantId: string, dto: CreateClasseDto) {
     try {
-      return await this.prisma.classe.create({ data: { ...dto, tenantId } });
+      const niveauId = String(dto.niveauId ?? '').trim() || null;
+      const cycleId = String(dto.cycleId ?? '').trim() || null;
+      if (niveauId) {
+        const niveau = await this.prisma.niveau.findFirst({
+          where: { id: niveauId, tenantId },
+          select: { id: true, cycleId: true },
+        });
+        if (!niveau) throw new NotFoundException('Niveau introuvable');
+        return await this.prisma.classe.create({ data: { ...dto, tenantId, cycleId: niveau.cycleId, niveauId } });
+      }
+
+      if (!cycleId) throw new BadRequestException('Le cycle est obligatoire lorsque le niveau n’est pas renseigné');
+      const cycle = await this.prisma.cycle.findFirst({
+        where: { id: cycleId, tenantId },
+        select: { id: true, code: true },
+      });
+      if (!cycle) throw new NotFoundException('Cycle introuvable');
+      if (cycle.code.toUpperCase() !== 'PRIMAIRE') {
+        throw new BadRequestException('Le niveau est obligatoire pour ce cycle');
+      }
+
+      return await this.prisma.classe.create({ data: { ...dto, tenantId, cycleId, niveauId: null } });
     } catch (error) {
       rethrowServiceError(error, 'création classe');
     }

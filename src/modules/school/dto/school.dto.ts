@@ -57,8 +57,13 @@ export class CreateAnneeDto {
 }
 
 export class CreateClasseDto {
+  @IsOptional()
   @IsUUID()
-  niveauId!: string;
+  cycleId?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  niveauId?: string | null;
 
   @IsUUID()
   anneeAcademiqueId!: string;

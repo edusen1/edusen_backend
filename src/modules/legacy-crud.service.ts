@@ -201,6 +201,7 @@ export class LegacyCrudService {
         },
       },
     } : config.model === 'classe' ? {
+      cycle: true,
       niveau: { include: { cycle: true } },
       anneeAcademique: true,
       professeurResponsable: true,
@@ -248,7 +249,7 @@ export class LegacyCrudService {
         orderBy: { ordre: 'asc' },
       },
     } : config.model === 'matiere' ? {
-      _count: { select: { cours: true } },
+      _count: { select: { cours: true, notes: true } },
       cours: {
         include: {
           classe: { select: { id: true, nom: true } },
@@ -283,6 +284,7 @@ export class LegacyCrudService {
         delegate.count({ where }),
       ]);
       content = await this.attachEleveIfNeeded(config.model, content, tenantId);
+      content = await this.attachMatiereDependencyCounts(config.model, content, tenantId);
       const totalPages = size > 0 ? Math.ceil(totalElements / size) : 0;
       return {
         content: content.map((item: Payload) => this.sanitizeEntity(config.model, item)),
@@ -297,6 +299,7 @@ export class LegacyCrudService {
 
     let rows = await delegate.findMany({ where, orderBy, ...(include ? { include } : {}) });
     rows = await this.attachEleveIfNeeded(config.model, rows, tenantId);
+    rows = await this.attachMatiereDependencyCounts(config.model, rows, tenantId);
     return rows.map((item: Payload) => this.sanitizeEntity(config.model, item));
   }
 
@@ -325,6 +328,7 @@ export class LegacyCrudService {
         },
       },
     } : config.model === 'classe' ? {
+      cycle: true,
       niveau: { include: { cycle: true } },
       anneeAcademique: true,
       professeurResponsable: true,
@@ -372,7 +376,7 @@ export class LegacyCrudService {
         orderBy: { ordre: 'asc' },
       },
     } : config.model === 'matiere' ? {
-      _count: { select: { cours: true } },
+      _count: { select: { cours: true, notes: true } },
       cours: {
         include: {
           classe: { select: { id: true, nom: true } },
@@ -405,7 +409,8 @@ export class LegacyCrudService {
       ...(include ? { include } : {}),
     });
     if (!entity) throw new NotFoundException('Ressource introuvable');
-    const [hydrated] = await this.attachEleveIfNeeded(config.model, [entity], tenantId);
+    let [hydrated] = await this.attachEleveIfNeeded(config.model, [entity], tenantId);
+    [hydrated] = await this.attachMatiereDependencyCounts(config.model, [hydrated], tenantId);
     if (config.model === 'bulletin') {
       const bulletin = hydrated as Payload & { eleveId: string; trimestre: string; anneeScolaire: string; classeId: string; classe?: { anneeAcademiqueId?: string } };
       const [notes, affectations] = await Promise.all([
@@ -813,7 +818,7 @@ export class LegacyCrudService {
     const matiere = await this.prisma.matiere.findFirst({
       where: { tenantId, id: matiereId },
       include: {
-        _count: { select: { cours: true } },
+        _count: { select: { cours: true, notes: true } },
         cours: {
           include: {
             classe: { select: { id: true, nom: true } },
@@ -825,7 +830,8 @@ export class LegacyCrudService {
     });
     if (!matiere) throw new NotFoundException('Matière introuvable');
     const cours = await this.attachEnseignantById((matiere.cours ?? []) as unknown as Payload[]);
-    return { ...matiere, cours };
+    const [withCounts] = await this.attachMatiereDependencyCounts('matiere', [{ ...matiere, cours } as unknown as Payload], tenantId);
+    return withCounts;
   }
 
   async create(config: CrudConfig, tenantId: string | undefined, body: Payload, userOrId?: string | JwtUser) {
@@ -942,7 +948,10 @@ export class LegacyCrudService {
   }
 
   async update(config: CrudConfig, tenantId: string | undefined, id: string, body: Payload) {
-    await this.findOne(config, tenantId, id);
+    const existingEntity = await this.findOne(config, tenantId, id);
+    if (config.model === 'personnel' && !body.utilisateurId && typeof existingEntity.utilisateurId === 'string') {
+      body.utilisateurId = existingEntity.utilisateurId;
+    }
     const stagiaireIds = config.model === 'classe' && Array.isArray(body.stagiaireIds)
       ? body.stagiaireIds.map(String).map((id, index) => this.assertUuid(id, `stagiaireIds[${index}]`))
       : undefined;
@@ -1030,6 +1039,9 @@ export class LegacyCrudService {
     if (config.model === 'inscription') {
       throw new BadRequestException('SUPPRESSION_INSCRIPTION_INTERDITE: désactivez l’inscription au lieu de la supprimer');
     }
+    if (config.model === 'matiere') {
+      return this.deleteMatiereIfUnused(tenantId, id);
+    }
     await this.findOne(config, tenantId, id);
     const coursToDelete = config.model === 'cours'
       ? await this.prisma.cours.findFirst({ where: { id, ...this.fixedWhere(config, tenantId) } })
@@ -1038,6 +1050,35 @@ export class LegacyCrudService {
     if (coursToDelete) {
       await this.rebuildMatiereClasseForMatiere(this.prisma, tenantId ?? coursToDelete.tenantId, coursToDelete.matiereId);
     }
+  }
+
+  private async deleteMatiereIfUnused(tenantId: string | undefined, id: string): Promise<void> {
+    this.assertUuid(id, 'id');
+    const resolvedTenantId = this.assertUuid(tenantId, 'tenantId');
+    const matiere = await this.prisma.matiere.findFirst({ where: { id, tenantId: resolvedTenantId }, select: { id: true } });
+    if (!matiere) throw new NotFoundException('Matière introuvable');
+
+    const [coursCount, notesCount, emploisCount] = await Promise.all([
+      this.prisma.cours.count({ where: { tenantId: resolvedTenantId, matiereId: id } }),
+      this.prisma.note.count({ where: { tenantId: resolvedTenantId, matiereId: id } }),
+      this.prisma.emploiDuTemps.count({ where: { tenantId: resolvedTenantId, matiereId: id } }),
+    ]);
+
+    if (coursCount > 0) {
+      throw new BadRequestException(`Impossible de supprimer cette matière car elle est utilisée dans ${coursCount} cours. Supprimez d'abord les cours.`);
+    }
+    if (notesCount > 0) {
+      throw new BadRequestException(`Impossible de supprimer cette matière car elle est utilisée dans ${notesCount} note${notesCount > 1 ? 's' : ''}.`);
+    }
+    if (emploisCount > 0) {
+      throw new BadRequestException(`Impossible de supprimer cette matière car elle est utilisée dans ${emploisCount} créneau${emploisCount > 1 ? 'x' : ''} d'emploi du temps.`);
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.matiereClasse.deleteMany({ where: { tenantId: resolvedTenantId, matiereId: id } }),
+      this.prisma.professeurMatiere.deleteMany({ where: { tenantId: resolvedTenantId, matiereId: id } }),
+      this.prisma.matiere.delete({ where: { id } }),
+    ]);
   }
 
   private async replaceProfesseurMatieres(tenantId: string, professeurId: string, matiereIds: string[]): Promise<void> {
@@ -2558,6 +2599,48 @@ export class LegacyCrudService {
     return labels[normalized] ?? 'utilisateur';
   }
 
+  private async attachMatiereDependencyCounts<T extends Payload>(model: string, rows: T[], tenantId?: string): Promise<T[]> {
+    if (model !== 'matiere' || rows.length === 0 || !tenantId) return rows;
+
+    const matiereIds = [...new Set(rows.map((row) => String(row.id ?? '')).filter(Boolean))];
+    if (matiereIds.length === 0) return rows;
+
+    const [coursRows, noteRows, emploiRows] = await Promise.all([
+      this.prisma.cours.groupBy({
+        by: ['matiereId'],
+        where: { tenantId, matiereId: { in: matiereIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.note.groupBy({
+        by: ['matiereId'],
+        where: { tenantId, matiereId: { in: matiereIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.emploiDuTemps.groupBy({
+        by: ['matiereId'],
+        where: { tenantId, matiereId: { in: matiereIds } },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const coursByMatiere = new Map(coursRows.map((row) => [row.matiereId, row._count._all]));
+    const notesByMatiere = new Map(noteRows.map((row) => [row.matiereId, row._count._all]));
+    const emploisByMatiere = new Map(emploiRows.map((row) => [row.matiereId, row._count._all]));
+
+    return rows.map((row) => {
+      const matiereId = String(row.id ?? '');
+      const cours = coursByMatiere.get(matiereId) ?? 0;
+      const notes = notesByMatiere.get(matiereId) ?? 0;
+      const emploisDuTemps = emploisByMatiere.get(matiereId) ?? 0;
+      const existingCount = (row._count ?? {}) as Payload;
+      return {
+        ...row,
+        _count: { ...existingCount, cours, notes },
+        dependencyCounts: { cours, notes, emploisDuTemps },
+      };
+    });
+  }
+
   private sanitizeEntity(model: string, entity: Payload): Payload {
     if (!entity) return entity;
     if (model === 'user') {
@@ -3400,38 +3483,30 @@ export class LegacyCrudService {
       data.__personnelAffectationType = affectationType;
     }
 
-    if ((!data.utilisateurId || !this.isUuidLike(String(data.utilisateurId))) && data.email) {
-      const firstName = String(data.prenom ?? data.firstName ?? '').trim();
-      const lastName = String(data.nom ?? data.lastName ?? '').trim();
-      const email = String(data.email).trim().toLowerCase();
-      const role = this.normalizePersonnelRole(data.type);
+    const firstName = String(data.prenom ?? data.firstName ?? '').trim();
+    const lastName = String(data.nom ?? data.lastName ?? '').trim();
+    const incomingEmail = String(data.email ?? '').trim().toLowerCase();
+    const role = this.normalizePersonnelRole(data.type);
 
-      const existingUser = await this.prisma.user.findFirst({
-        where: { tenantId, email },
-      });
+    if ((!data.utilisateurId || !this.isUuidLike(String(data.utilisateurId))) && (incomingEmail || (create && firstName && lastName))) {
+      const email = incomingEmail;
+
+      const existingUser = email
+        ? await this.prisma.user.findFirst({ where: { tenantId, email } })
+        : null;
 
       if (existingUser) {
         data.utilisateurId = existingUser.id;
-        if (!create) {
-          const userUpdate: Record<string, unknown> = {};
-          if (firstName) userUpdate['firstName'] = firstName;
-          if (lastName) userUpdate['lastName'] = lastName;
-          if (normalizedTelephone) userUpdate['telephone'] = normalizedTelephone;
-          if (data.adresse) userUpdate['adresse'] = String(data.adresse);
-          if (data.specialite) userUpdate['specialite'] = String(data.specialite);
-          if (Object.keys(userUpdate).length > 0) {
-            await this.prisma.user.update({ where: { id: existingUser.id }, data: userUpdate });
-          }
-        }
       } else if (firstName && lastName) {
         const username = await this.generateUsername(tenantId, firstName, lastName);
+        const generatedEmail = email || `${username}@local.noura-school`;
         const generatedPassword = this.generateTempPassword();
         const passwordHash = await bcrypt.hash(generatedPassword, 12);
         const createdUser = await this.prisma.user.create({
           data: {
             tenantId,
             username,
-            email,
+            email: generatedEmail,
             passwordHash,
             firstName,
             lastName,
@@ -3448,6 +3523,27 @@ export class LegacyCrudService {
           data.__tempPasswordForNotification = generatedPassword;
         }
       }
+    }
+
+    if (data.utilisateurId && this.isUuidLike(String(data.utilisateurId))) {
+      const userUpdate: Record<string, unknown> = {};
+      if (firstName) userUpdate['firstName'] = firstName;
+      if (lastName) userUpdate['lastName'] = lastName;
+      if (incomingEmail) userUpdate['email'] = incomingEmail;
+      if (normalizedTelephone) userUpdate['telephone'] = normalizedTelephone;
+      if (data.adresse !== undefined) userUpdate['adresse'] = data.adresse ? String(data.adresse) : null;
+      if (data.specialite !== undefined) userUpdate['specialite'] = data.specialite ? String(data.specialite) : null;
+      if (data.type !== undefined) userUpdate['role'] = role;
+      if (Object.keys(userUpdate).length > 0) {
+        await this.prisma.user.updateMany({
+          where: { id: String(data.utilisateurId), tenantId },
+          data: userUpdate,
+        });
+      }
+    }
+
+    if (create && (!data.utilisateurId || !this.isUuidLike(String(data.utilisateurId)))) {
+      throw new BadRequestException('Impossible de créer le personnel sans prénom et nom valides');
     }
 
     if (create) {

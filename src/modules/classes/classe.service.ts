@@ -4,7 +4,7 @@ import { StorageService } from '@/infrastructure/storage/storage.service';
 import { BulletinDocumentService } from '@/modules/bulletin-document.service';
 import { CreateClasseDto } from './dto/create-classe.dto';
 import { UpdateClasseDto } from './dto/update-classe.dto';
-import { StatutPresence } from '@prisma/client';
+import { Prisma, StatutPresence } from '@prisma/client';
 
 type QueryValue = string | string[] | undefined;
 type TeacherQueryParams = Record<string, QueryValue>;
@@ -19,6 +19,7 @@ const PROF_SELECT = {
 };
 
 const CLASSE_INCLUDE = {
+  cycle: { select: { id: true, code: true, libelle: true } },
   niveau: {
     select: {
       id: true,
@@ -64,12 +65,12 @@ export class ClasseService {
       resolvedAnneeId = courante?.id;
     }
 
-    const where: Record<string, unknown> = { tenantId };
+    const where: Prisma.ClasseWhereInput = { tenantId };
     if (!anneeId) where.actif = true;
     if (resolvedAnneeId) where.anneeAcademiqueId = resolvedAnneeId;
     if (niveauId) where.niveauId = niveauId;
-    if (cycleId) {
-      where.niveau = { cycleId };
+    if (cycleId && !niveauId) {
+      where.OR = [{ cycleId }, { niveau: { cycleId } }];
     }
 
     const classes = await this.prisma.classe.findMany({
@@ -196,8 +197,12 @@ export class ClasseService {
   async createClasse(tenantId: string, dto: CreateClasseDto) {
     await this.assertTenantExists(tenantId);
 
-    const niveau = await this.prisma.niveau.findFirst({ where: { id: dto.niveauId, tenantId } });
-    if (!niveau) throw new NotFoundException('Niveau introuvable');
+    const { niveau, cycle } = await this.resolveClasseCycleAndNiveau(
+      tenantId,
+      dto.cycleId ?? null,
+      dto.niveauId ?? null,
+      true,
+    );
 
     const annee = await this.prisma.anneeAcademique.findFirst({ where: { id: dto.anneeAcademiqueId, tenantId } });
     if (!annee) throw new NotFoundException('Année académique introuvable');
@@ -218,7 +223,8 @@ export class ClasseService {
       data: {
         tenantId,
         nom: dto.nom.trim(),
-        niveauId: dto.niveauId,
+        cycleId: cycle.id,
+        niveauId: niveau?.id ?? null,
         anneeAcademiqueId: dto.anneeAcademiqueId,
         professeurResponsableId: dto.professeurResponsableId ?? null,
         effectifMax: dto.effectifMax ?? null,
@@ -301,6 +307,7 @@ export class ClasseService {
     const classe = await this.prisma.classe.findFirst({
       where: { id: classeId, tenantId },
       include: {
+        cycle: true,
         niveau: { include: { cycle: true } },
         anneeAcademique: true,
       },
@@ -323,7 +330,7 @@ export class ClasseService {
     });
     if (!eleve) throw new NotFoundException('Élève introuvable');
 
-    const cycleCode = classe.niveau?.cycle?.code?.toUpperCase() ?? '';
+    const cycleCode = (classe.cycle?.code ?? classe.niveau?.cycle?.code ?? '').toUpperCase();
     const periods = ['MATERNELLE', 'PRIMAIRE', 'CRECHE'].includes(cycleCode)
       ? ['SEMESTRE_1', 'SEMESTRE_2', 'SEMESTRE_3']
       : ['SEMESTRE_1', 'SEMESTRE_2'];
@@ -468,7 +475,7 @@ export class ClasseService {
         id: classe.id,
         nom: classe.nom,
         annee: classe.anneeAcademique?.libelle ?? null,
-        cycle: classe.niveau?.cycle?.libelle ?? null,
+        cycle: classe.cycle?.libelle ?? classe.niveau?.cycle?.libelle ?? null,
         bareme: noteScale,
       },
       periodes,
@@ -1170,6 +1177,7 @@ export class ClasseService {
       include: {
         classe: {
           include: {
+            cycle: true,
             niveau: { include: { cycle: true } },
             anneeAcademique: true,
           },
@@ -1184,7 +1192,7 @@ export class ClasseService {
         .filter((i) => i.classe)
         .map(async (i) => {
           const classe = i.classe!;
-          const cycleCode = classe.niveau?.cycle?.code?.toUpperCase() ?? '';
+          const cycleCode = (classe.cycle?.code ?? classe.niveau?.cycle?.code ?? '').toUpperCase();
           const noteScale = ['MATERNELLE', 'PRIMAIRE', 'COLLEGE', 'CRECHE'].includes(cycleCode) ? 10 : 20;
           const periods = ['MATERNELLE', 'PRIMAIRE', 'CRECHE'].includes(cycleCode)
             ? ['SEMESTRE_1', 'SEMESTRE_2', 'SEMESTRE_3']
@@ -1227,7 +1235,7 @@ export class ClasseService {
               id: classe.id,
               nom: classe.nom,
               annee: classe.anneeAcademique?.libelle ?? null,
-              cycle: classe.niveau?.cycle?.libelle ?? null,
+              cycle: classe.cycle?.libelle ?? classe.niveau?.cycle?.libelle ?? null,
               bareme: noteScale,
             },
             periodes,
@@ -1244,13 +1252,25 @@ export class ClasseService {
   // ----------------------------------------------------------------
 
   async updateClasse(tenantId: string, id: string, dto: UpdateClasseDto) {
-    const existing = await this.prisma.classe.findFirst({ where: { id, tenantId } });
+    const existing = await this.prisma.classe.findFirst({
+      where: { id, tenantId },
+      include: {
+        cycle: { select: { id: true, code: true, libelle: true } },
+        niveau: { select: { id: true, cycleId: true, cycle: { select: { id: true, code: true, libelle: true } } } },
+      },
+    });
     if (!existing) throw new NotFoundException('Classe introuvable');
 
-    if (dto.niveauId) {
-      const niveau = await this.prisma.niveau.findFirst({ where: { id: dto.niveauId, tenantId } });
-      if (!niveau) throw new NotFoundException('Niveau introuvable');
-    }
+    const requestedNiveauId = dto.niveauId === undefined ? existing.niveauId : dto.niveauId;
+    const requestedCycleId = dto.cycleId === undefined
+      ? existing.cycleId ?? existing.niveau?.cycleId ?? null
+      : dto.cycleId;
+    const { niveau, cycle } = await this.resolveClasseCycleAndNiveau(
+      tenantId,
+      requestedCycleId ?? null,
+      requestedNiveauId ?? null,
+      dto.niveauId !== undefined || dto.cycleId !== undefined,
+    );
 
     if (dto.professeurResponsableId) {
       const prof = await this.prisma.user.findFirst({
@@ -1263,7 +1283,7 @@ export class ClasseService {
       where: { id },
       data: {
         ...(dto.nom ? { nom: dto.nom.trim() } : {}),
-        ...(dto.niveauId ? { niveauId: dto.niveauId } : {}),
+        ...(dto.niveauId !== undefined || dto.cycleId !== undefined ? { cycleId: cycle.id, niveauId: niveau?.id ?? null } : {}),
         ...(dto.professeurResponsableId !== undefined
           ? { professeurResponsableId: dto.professeurResponsableId }
           : {}),
@@ -1397,10 +1417,10 @@ export class ClasseService {
   async addStagiaire(tenantId: string, classeId: string, stagiaireId: string) {
     const classe = await this.prisma.classe.findFirst({
       where: { id: classeId, tenantId },
-      include: { niveau: { include: { cycle: true } } },
+      include: { cycle: true, niveau: { include: { cycle: true } } },
     });
     if (!classe) throw new NotFoundException('Classe introuvable');
-    const cycleCode = ((classe as any).niveau?.cycle?.code ?? '').toUpperCase();
+    const cycleCode = (classe.cycle?.code ?? classe.niveau?.cycle?.code ?? '').toUpperCase();
     if (!['MATERNELLE', 'PRIMAIRE', 'CRECHE'].includes(cycleCode)) {
       throw new ConflictException('Les stagiaires ne sont disponibles que pour les classes Crèche / Maternelle / Primaire');
     }
@@ -1483,6 +1503,7 @@ export class ClasseService {
         professeurResponsableId: true,
         anneeAcademiqueId: true,
         anneeAcademique: { select: { id: true, libelle: true } },
+        cycle: { select: { code: true } },
         niveau: { select: { cycle: { select: { code: true } } } },
         matiereClasses: {
           where: { enseignantId },
@@ -1691,8 +1712,58 @@ export class ClasseService {
       .toLowerCase() || 'export';
   }
 
+  private async resolveClasseCycleAndNiveau(
+    tenantId: string,
+    cycleId: string | null,
+    niveauId: string | null,
+    shouldValidate: boolean,
+  ): Promise<{
+    cycle: { id: string; code: string; libelle: string };
+    niveau: { id: string; cycleId: string } | null;
+  }> {
+    const normalizedNiveauId = String(niveauId ?? '').trim() || null;
+    const normalizedCycleId = String(cycleId ?? '').trim() || null;
+
+    if (normalizedNiveauId) {
+      const niveau = await this.prisma.niveau.findFirst({
+        where: { id: normalizedNiveauId, tenantId },
+        select: {
+          id: true,
+          cycleId: true,
+          cycle: { select: { id: true, code: true, libelle: true } },
+        },
+      });
+      if (!niveau) throw new NotFoundException('Niveau introuvable');
+      if (normalizedCycleId && normalizedCycleId !== niveau.cycleId) {
+        throw new BadRequestException('Le niveau sélectionné ne correspond pas au cycle choisi');
+      }
+      return { cycle: niveau.cycle, niveau: { id: niveau.id, cycleId: niveau.cycleId } };
+    }
+
+    if (!normalizedCycleId) {
+      throw new BadRequestException('Le cycle est obligatoire lorsque le niveau n’est pas renseigné');
+    }
+
+    const cycle = await this.prisma.cycle.findFirst({
+      where: { id: normalizedCycleId, tenantId },
+      select: { id: true, code: true, libelle: true },
+    });
+    if (!cycle) throw new NotFoundException('Cycle introuvable');
+
+    if (shouldValidate && !this.isNiveauOptionalForCycle(cycle.code)) {
+      throw new BadRequestException('Le niveau est obligatoire pour ce cycle');
+    }
+
+    return { cycle, niveau: null };
+  }
+
+  private isNiveauOptionalForCycle(code: string | null | undefined): boolean {
+    return String(code ?? '').trim().toUpperCase() === 'PRIMAIRE';
+  }
+
   private toResponse(classe: any) {
-    const cycleCode = classe.niveau?.cycle?.code ?? '';
+    const cycle = classe.cycle ?? classe.niveau?.cycle ?? null;
+    const cycleCode = cycle?.code ?? '';
     const isUnifiedSection = ['MATERNELLE', 'PRIMAIRE', 'CRECHE'].includes(cycleCode.toUpperCase());
 
     return {
@@ -1702,6 +1773,7 @@ export class ClasseService {
       anneeAcademique: classe.anneeAcademique
         ? { id: classe.anneeAcademique.id, libelle: classe.anneeAcademique.libelle, courante: classe.anneeAcademique.actif }
         : null,
+      cycle: cycle ? { id: cycle.id, code: cycle.code, nom: cycle.libelle } : null,
       niveau: classe.niveau
         ? {
             id: classe.niveau.id,
