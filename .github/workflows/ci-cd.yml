@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE_NAME: nouraschool-backend-nestjs
+  IMAGE_NAME: medaaris-backend
 
 jobs:
 
