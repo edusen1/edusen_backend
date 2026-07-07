@@ -486,7 +486,7 @@ export class DomainService {
     // This keeps a student's download aligned with the admin download, including
     // a logo or school-name update made after the bulletin record was created.
     const { buffer } = await this.bulletinDocument.generate(tenantId, bulletin.id);
-    const key = this.storage.buildBulletinKey(tenantId, eleveId, bulletin.trimestre);
+    const key = this.storage.buildBulletinKey(tenantId, eleveId, bulletin.trimestre, (bulletin as any).anneeScolaire);
     const fichierPdfUrl = await this.storage.upload(key, buffer, "application/pdf");
     await this.prisma.bulletin.update({ where: { id: bulletin.id }, data: { fichierPdfUrl } });
 
@@ -730,7 +730,12 @@ export class DomainService {
   private readonly paiementInclude = {
     inscription: {
       include: {
-        classe: { select: { id: true, nom: true } },
+        classe: {
+          include: {
+            niveau: { include: { cycle: true } },
+            cycle: true,
+          },
+        },
         anneeAcademique: { select: { id: true, libelle: true } },
       },
     },
@@ -748,6 +753,7 @@ export class DomainService {
         firstName: true,
         lastName: true,
         matricule: true,
+        photoUrl: true,
         telephone: true,
         elevParents: {
           select: {
@@ -759,7 +765,15 @@ export class DomainService {
       },
     });
     const map = new Map(users.map((u) => [u.id, u]));
-    return rows.map((r) => ({ ...r, eleve: map.get(r.eleveId ?? '') ?? null }));
+    return rows.map((r) => {
+      const eleve = map.get(r.eleveId ?? '');
+      return {
+        ...r,
+        eleve: eleve
+          ? { ...eleve, photoUrl: eleve.photoUrl ? (this.storage.resolveUrl(eleve.photoUrl) ?? eleve.photoUrl) : null }
+          : null,
+      };
+    });
   }
 
   async caisseDashboard(tenantId: string) {
@@ -872,6 +886,7 @@ export class DomainService {
       take: size,
     });
     rows = await this.attachEleveToPaiements(rows as any) as any;
+    rows = await this.enrichScolariteDebtRows(tenantId, rows as any) as any;
 
     if (filters.search) {
       const q = filters.search.toLowerCase();
@@ -886,11 +901,76 @@ export class DomainService {
     return { content: rows, total, page, size };
   }
 
+  private async enrichScolariteDebtRows<T extends Record<string, any>>(tenantId: string, rows: T[]): Promise<T[]> {
+    const targets = rows.filter((row) => row.typePaiement === 'SCOLARITE' && row.inscriptionId && row.trimestre);
+    if (!targets.length) return rows;
+
+    const cache = new Map<string, { montantDu: number; totalPaye: number; dette: number }>();
+    for (const row of targets) {
+      const cacheKey = `${row.inscriptionId}:${row.anneeScolaire}:${row.trimestre}`;
+      if (cache.has(cacheKey)) continue;
+
+      const classe = row.inscription?.classe;
+      const section = classe?.niveau?.cycle?.libelle ?? classe?.cycle?.libelle ?? '';
+      const niveau = classe?.niveau?.libelle ?? classe?.nom ?? '';
+      const [frais, reduction, total] = await Promise.all([
+        this.prisma.fraisNiveauConfig.findFirst({
+          where: { tenantId, actif: true, section, niveau },
+          select: { mensualite: true },
+        }),
+        this.prisma.demandeReduction.findFirst({
+          where: {
+            tenantId,
+            eleveId: row.eleveId,
+            statut: 'APPROUVEE',
+            OR: [{ inscriptionId: row.inscriptionId }, { inscriptionId: null }],
+          },
+          orderBy: { updatedAt: 'desc' },
+          select: { pourcentage: true },
+        }),
+        this.prisma.paiement.aggregate({
+          where: {
+            tenantId,
+            inscriptionId: row.inscriptionId,
+            eleveId: row.eleveId,
+            typePaiement: 'SCOLARITE',
+            anneeScolaire: row.anneeScolaire,
+            trimestre: row.trimestre,
+            statut: 'VALIDE',
+          },
+          _sum: { montant: true },
+        }),
+      ]);
+
+      const reductionPct = Math.max(0, Math.min(100, Number(reduction?.pourcentage ?? 0)));
+      const montantBrut = Math.round(Number(frais?.mensualite ?? row.montant ?? 0));
+      const montantDu = Math.round(montantBrut * (1 - reductionPct / 100));
+      const totalPaye = Math.round(Number(total._sum.montant ?? 0));
+      cache.set(cacheKey, { montantDu, totalPaye, dette: Math.max(0, montantDu - totalPaye) });
+    }
+
+    return rows.map((row) => {
+      const details = row.typePaiement === 'SCOLARITE' && row.inscriptionId && row.trimestre
+        ? cache.get(`${row.inscriptionId}:${row.anneeScolaire}:${row.trimestre}`)
+        : null;
+      return details
+        ? { ...row, _montantDu: details.montantDu, _totalPayeMois: details.totalPaye, _dette: details.dette }
+        : row;
+    });
+  }
+
   async caissePaiementById(id: string) {
     const row = await this.prisma.paiement.findUnique({ where: { id }, include: this.paiementInclude });
     if (!row) throw new NotFoundException('Paiement introuvable');
     const [hydrated] = await this.attachEleveToPaiements([row as any]);
     return hydrated;
+  }
+
+  async caissePaiementRecu(id: string): Promise<{ receiptPdfUrl: string | null }> {
+    const row = await this.prisma.paiement.findUnique({ where: { id }, include: this.paiementInclude });
+    if (!row) throw new NotFoundException('Paiement introuvable');
+    if (row.statut !== 'VALIDE') throw new BadRequestException('Le reçu est disponible uniquement pour un paiement validé');
+    return this.deliverPaymentReceipt(row as any);
   }
 
   async caisseCreatePaiement(
@@ -937,6 +1017,150 @@ export class DomainService {
     return { ...created, receiptPdfUrl: receipt?.receiptPdfUrl ?? null };
   }
 
+  async caisseCreateMensualitesPaiements(
+    tenantId: string,
+    body: {
+      eleveId: string;
+      mois: number[];
+      modePaiement: string;
+      anneeScolaire?: string;
+      transactionId?: string;
+      statut?: string;
+      montant?: number;
+      montantRecu?: number;
+    },
+    userId?: string,
+  ) {
+    const mois = [...new Set((body.mois ?? []).map((m) => Math.trunc(Number(m))).filter((m) => m >= 1 && m <= 12))].sort((a, b) => a - b);
+    if (!body.eleveId) throw new BadRequestException('Élève requis');
+    if (!mois.length) throw new BadRequestException('Sélectionnez au moins un mois');
+
+    const inscription = await this.prisma.inscription.findFirst({
+      where: { tenantId, eleveId: body.eleveId, statut: 'ACTIF' },
+      include: {
+        anneeAcademique: { select: { id: true, libelle: true } },
+        classe: {
+          include: {
+            niveau: { include: { cycle: true } },
+            cycle: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!inscription) throw new NotFoundException('Aucune inscription active pour cet élève');
+
+    const section = inscription.classe.niveau?.cycle?.libelle ?? inscription.classe.cycle?.libelle ?? '';
+    const niveau = inscription.classe.niveau?.libelle ?? inscription.classe.nom;
+    const frais = await this.prisma.fraisNiveauConfig.findFirst({
+      where: { tenantId, actif: true, section, niveau },
+      select: { mensualite: true },
+    });
+    if (!frais || Number(frais.mensualite) <= 0) {
+      throw new BadRequestException('Mensualité non configurée pour ce niveau');
+    }
+
+    const reduction = await this.prisma.demandeReduction.findFirst({
+      where: {
+        tenantId,
+        eleveId: body.eleveId,
+        statut: 'APPROUVEE',
+        OR: [{ inscriptionId: inscription.id }, { inscriptionId: null }],
+      },
+      orderBy: { updatedAt: 'desc' },
+      select: { pourcentage: true },
+    });
+    const reductionPct = Math.max(0, Math.min(100, Number(reduction?.pourcentage ?? 0)));
+    const montantMensuel = Math.round(Number(frais.mensualite) * (1 - reductionPct / 100));
+    if (montantMensuel <= 0) throw new BadRequestException('Montant mensuel invalide');
+
+    const anneeScolaire = body.anneeScolaire || inscription.anneeAcademique?.libelle;
+    const modePaiement = body.modePaiement as any;
+    const statut = (body.statut ?? 'VALIDE') as any;
+    const monthKeys = mois.map((m) => `MOIS_${String(m).padStart(2, '0')}`);
+    const existing = await this.prisma.paiement.findMany({
+      where: {
+        tenantId,
+        eleveId: body.eleveId,
+        inscriptionId: inscription.id,
+        typePaiement: 'SCOLARITE',
+        anneeScolaire,
+        trimestre: { in: monthKeys },
+        statut: { in: ['VALIDE', 'EN_ATTENTE'] },
+      },
+      select: { trimestre: true, montant: true, statut: true },
+    });
+    const paidByMonth = new Map<string, number>();
+    for (const payment of existing) {
+      if (!payment.trimestre) continue;
+      if (payment.statut !== 'VALIDE') continue;
+      paidByMonth.set(payment.trimestre, (paidByMonth.get(payment.trimestre) ?? 0) + Number(payment.montant ?? 0));
+    }
+    const payable = mois
+      .map((month) => {
+        const monthKey = `MOIS_${String(month).padStart(2, '0')}`;
+        const dejaPaye = Math.round(paidByMonth.get(monthKey) ?? 0);
+        return { month, monthKey, reste: Math.max(0, montantMensuel - dejaPaye) };
+      })
+      .filter((item) => item.reste > 0);
+    if (!payable.length) throw new ConflictException('Ces mensualités sont déjà soldées');
+
+    const montantRecuRaw = body.montantRecu ?? body.montant;
+    const montantRecu = montantRecuRaw === undefined || montantRecuRaw === null
+      ? null
+      : Math.round(Number(montantRecuRaw));
+    const totalRestant = payable.reduce((sum, item) => sum + item.reste, 0);
+    if (montantRecu !== null && (!Number.isFinite(montantRecu) || montantRecu <= 0)) {
+      throw new BadRequestException('Le montant reçu doit être supérieur à 0');
+    }
+    if (montantRecu !== null && montantRecu > totalRestant) {
+      throw new BadRequestException(`Le montant reçu ne peut pas dépasser ${totalRestant.toLocaleString('fr-FR')} F`);
+    }
+
+    const created = [];
+    let remainingReceived = montantRecu;
+    for (const item of payable) {
+      const month = item.month;
+      const monthKey = item.monthKey;
+      const montantPaiement = remainingReceived === null ? item.reste : Math.min(item.reste, remainingReceived);
+      if (montantPaiement <= 0) continue;
+      if (remainingReceived !== null) remainingReceived -= montantPaiement;
+      const reference = `MENS-${new Date().getFullYear()}${String(month).padStart(2, '0')}-${randomUUID().slice(0, 6).toUpperCase()}`;
+      const payment = await this.prisma.paiement.create({
+        data: {
+          tenantId,
+          eleveId: body.eleveId,
+          inscriptionId: inscription.id,
+          reference,
+          montant: montantPaiement,
+          typePaiement: 'SCOLARITE',
+          modePaiement,
+          statut,
+          anneeScolaire,
+          trimestre: monthKey,
+          description: `Mensualité ${this.monthLabel(month)}${reductionPct > 0 ? ` · réduction ${reductionPct}%` : ''}${montantPaiement < item.reste ? ' · paiement partiel' : ''}`,
+          transactionId: body.transactionId ?? null,
+          datePaiement: statut === 'VALIDE' ? new Date() : null,
+          validePar: statut === 'VALIDE' ? (userId ?? null) : null,
+        },
+        include: this.paiementInclude,
+      });
+      const receipt = statut === 'VALIDE' ? await this.deliverPaymentReceipt(payment as any).catch(() => null) : null;
+      created.push({ ...payment, receiptPdfUrl: receipt?.receiptPdfUrl ?? null });
+      if (remainingReceived !== null && remainingReceived <= 0) break;
+    }
+
+    return {
+      content: created,
+      count: created.length,
+      montantMensuel,
+      total: created.reduce((sum, payment) => sum + Number(payment.montant ?? 0), 0),
+      reductionPct,
+      dette: totalRestant - created.reduce((sum, payment) => sum + Number(payment.montant ?? 0), 0),
+      skippedMonths: mois.filter((m) => !payable.some((item) => item.month === m)),
+    };
+  }
+
   async caisseValiderPaiement(id: string, userId?: string) {
     const paiement = await this.prisma.paiement.findUnique({ where: { id } });
     if (!paiement) throw new NotFoundException('Paiement introuvable');
@@ -964,7 +1188,8 @@ export class DomainService {
   private async deliverPaymentReceipt(paiement: any): Promise<{ receiptPdfUrl: string | null }> {
     const hydrated = await this.hydratePaymentForReceipt(paiement);
     const generated = await this.paymentReceiptDocument.generate(hydrated.tenantId, hydrated);
-    const receiptKey = this.storage.buildKey('recu-paiements', hydrated.tenantId, generated.filename);
+    const annee = String(hydrated.anneeScolaire ?? hydrated.anneeAcademique?.libelle ?? new Date().getFullYear());
+    const receiptKey = this.storage.buildDocumentKey(hydrated.tenantId, 'recus', annee, hydrated.eleveId ?? 'commun', generated.filename);
     const receiptPdfUrl = await this.storage.upload(receiptKey, generated.buffer, 'application/pdf').catch(() => null);
 
     const parent = this.resolvePaymentParent(hydrated);
@@ -985,27 +1210,131 @@ export class DomainService {
   }
 
   private async hydratePaymentForReceipt(paiement: any): Promise<any> {
-    if (paiement?.eleve?.elevParents) return paiement;
+    const needsEleve = !paiement?.eleve?.elevParents;
+    const needsEncaisseur = !paiement.encaisseParNom && paiement.validePar;
+    const needsInscription = paiement.inscriptionId && !paiement.inscription;
 
-    const eleve = await this.prisma.user.findUnique({
-      where: { id: paiement.eleveId },
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        matricule: true,
-        telephone: true,
-        elevParents: {
-          select: {
-            parent: {
-              select: { id: true, firstName: true, lastName: true, telephone: true, lienParente: true },
+    const [eleve, encaisseur, inscription, reduction] = await Promise.all([
+      needsEleve
+        ? this.prisma.user.findUnique({
+            where: { id: paiement.eleveId },
+            select: {
+              id: true, firstName: true, lastName: true, matricule: true, telephone: true,
+              elevParents: {
+                select: { parent: { select: { id: true, firstName: true, lastName: true, telephone: true, lienParente: true } } },
+              },
             },
-          },
+          })
+        : Promise.resolve(null),
+      needsEncaisseur
+        ? this.prisma.user.findUnique({
+            where: { id: paiement.validePar },
+            select: { firstName: true, lastName: true, email: true },
+          })
+        : Promise.resolve(null),
+      needsInscription
+        ? this.prisma.inscription.findUnique({
+            where: { id: paiement.inscriptionId },
+            include: {
+              classe: {
+                include: {
+                  niveau: { include: { cycle: true } },
+                  cycle: true,
+                },
+              },
+              anneeAcademique: { select: { id: true, libelle: true } },
+            },
+          })
+        : Promise.resolve(null),
+      this.prisma.demandeReduction.findFirst({
+        where: {
+          tenantId: paiement.tenantId,
+          eleveId: paiement.eleveId,
+          statut: 'APPROUVEE',
+          OR: [
+            ...(paiement.inscriptionId ? [{ inscriptionId: paiement.inscriptionId }] : []),
+            { inscriptionId: null },
+          ],
         },
-      },
-    });
+        orderBy: { updatedAt: 'desc' },
+        select: { pourcentage: true, motif: true },
+      }),
+    ]);
 
-    return { ...paiement, eleve };
+    const enriched: any = { ...paiement };
+    if (eleve) enriched.eleve = eleve;
+    if (inscription) enriched.inscription = inscription;
+    if (encaisseur) {
+      enriched.encaisseParNom = `${encaisseur.firstName ?? ''} ${encaisseur.lastName ?? ''}`.trim() || null;
+      enriched.encaisseParEmail = encaisseur.email ?? null;
+    }
+    if (enriched.typePaiement === 'INSCRIPTION' && enriched.inscription?.fraisInscription != null) {
+      const previousPayments = enriched.inscriptionId
+        ? await this.prisma.paiement.aggregate({
+            where: {
+              tenantId: enriched.tenantId,
+              inscriptionId: enriched.inscriptionId,
+              typePaiement: 'INSCRIPTION',
+              statut: 'VALIDE',
+              id: { not: enriched.id },
+              createdAt: { lt: enriched.createdAt ?? new Date() },
+            },
+            _sum: { montant: true },
+          })
+        : null;
+      const paiementPrecedent = Math.round(Number(previousPayments?._sum.montant ?? 0));
+      const montantNet = Math.round(Number(enriched.inscription.fraisInscription ?? 0));
+      const reductionPct = Math.max(0, Math.min(100, Number(reduction?.pourcentage ?? 0)));
+      const montantBrut = reductionPct > 0 && reductionPct < 100
+        ? Math.round(montantNet / (1 - reductionPct / 100))
+        : montantNet;
+      const reductionMontant = Math.max(0, montantBrut - montantNet);
+      enriched.montantBrut = montantBrut;
+      enriched.montantNet = montantNet;
+      enriched.reduction = reductionMontant;
+      enriched.reductionLabel = reductionPct > 0 ? `Coupon / réduction ${reductionPct}%` : null;
+      enriched.paiementPrecedent = paiementPrecedent;
+      enriched.dette = Math.max(0, montantNet - paiementPrecedent - Math.round(Number(enriched.montant ?? 0)));
+    }
+    if (enriched.typePaiement === 'SCOLARITE' && enriched.inscription && enriched.trimestre) {
+      const previousPayments = enriched.inscriptionId
+        ? await this.prisma.paiement.aggregate({
+            where: {
+              tenantId: enriched.tenantId,
+              inscriptionId: enriched.inscriptionId,
+              typePaiement: 'SCOLARITE',
+              trimestre: enriched.trimestre,
+              anneeScolaire: enriched.anneeScolaire,
+              statut: 'VALIDE',
+              id: { not: enriched.id },
+              createdAt: { lt: enriched.createdAt ?? new Date() },
+            },
+            _sum: { montant: true },
+          })
+        : null;
+      const classe = enriched.inscription.classe;
+      const section = classe?.niveau?.cycle?.libelle ?? classe?.cycle?.libelle ?? '';
+      const niveau = classe?.niveau?.libelle ?? classe?.nom ?? '';
+      const frais = await this.prisma.fraisNiveauConfig.findFirst({
+        where: { tenantId: enriched.tenantId, actif: true, section, niveau },
+        select: { mensualite: true },
+      });
+      const reductionPct = Math.max(0, Math.min(100, Number(reduction?.pourcentage ?? 0)));
+      const montantBrut = Math.round(Number(frais?.mensualite ?? enriched.montant ?? 0));
+      const montantNet = Math.round(montantBrut * (1 - reductionPct / 100));
+      const paiementPrecedent = Math.round(Number(previousPayments?._sum.montant ?? 0));
+      enriched.montantBrut = montantBrut;
+      enriched.montantNet = montantNet;
+      enriched.reduction = Math.max(0, montantBrut - montantNet);
+      enriched.reductionLabel = reductionPct > 0 ? `Coupon / réduction ${reductionPct}%` : null;
+      enriched.paiementPrecedent = paiementPrecedent;
+      enriched.dette = Math.max(0, montantNet - paiementPrecedent - Math.round(Number(enriched.montant ?? 0)));
+    }
+    return enriched;
+  }
+
+  private monthLabel(month: number): string {
+    return ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'][month - 1] ?? `Mois ${month}`;
   }
 
   private resolvePaymentParent(paiement: any): { id?: string; firstName?: string | null; lastName?: string | null; telephone?: string | null } | null {

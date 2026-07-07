@@ -109,11 +109,8 @@ export class StudentController {
       throw new BadRequestException("Fichier trop volumineux (max 5 Mo).");
     }
 
-    const key = this.storage.buildKey(
-      `justificatifs/reclamations/${tenantId}`,
-      user.sub,
-      file.filename || "justificatif.pdf",
-    );
+    const annee = String(new Date().getFullYear());
+    const key = this.storage.buildDocumentKey(tenantId, 'justificatifs/reclamations', annee, user.sub, file.filename || 'justificatif.pdf');
     const stored = await this.storage.upload(key, buffer, file.mimetype);
     const url = stored.startsWith("http")
       ? stored

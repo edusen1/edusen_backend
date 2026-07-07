@@ -5,6 +5,7 @@ import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppAuthGuard } from '@/common/guards/app-auth.guard';
 import { GlobalExceptionFilter } from '@/common/filters/global-exception.filter';
 import { ResponseInterceptor } from '@/common/interceptors/response.interceptor';
+import { AuditInterceptor } from '@/common/interceptors/audit.interceptor';
 import { AppLoggerService } from '@/common/logger/app-logger.service';
 import { RequestContextService } from '@/common/performance/request-context.service';
 import { PrismaService } from '@/config/prisma.service';
@@ -38,8 +39,11 @@ import { BulletinService } from '@/modules/v1/bulletin/bulletin.service';
 import { MensualitesSchedulerService } from '@/modules/mensualites-scheduler.service';
 import { BulletinDocumentService } from '@/modules/bulletin-document.service';
 import { PaymentReceiptDocumentService } from '@/modules/payment-receipt-document.service';
+import { SchoolCardDocumentService } from '@/modules/school-card-document.service';
 import { PresenceProfesseurService } from '@/modules/presence-professeur.service';
 import { PushNotificationService } from '@/modules/push-notification.service';
+import { DemandeReductionService } from '@/modules/v1/demande-reduction/demande-reduction.service';
+import { EleveDocumentService } from '@/modules/eleve-document.service';
 
 @Module({
   imports: [
@@ -84,12 +88,16 @@ import { PushNotificationService } from '@/modules/push-notification.service';
     BulletinService,
     BulletinDocumentService,
     PaymentReceiptDocumentService,
+    SchoolCardDocumentService,
     PresenceProfesseurService,
     PushNotificationService,
     MensualitesSchedulerService,
+    DemandeReductionService,
+    EleveDocumentService,
     { provide: APP_GUARD, useClass: AppAuthGuard },
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
   ],
 })
 export class AppModule implements NestModule {

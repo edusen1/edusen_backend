@@ -187,6 +187,15 @@ export class V1Controller {
     return this.crud.desactiverInscription(tenantId, id);
   }
 
+  @Patch('inscriptions/:id/exclure')
+  exclureInscription(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: Payload,
+  ) {
+    return this.crud.exclureInscription(tenantId, id, Number(body.nbAnnees ?? 1));
+  }
+
   @Patch('inscriptions/:id/reactiver')
   reactiverInscription(
     @Headers('x-tenant-id') tenantId: string | undefined,

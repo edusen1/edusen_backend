@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -7,16 +8,23 @@ import {
   Headers,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Param,
   Post,
   Put,
   Query,
   Patch,
+  ParseIntPipe,
+  DefaultValuePipe,
+  Req,
 } from '@nestjs/common';
 import { Roles } from '@/common/decorators/roles.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import type { JwtUser } from '@/common/types/auth.types';
 import { LegacyCrudService } from '@/modules/legacy-crud.service';
+import { PrismaService } from '@/config/prisma.service';
+import { AuthService } from '@/modules/auth/auth.service';
+import type { MultipartFastifyRequest } from '@/common/types/multipart-request.types';
 import { EcoleConfigService } from '@/modules/configuration/ecole-config.service';
 import { UpdateEcoleConfigDto } from '@/modules/configuration/dto/update-ecole-config.dto';
 import { UpdateApparenceDto } from '@/modules/configuration/dto/update-apparence.dto';
@@ -32,7 +40,10 @@ import { EmploiDuTempsService } from '@/modules/v1/emploi-du-temps/emploi-du-tem
 import { BulletinService, PublishBulletinsDto } from '@/modules/v1/bulletin/bulletin.service';
 import { DomainService } from '@/modules/domain.service';
 import { PresenceProfesseurService } from '@/modules/presence-professeur.service';
-import { StatutPresence } from '@prisma/client';
+import { DemandeReductionService } from '@/modules/v1/demande-reduction/demande-reduction.service';
+import { SchoolCardDocumentService } from '@/modules/school-card-document.service';
+import { EleveDocumentService } from '@/modules/eleve-document.service';
+import { StatutPresence, TypeDocument } from '@prisma/client';
 
 type QueryParams = Record<string, string | string[] | undefined>;
 type Payload = Record<string, unknown>;
@@ -50,6 +61,11 @@ export class AdminController {
     private readonly bulletinService: BulletinService,
     private readonly domain: DomainService,
     private readonly presencesProfesseurs: PresenceProfesseurService,
+    private readonly prisma: PrismaService,
+    private readonly authService: AuthService,
+    private readonly demandeReduction: DemandeReductionService,
+    private readonly schoolCards: SchoolCardDocumentService,
+    private readonly eleveDocuments: EleveDocumentService,
   ) {}
 
   private resolveTenantId(tenantId: string | undefined, user?: JwtUser) {
@@ -586,6 +602,24 @@ export class AdminController {
     return this.academiqueConfig.createAnnee(tid!, {
       libelle: String(body.libelle ?? ''),
       active: Boolean(body.active ?? body.estCourante ?? false),
+      dateDebut: body.dateDebut ? String(body.dateDebut) : undefined,
+      dateFin: body.dateFin ? String(body.dateFin) : null,
+    });
+  }
+
+  @Roles('ADMIN')
+  @Patch('configuration/annees-academiques/:id')
+  updateAnnee(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = tenantId?.trim() || user?.tenantId;
+    return this.academiqueConfig.updateAnnee(tid!, id, {
+      libelle: body.libelle !== undefined ? String(body.libelle) : undefined,
+      dateDebut: body.dateDebut !== undefined ? String(body.dateDebut) : undefined,
+      dateFin: body.dateFin !== undefined ? (body.dateFin ? String(body.dateFin) : null) : undefined,
     });
   }
 
@@ -598,6 +632,17 @@ export class AdminController {
   ) {
     const tid = tenantId?.trim() || user?.tenantId;
     return this.academiqueConfig.activateAnnee(tid!, id);
+  }
+
+  @Roles('ADMIN')
+  @Patch('configuration/annees-academiques/:id/finir')
+  finirAnnee(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = tenantId?.trim() || user?.tenantId;
+    return this.academiqueConfig.finishAnnee(tid!, id);
   }
 
   @Roles('ADMIN')
@@ -922,6 +967,11 @@ export class AdminController {
     return this.domain.caissePaiementById(id);
   }
 
+  @Get('paiements/:id/recu')
+  getPaiementRecu(@Param('id') id: string) {
+    return this.domain.caissePaiementRecu(id);
+  }
+
   @Post('paiements')
   createPaiement(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -929,6 +979,15 @@ export class AdminController {
     @CurrentUser() user?: JwtUser,
   ) {
     return this.domain.caisseCreatePaiement(tenantId!, body as any, user?.sub);
+  }
+
+  @Post('paiements/mensualites')
+  createMensualitesPaiements(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.domain.caisseCreateMensualitesPaiements(tenantId!, body as any, user?.sub);
   }
 
   @Post('paiements/:id/valider')
@@ -976,6 +1035,218 @@ export class AdminController {
   }
 
   // ----------------------------------------------------------------
+  // Upload photo utilisateur (élève, enseignant, parent…)
+  // ----------------------------------------------------------------
+
+  @Roles('ADMIN')
+  @Post('users/:id/photo')
+  @HttpCode(HttpStatus.OK)
+  async uploadUserPhoto(
+    @Param('id') id: string,
+    @Req() req: MultipartFastifyRequest,
+    @Body() body: { photoUrl?: string },
+  ) {
+    if (req.isMultipart?.()) {
+      const file = await req.file();
+      if (!file) throw new BadRequestException('Aucun fichier fourni');
+      const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+      if (!allowed.includes(file.mimetype)) {
+        throw new BadRequestException('Format non supporté. Utilisez JPEG, PNG, WebP ou GIF.');
+      }
+      const buffer = await file.toBuffer();
+      if (buffer.length > 2_000_000) throw new BadRequestException('Photo trop volumineuse (max 2 Mo)');
+      const photoUrl = await this.authService.uploadProfilePhoto(id, buffer, file.mimetype, file.filename);
+      return { photoUrl };
+    }
+    if (!body?.photoUrl) throw new BadRequestException('photoUrl requis');
+    const match = body.photoUrl.match(/^data:(image\/[a-zA-Z+]+);base64,(.+)$/);
+    if (!match) throw new BadRequestException('Format invalide — data URL base64 attendu');
+    const contentType = match[1];
+    const buffer = Buffer.from(match[2], 'base64');
+    if (buffer.length > 2_000_000) throw new BadRequestException('Photo trop volumineuse (max 2 Mo)');
+    const photoUrl = await this.authService.uploadProfilePhoto(id, buffer, contentType, 'photo');
+    return { photoUrl };
+  }
+
+  @Roles('ADMIN', 'CAISSIER', 'RH')
+  @Post('users/:id/carte-scolaire')
+  async generateUserSchoolCard(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: { inscriptionId?: string | null },
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    return this.schoolCards.generateForUser(tid, id, { inscriptionId: body?.inscriptionId ?? null });
+  }
+
+  @Roles('ADMIN', 'CAISSIER')
+  @Post('inscriptions/:id/carte-scolaire')
+  async generateInscriptionSchoolCard(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    const inscription = await this.prisma.inscription.findFirst({
+      where: { id, tenantId: tid },
+      select: { eleveId: true },
+    });
+    if (!inscription) throw new BadRequestException('Inscription introuvable');
+    return this.schoolCards.generateForUser(tid, inscription.eleveId, { inscriptionId: id });
+  }
+
+  // ----------------------------------------------------------------
+  // Statut élève : désactiver / exclure
+  // ----------------------------------------------------------------
+
+  @Roles('ADMIN')
+  @Patch('eleves/:id/desactiver')
+  async desactiverEleve(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') eleveId: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    const insc = await this.prisma.inscription.findFirst({
+      where: { tenantId: tid, eleveId, statut: 'ACTIF' },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (!insc) throw new NotFoundException('Inscription active introuvable pour cet élève');
+    return this.crud.desactiverInscription(tid, insc.id);
+  }
+
+  @Roles('ADMIN')
+  @Patch('eleves/:id/exclure')
+  async exclureEleve(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') eleveId: string,
+    @Body() body: { nbAnnees?: number },
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    const insc = await this.prisma.inscription.findFirst({
+      where: { tenantId: tid, eleveId, statut: 'ACTIF' },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (!insc) throw new NotFoundException('Inscription active introuvable pour cet élève');
+    return this.crud.exclureInscription(tid, insc.id, body.nbAnnees ?? 1);
+  }
+
+  // Documents élève (dossier scolaire)
+  // ----------------------------------------------------------------
+
+  @Roles('ADMIN', 'CAISSIER', 'COMPTABLE')
+  @Get('eleves/:id/documents')
+  getEleveDocuments(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') eleveId: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.resolveTenantId(tenantId, user).then((tid) =>
+      this.eleveDocuments.listDocuments(tid!, eleveId),
+    );
+  }
+
+  @Roles('ADMIN', 'CAISSIER', 'COMPTABLE')
+  @Post('eleves/:id/documents')
+  @HttpCode(HttpStatus.CREATED)
+  uploadEleveDocument(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') eleveId: string,
+    @Body() body: { type: string; nom?: string; fileBase64: string; mimeType: string },
+    @CurrentUser() user?: JwtUser,
+  ) {
+    if (!body?.fileBase64 || !body?.mimeType || !body?.type) {
+      throw new BadRequestException('type, fileBase64 et mimeType sont requis');
+    }
+    return this.resolveTenantId(tenantId, user).then((tid) =>
+      this.eleveDocuments.uploadDocument(tid!, eleveId, user?.sub ?? '', {
+        type: body.type as TypeDocument,
+        nom: body.nom ?? '',
+        fileBase64: body.fileBase64,
+        mimeType: body.mimeType,
+      }),
+    );
+  }
+
+  @Roles('ADMIN', 'CAISSIER', 'COMPTABLE')
+  @Get('eleves/:id/documents/:docId/url')
+  getEleveDocumentUrl(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') eleveId: string,
+    @Param('docId') docId: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.resolveTenantId(tenantId, user).then((tid) =>
+      this.eleveDocuments.getDownloadUrl(tid!, eleveId, docId),
+    );
+  }
+
+  @Roles('ADMIN')
+  @Delete('eleves/:id/documents/:docId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  deleteEleveDocument(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') eleveId: string,
+    @Param('docId') docId: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.resolveTenantId(tenantId, user).then((tid) =>
+      this.eleveDocuments.deleteDocument(tid!, eleveId, docId),
+    );
+  }
+
+  // ----------------------------------------------------------------
+  // Audit logs — ADMIN uniquement
+  // ----------------------------------------------------------------
+
+  @Roles('ADMIN')
+  @Get('audit-logs')
+  async getAuditLogs(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user?: JwtUser,
+    @Query('page', new DefaultValuePipe(0), ParseIntPipe) page = 0,
+    @Query('size', new DefaultValuePipe(50), ParseIntPipe) size = 50,
+    @Query('resourceType') resourceType?: string,
+    @Query('action') action?: string,
+    @Query('utilisateurId') utilisateurId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const tid = (tenantId?.trim() || user?.tenantId) ?? '';
+    const where: Record<string, unknown> = { tenantId: tid };
+    if (resourceType) where['resourceType'] = resourceType;
+    if (action) where['action'] = action;
+    if (utilisateurId) where['utilisateurId'] = utilisateurId;
+    if (from || to) {
+      const range: Record<string, Date> = {};
+      if (from) range['gte'] = new Date(from);
+      if (to) range['lte'] = new Date(to);
+      where['createdAt'] = range;
+    }
+    const [data, total] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: page * size,
+        take: size,
+        include: {
+          utilisateur: { select: { id: true, firstName: true, lastName: true, email: true, role: true } },
+        },
+      }),
+      this.prisma.auditLog.count({ where }),
+    ]);
+    return { data, total, page, size };
+  }
+
+  // ----------------------------------------------------------------
   // Routes génériques (doivent rester après les routes spécifiques)
   // ----------------------------------------------------------------
 
@@ -1000,14 +1271,35 @@ export class AdminController {
   }
 
   @Post(':resource')
-  create(
+  async create(
     @Headers('x-tenant-id') tenantId: string | undefined,
     @Param('resource') resource: string,
     @Body() body: Payload,
     @CurrentUser() user?: JwtUser,
   ) {
     this.assertResourceWriteAccess(resource, user);
-    return this.resolveTenantId(tenantId, user).then((tid) => this.crud.create(this.crud.adminConfig(resource), tid, body, user?.sub));
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    const created = await this.crud.create(this.crud.adminConfig(resource), tid, body, user?.sub);
+    if (resource === 'eleves') {
+      const eleve = created as Payload;
+      const eleveId = typeof eleve.id === 'string'
+        ? eleve.id
+        : typeof eleve.eleveId === 'string'
+          ? eleve.eleveId
+          : '';
+      if (eleveId) {
+        const card = await this.schoolCards
+          .generateForUser(tid, eleveId)
+          .catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : 'Erreur inconnue';
+            console.warn(`[SchoolCard] Génération ignorée pour eleve=${eleveId}: ${message}`);
+            return null;
+          });
+        return { ...eleve, cardUrl: card?.cardUrl ?? null, cardImageUrl: card?.cardImageUrl ?? null };
+      }
+    }
+    return created;
   }
 
   @Put(':resource/:id')
@@ -1032,5 +1324,66 @@ export class AdminController {
   ) {
     this.assertResourceWriteAccess(resource, user);
     return this.resolveTenantId(tenantId, user).then((tid) => this.crud.delete(this.crud.adminConfig(resource), tid, id));
+  }
+
+  // ----------------------------------------------------------------
+  // Demandes de réduction / coupons
+  // COMPTABLE : crée une demande avec motif
+  // ADMIN     : liste tout + approuve / rejette
+  // ----------------------------------------------------------------
+
+  @Roles('ADMIN', 'COMPTABLE', 'CAISSIER')
+  @Post('reductions/demandes')
+  creerDemandeReduction(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: { eleveId: string; inscriptionId?: string; pourcentage: number; motif: string; commentaireAdmin?: string },
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = (tenantId?.trim() || user?.tenantId)!;
+    if (user?.role === 'ADMIN') {
+      return this.demandeReduction.createApproved(tid, body, user?.sub ?? '');
+    }
+    return this.demandeReduction.create(tid, body, user?.sub ?? '');
+  }
+
+  @Roles('ADMIN', 'COMPTABLE', 'CAISSIER')
+  @Get('reductions/demandes')
+  getDemandesReduction(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Query('statut') statut?: string,
+    @Query('eleveId') eleveId?: string,
+    @Query('mine') mine?: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = (tenantId?.trim() || user?.tenantId)!;
+    // COMPTABLE/CAISSIER ne voient que leurs propres demandes (sauf si admin)
+    if (user?.role !== 'ADMIN' && mine !== 'false') {
+      return this.demandeReduction.findMine(tid, user?.sub ?? '');
+    }
+    return this.demandeReduction.findAll(tid, statut, eleveId);
+  }
+
+  @Roles('ADMIN')
+  @Patch('reductions/demandes/:id/approuver')
+  approuverDemandeReduction(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: { commentaire?: string },
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = (tenantId?.trim() || user?.tenantId)!;
+    return this.demandeReduction.approuver(tid, id, user?.sub ?? '', body.commentaire);
+  }
+
+  @Roles('ADMIN')
+  @Patch('reductions/demandes/:id/rejeter')
+  rejeterDemandeReduction(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: { commentaire: string },
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = (tenantId?.trim() || user?.tenantId)!;
+    return this.demandeReduction.rejeter(tid, id, user?.sub ?? '', body.commentaire ?? '');
   }
 }

@@ -303,7 +303,8 @@ export class TeacherController {
     }
 
     const buffer = await file.toBuffer();
-    const key = this.storage.buildKey('justificatifs', tenantId, file.filename || 'justificatif.pdf');
+    const annee = String(new Date().getFullYear());
+    const key = this.storage.buildDocumentKey(tenantId, 'justificatifs/absences', annee, user?.sub ?? 'inconnu', file.filename || 'justificatif.pdf');
     const stored = await this.storage.upload(key, buffer, file.mimetype);
     const url = stored.startsWith('http') ? stored : this.storage.buildPublicAccessUrl(stored);
     return { justificatifUrl: url, key };

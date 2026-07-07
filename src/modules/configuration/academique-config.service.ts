@@ -539,9 +539,9 @@ export class AcademiqueConfigService {
     })) as AnneeRow[];
 
     // L'annee en cours est l'annee active metier.
-    const activeRow = rows.find((r: AnneeRow) => r.actif) ?? rows[0] ?? null;
-    return rows.map((r: AnneeRow, i: number) => {
-      const isActive = activeRow ? r.id === activeRow.id : i === 0;
+    const activeRow = rows.find((r: AnneeRow) => r.actif) ?? null;
+    return rows.map((r: AnneeRow) => {
+      const isActive = activeRow ? r.id === activeRow.id : false;
       return {
         id: r.id,
         libelle: r.libelle,
@@ -555,14 +555,21 @@ export class AcademiqueConfigService {
 
   async getAnneeCourante(tenantId: string): Promise<AnneeAcademiqueResponse | null> {
     const annees = await this.getAnnees(tenantId);
-    return annees.find((annee) => annee.active) ?? annees[0] ?? null;
+    return annees.find((annee) => annee.active) ?? null;
   }
 
-  async createAnnee(tenantId: string, dto: { libelle: string; active?: boolean; estCourante?: boolean }): Promise<AnneeAcademiqueResponse> {
+  async createAnnee(tenantId: string, dto: { libelle: string; active?: boolean; estCourante?: boolean; dateDebut?: string; dateFin?: string | null }): Promise<AnneeAcademiqueResponse> {
     await this.assertTenantExists(tenantId);
     const active = dto.active ?? dto.estCourante ?? false;
     const existing = await this.prisma.anneeAcademique.findFirst({ where: { tenantId, libelle: dto.libelle } });
     if (existing) throw new ConflictException('Une année avec ce libellé existe déjà');
+    const previousActiveAnnee = active
+      ? await this.prisma.anneeAcademique.findFirst({
+          where: { tenantId, OR: [{ estCourante: true }, { actif: true }] },
+          orderBy: { dateDebut: 'desc' },
+          select: { id: true },
+        })
+      : null;
 
     if (active) {
       await this.prisma.anneeAcademique.updateMany({
@@ -579,16 +586,17 @@ export class AcademiqueConfigService {
       data: {
         tenantId,
         libelle: dto.libelle,
-        dateDebut: new Date(),
-        dateFin: null,
+        dateDebut: dto.dateDebut ? new Date(dto.dateDebut) : new Date(),
+        dateFin: dto.dateFin ? new Date(dto.dateFin) : null,
         estCourante: active,
         actif: active,
       },
     });
 
     if (active) {
-      await this.duplicateClassesOnceForYear(tenantId, created.id);
+      await this.duplicateClassesOnceForYear(tenantId, created.id, previousActiveAnnee?.id);
       await this.syncClassActivityForActiveYear(tenantId, created.id);
+      await this.terminatePreviousYearInscriptions(tenantId, created.id);
     }
 
     const anneeResponse: AnneeAcademiqueResponse = {
@@ -611,6 +619,11 @@ export class AcademiqueConfigService {
     await this.assertTenantExists(tenantId);
     const annee = await this.prisma.anneeAcademique.findFirst({ where: { id, tenantId } });
     if (!annee) throw new NotFoundException('Année académique introuvable');
+    const previousActiveAnnee = await this.prisma.anneeAcademique.findFirst({
+      where: { tenantId, id: { not: id }, OR: [{ estCourante: true }, { actif: true }] },
+      orderBy: { dateDebut: 'desc' },
+      select: { id: true },
+    });
 
     await this.prisma.anneeAcademique.updateMany({
       where: { tenantId, id: { not: id }, OR: [{ estCourante: true }, { actif: true }] },
@@ -620,8 +633,9 @@ export class AcademiqueConfigService {
       where: { id },
       data: { estCourante: true, actif: true, dateFin: null },
     });
-    await this.duplicateClassesOnceForYear(tenantId, id);
+    await this.duplicateClassesOnceForYear(tenantId, id, previousActiveAnnee?.id);
     await this.syncClassActivityForActiveYear(tenantId, id);
+    await this.terminatePreviousYearInscriptions(tenantId, id);
 
     return {
       id: updated.id,
@@ -642,29 +656,126 @@ export class AcademiqueConfigService {
     if (!exists) throw new NotFoundException('Tenant introuvable');
   }
 
+  async updateAnnee(
+    tenantId: string,
+    id: string,
+    dto: { libelle?: string; dateDebut?: string; dateFin?: string | null },
+  ): Promise<AnneeAcademiqueResponse> {
+    await this.assertTenantExists(tenantId);
+    const annee = await this.prisma.anneeAcademique.findFirst({ where: { id, tenantId } });
+    if (!annee) throw new NotFoundException('Année académique introuvable');
+
+    if (dto.libelle?.trim() && dto.libelle.trim() !== annee.libelle) {
+      const existing = await this.prisma.anneeAcademique.findFirst({
+        where: { tenantId, libelle: dto.libelle.trim(), id: { not: id } },
+        select: { id: true },
+      });
+      if (existing) throw new ConflictException('Une année avec ce libellé existe déjà');
+    }
+
+    const updated = await this.prisma.anneeAcademique.update({
+      where: { id },
+      data: {
+        ...(dto.libelle !== undefined ? { libelle: dto.libelle.trim() } : {}),
+        ...(dto.dateDebut !== undefined ? { dateDebut: new Date(dto.dateDebut) } : {}),
+        ...(dto.dateFin !== undefined ? { dateFin: dto.dateFin ? new Date(dto.dateFin) : null } : {}),
+      },
+    });
+
+    return {
+      id: updated.id,
+      libelle: updated.libelle,
+      dateDebut: updated.dateDebut.toISOString(),
+      dateFin: updated.dateFin?.toISOString() ?? null,
+      active: updated.actif,
+      statut: updated.actif ? 'OUVERTE' : 'CLOTUREE',
+    };
+  }
+
+  async finishAnnee(tenantId: string, id: string): Promise<AnneeAcademiqueResponse> {
+    await this.assertTenantExists(tenantId);
+    const annee = await this.prisma.anneeAcademique.findFirst({ where: { id, tenantId } });
+    if (!annee) throw new NotFoundException('Année académique introuvable');
+
+    const updated = await this.prisma.anneeAcademique.update({
+      where: { id },
+      data: { estCourante: false, actif: false, dateFin: new Date() },
+    });
+    await this.terminateYearInscriptions(tenantId, id);
+
+    return {
+      id: updated.id,
+      libelle: updated.libelle,
+      dateDebut: updated.dateDebut.toISOString(),
+      dateFin: updated.dateFin?.toISOString() ?? null,
+      active: false,
+      statut: 'CLOTUREE',
+    };
+  }
+
+  private async terminatePreviousYearInscriptions(tenantId: string, currentAnneeId: string): Promise<void> {
+    await this.prisma.inscription.updateMany({
+      where: {
+        tenantId,
+        statut: 'ACTIF',
+        anneeAcademiqueId: { not: currentAnneeId },
+      },
+      data: { statut: 'INACTIF' },
+    });
+  }
+
+  private async terminateYearInscriptions(tenantId: string, anneeId: string): Promise<void> {
+    await this.prisma.inscription.updateMany({
+      where: {
+        tenantId,
+        statut: 'ACTIF',
+        anneeAcademiqueId: anneeId,
+      },
+      data: { statut: 'INACTIF' },
+    });
+  }
+
   private async assertSectionBelongsToTenant(tenantId: string, sectionId?: string | null): Promise<void> {
     if (!sectionId) return;
     const section = await this.prisma.cycle.findFirst({ where: { id: sectionId, tenantId }, select: { id: true } });
     if (!section) throw new NotFoundException('Section introuvable');
   }
 
-  private async duplicateClassesOnceForYear(tenantId: string, targetAnneeId: string): Promise<void> {
+  private async duplicateClassesOnceForYear(tenantId: string, targetAnneeId: string, sourceAnneeId?: string): Promise<void> {
     const targetAnnee = await this.prisma.anneeAcademique.findFirst({
       where: { id: targetAnneeId, tenantId },
       select: { id: true, dateDebut: true, classesDupliquees: true },
     });
     if (!targetAnnee || targetAnnee.classesDupliquees) return;
 
-    const sourceAnnee = await this.prisma.anneeAcademique.findFirst({
-      where: { tenantId, id: { not: targetAnnee.id }, dateDebut: { lt: targetAnnee.dateDebut } },
-      orderBy: { dateDebut: 'desc' },
-      select: { id: true },
-    });
-    if (!sourceAnnee) return;
+    const sourceAnnee = sourceAnneeId && sourceAnneeId !== targetAnnee.id
+      ? await this.prisma.anneeAcademique.findFirst({
+          where: { id: sourceAnneeId, tenantId },
+          select: { id: true },
+        })
+      : await this.prisma.anneeAcademique.findFirst({
+          where: { tenantId, id: { not: targetAnnee.id }, dateDebut: { lt: targetAnnee.dateDebut } },
+          orderBy: { dateDebut: 'desc' },
+          select: { id: true },
+        });
+    if (!sourceAnnee) {
+      await this.prisma.anneeAcademique.update({
+        where: { id: targetAnnee.id },
+        data: { classesDupliquees: true },
+      });
+      return;
+    }
 
     const sourceClasses = await this.prisma.classe.findMany({
       where: { tenantId, anneeAcademiqueId: sourceAnnee.id },
-      select: { nom: true, niveauId: true, effectifMax: true, professeurResponsableId: true },
+      select: {
+        nom: true,
+        cycleId: true,
+        niveauId: true,
+        salleId: true,
+        effectifMax: true,
+        professeurResponsableId: true,
+      },
     });
 
     for (const classe of sourceClasses) {
@@ -678,7 +789,9 @@ export class AcademiqueConfigService {
         data: {
           tenantId,
           nom: classe.nom,
+          cycleId: classe.cycleId,
           niveauId: classe.niveauId,
+          salleId: classe.salleId,
           anneeAcademiqueId: targetAnnee.id,
           effectifMax: classe.effectifMax,
           professeurResponsableId: classe.professeurResponsableId,

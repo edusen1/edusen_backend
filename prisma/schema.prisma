@@ -95,8 +95,26 @@ enum StatutBulletin {
   PUBLIE
 }
 
+enum StatutDemande {
+  EN_ATTENTE
+  APPROUVEE
+  REJETEE
+}
+
+enum TypeDocument {
+  EXTRAIT_NAISSANCE
+  PHOTO_CNI
+  VISITE_MEDICALE
+  CARNET_SANTE
+  VACCINATION
+  DIPLOME
+  PHOTO
+  AUTRE
+}
+
 enum StatutInscription {
   ACTIF
+  INACTIF
   TRANSFERE
   EXCLU
   TERMINE
@@ -232,6 +250,9 @@ model Tenant {
   surveillantCycles   SurveillantCycle[]
   classeStagiaires    ClasseStagiaire[]
   ecolePalettes       EcolePaletteConfig[]
+  matiereNiveaux      MatiereNiveau[]
+  demandesReduction   DemandeReduction[]
+  eleveDocuments      EleveDocument[]
 }
 
 // ==================== FRAIS NIVEAU CONFIG ====================
@@ -429,6 +450,34 @@ model User {
   classesResponsable Classe[]             @relation("ClasseProfResponsable")
   stagiaireIn        ClasseStagiaire[]    @relation("UserStagiaires")
   pushTokens          PushToken[]
+  demandesReductionEleve     DemandeReduction[] @relation("DemandeReductionEleve")
+  demandesReductionDemandees DemandeReduction[] @relation("DemandeReductionDemandeur")
+  demandesReductionTraitees  DemandeReduction[] @relation("DemandeReductionTraiteur")
+  demandesPassageEleve       DemandePassage[]    @relation("DemandePassageEleve")
+  demandesPassageCreees      DemandePassage[]    @relation("DemandePassageCreateur")
+  demandesPassageTraitees    DemandePassage[]    @relation("DemandePassageTraiteur")
+  eleveDocuments             EleveDocument[]     @relation("EleveDocuments")
+}
+
+// ==================== ELEVE DOCUMENTS ====================
+
+model EleveDocument {
+  id           String       @id @default(uuid()) @db.Uuid
+  tenantId     String       @db.Uuid
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  eleveId      String       @db.Uuid
+  eleve        User         @relation("EleveDocuments", fields: [eleveId], references: [id], onDelete: Cascade)
+  type         TypeDocument
+  nom          String       @db.VarChar(300)
+  fileKey      String       @db.VarChar(1000)
+  mimeType     String       @db.VarChar(100)
+  taille       Int
+  uploadedById String?      @db.Uuid
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([tenantId, eleveId])
+  @@map("eleve_documents")
 }
 
 // ==================== ELEVE-PARENT ====================
@@ -476,8 +525,9 @@ model Niveau {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  classes Classe[]
+  classes               Classe[]
   personnelAffectations PersonnelNiveauAffectation[]
+  matiereNiveaux        MatiereNiveau[]
 
   @@unique([tenantId, code])
 }
@@ -592,6 +642,7 @@ model Matiere {
   tenant      Tenant   @relation(fields: [tenantId], references: [id])
   code        String   @db.VarChar(20)
   libelle     String
+  categorie   String?
   description String?
   actif       Boolean  @default(true)
   createdAt   DateTime @default(now())
@@ -599,10 +650,11 @@ model Matiere {
 
   @@unique([tenantId, code])
 
-  matiereClasses MatiereClasse[]
-  cours          Cours[]
-  notes          Note[]
-  professeurs    ProfesseurMatiere[] @relation("ProfesseurMatieres")
+  matiereClasses  MatiereClasse[]
+  matiereNiveaux  MatiereNiveau[]
+  cours           Cours[]
+  notes           Note[]
+  professeurs     ProfesseurMatiere[] @relation("ProfesseurMatieres")
 }
 
 model ProfesseurMatiere {
@@ -637,6 +689,23 @@ model MatiereClasse {
   updatedAt         DateTime        @updatedAt
 
   @@unique([matiereId, classeId, enseignantId, anneeAcademiqueId])
+}
+
+model MatiereNiveau {
+  id                 String   @id @default(uuid()) @db.Uuid
+  tenantId           String   @db.Uuid
+  tenant             Tenant   @relation(fields: [tenantId], references: [id])
+  niveauId           String   @db.Uuid
+  niveau             Niveau   @relation(fields: [niveauId], references: [id])
+  matiereId          String   @db.Uuid
+  matiere            Matiere  @relation(fields: [matiereId], references: [id])
+  coefficient        Float    @default(1)
+  volumeHoraireHebdo Int?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([tenantId, niveauId, matiereId])
+  @@index([tenantId, niveauId])
 }
 
 model Cours {
@@ -682,11 +751,38 @@ model Inscription {
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
-  paiements Paiement[]
+  paiements         Paiement[]
+  demandesReduction DemandeReduction[]
 
   @@unique([tenantId, eleveId, anneeAcademiqueId], map: "inscriptions_tenant_eleve_annee_unique")
   @@index([tenantId, statut], map: "inscriptions_tenantId_statut_idx")
   @@index([tenantId, classeId, statut, anneeAcademiqueId], map: "inscriptions_bulletin_batch_idx")
+}
+
+// ==================== DEMANDES REDUCTION ====================
+
+model DemandeReduction {
+  id               String        @id @default(uuid()) @db.Uuid
+  tenantId         String        @db.Uuid
+  tenant           Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  eleveId          String        @db.Uuid
+  eleve            User          @relation("DemandeReductionEleve", fields: [eleveId], references: [id])
+  inscriptionId    String?       @db.Uuid
+  inscription      Inscription?  @relation(fields: [inscriptionId], references: [id])
+  pourcentage      Float
+  motif            String        @db.Text
+  statut           StatutDemande @default(EN_ATTENTE)
+  demandePar       String        @db.Uuid
+  demandeParUser   User          @relation("DemandeReductionDemandeur", fields: [demandePar], references: [id])
+  traitePar        String?       @db.Uuid
+  traiteParUser    User?         @relation("DemandeReductionTraiteur", fields: [traitePar], references: [id])
+  commentaireAdmin String?       @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, statut])
+  @@index([tenantId, eleveId])
 }
 
 // ==================== GRADES ====================
@@ -1237,6 +1333,7 @@ model DemandePassage {
   tenantId          String               @db.Uuid
   tenant            Tenant               @relation(fields: [tenantId], references: [id])
   eleveId           String               @db.Uuid
+  eleve             User                 @relation("DemandePassageEleve", fields: [eleveId], references: [id])
   classeDestId      String               @db.Uuid
   classeDest        Classe               @relation(fields: [classeDestId], references: [id])
   anneeAcademiqueId String               @db.Uuid
@@ -1244,7 +1341,9 @@ model DemandePassage {
   motif             String?
   statut            StatutDemandePassage @default(EN_ATTENTE)
   creePar           String               @db.Uuid
+  creeParUser       User                 @relation("DemandePassageCreateur", fields: [creePar], references: [id])
   traitePar         String?              @db.Uuid
+  traiteParUser     User?                @relation("DemandePassageTraiteur", fields: [traitePar], references: [id])
   motifRefus        String?
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt

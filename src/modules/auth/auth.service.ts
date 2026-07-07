@@ -533,15 +533,25 @@ export class AuthService {
   // ==================== UPLOAD PHOTO ====================
 
   async uploadProfilePhoto(userId: string, buffer: Buffer, contentType: string, originalName: string): Promise<string> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, tenantId: true } });
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, tenantId: true, role: true } });
     if (!user) throw new UnauthorizedException('Utilisateur introuvable');
 
-    const key = this.storage.buildPhotoKey(user.tenantId, userId);
-    await this.storage.upload(key, buffer, contentType);
+    let photoUrl: string;
 
-    const resolvedUrl = this.storage.resolveUrl(key)!;
-    await this.prisma.user.update({ where: { id: userId }, data: { photoUrl: key } });
-    this.logger.log(`[Auth] Photo updated userId=${userId} key=${key}`);
-    return resolvedUrl;
+    if (!this.storage.isConfigured()) {
+      // S3 non configuré : stocker le data URL directement en DB (comme pour le logo)
+      const sizeBytes = buffer.length;
+      if (sizeBytes > 2_000_000) throw new BadRequestException('Photo trop volumineuse (max 2 Mo)');
+      photoUrl = `data:${contentType};base64,${buffer.toString('base64')}`;
+    } else {
+      const roleFolder = user.role === 'ENSEIGNANT' ? 'professeurs' : user.role === 'ELEVE' ? 'eleves' : 'personnel';
+      const key = this.storage.buildPhotoKey(user.tenantId, userId, roleFolder);
+      await this.storage.upload(key, buffer, contentType);
+      photoUrl = `${key}?_t=${Date.now()}`; // timestamp pour invalider le cache navigateur
+    }
+
+    await this.prisma.user.update({ where: { id: userId }, data: { photoUrl } });
+    this.logger.log(`[Auth] Photo updated userId=${userId}`);
+    return this.storage.resolveUrl(photoUrl) ?? photoUrl;
   }
 }

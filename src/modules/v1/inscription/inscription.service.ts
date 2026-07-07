@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@/config/prisma.service';
 import { buildPageResult, PageResult, PaginationQueryDto } from '@/shared/dto/pagination-query.dto';
 import { Prisma, StatutInscription } from '@prisma/client';
@@ -17,6 +17,17 @@ export class InscriptionService {
 
   async create(tenantId: string, dto: CreateInscriptionDto, creePar: string): Promise<unknown> {
     try {
+      const existing = await this.prisma.inscription.findFirst({
+        where: { tenantId, eleveId: dto.eleveId, anneeAcademiqueId: dto.anneeAcademiqueId },
+        select: { id: true, statut: true },
+      });
+      if (existing) {
+        if (existing.statut === StatutInscription.EXCLU) {
+          throw new BadRequestException('ELEVE_EXCLU: cet élève est exclu pour cette année scolaire');
+        }
+        throw new BadRequestException('INSCRIPTION_DEJA_EXISTANTE: cet élève est déjà inscrit pour cette année scolaire');
+      }
+
       const numeroInscription = this.generateNumero(tenantId);
       return await this.prisma.inscription.create({
         data: {

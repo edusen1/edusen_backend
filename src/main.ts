@@ -60,6 +60,7 @@ async function bootstrap(): Promise<void> {
 
   await app.register(helmet, {
     contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
   });
   await app.register(compress, {
     global: true,

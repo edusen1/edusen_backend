@@ -84,7 +84,8 @@ export class SchoolService {
           select: { id: true, cycleId: true },
         });
         if (!niveau) throw new NotFoundException('Niveau introuvable');
-        return await this.prisma.classe.create({ data: { ...dto, tenantId, cycleId: niveau.cycleId, niveauId } });
+        const { cycleId: _cycleId, ...classeDto } = dto;
+        return await this.prisma.classe.create({ data: { ...classeDto, tenantId, niveauId } });
       }
 
       if (!cycleId) throw new BadRequestException('Le cycle est obligatoire lorsque le niveau n’est pas renseigné');
@@ -97,7 +98,8 @@ export class SchoolService {
         throw new BadRequestException('Le niveau est obligatoire pour ce cycle');
       }
 
-      return await this.prisma.classe.create({ data: { ...dto, tenantId, cycleId, niveauId: null } });
+      const { cycleId: _cycleId, ...classeDto } = dto;
+      return await this.prisma.classe.create({ data: { ...classeDto, tenantId, niveauId: null } });
     } catch (error) {
       rethrowServiceError(error, 'création classe');
     }

@@ -98,6 +98,9 @@ export class StorageService {
   }
 
   async upload(key: string, buffer: Buffer, contentType: string): Promise<string> {
+    if (!this.configured) {
+      throw new InternalServerErrorException('Stockage objet non configuré');
+    }
     try {
       await this.client.send(
         new PutObjectCommand({
@@ -153,18 +156,38 @@ export class StorageService {
     this.logger.log(`[Storage] Deleted key=${key}`);
   }
 
+  private sanitizeName(name: string): string {
+    return name
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9.\-_]/g, '')
+      .replace(/-+/g, '-');
+  }
+
   buildKey(folder: string, tenantId: string, filename: string): string {
-    const ext = filename.includes('.') ? filename.split('.').pop() : '';
+    const parts = filename.split('.');
+    const ext = parts.length > 1 ? parts.pop()! : '';
     const unique = randomUUID();
-    return `${folder}/${tenantId}/${unique}${ext ? '.' + ext : ''}`;
+    const safe = `${unique}${ext ? '.' + this.sanitizeName(ext) : ''}`;
+    return `${tenantId}/${folder}/${safe}`;
   }
 
-  buildBulletinKey(tenantId: string, eleveId: string, trimestre: string): string {
-    return `bulletins/${tenantId}/${eleveId}/${trimestre.replace('/', '-')}_${randomUUID()}.pdf`;
+  buildBulletinKey(tenantId: string, eleveId: string, trimestre: string, annee?: string): string {
+    const year = annee ? this.sanitizeName(annee) : 'archives';
+    const tri = this.sanitizeName(trimestre.replace('/', '-'));
+    return `${tenantId}/${year}/bulletins/${eleveId}/${tri}-${randomUUID()}.pdf`;
   }
 
-  buildPhotoKey(tenantId: string, userId: string): string {
-    return `photos/${tenantId}/${userId}`;
+  buildPhotoKey(tenantId: string, userId: string, role: 'eleves' | 'professeurs' | 'personnel' = 'eleves'): string {
+    return `${tenantId}/photos/${role}/${userId}`;
+  }
+
+  buildDocumentKey(tenantId: string, type: string, annee: string, userId: string, filename: string): string {
+    const parts = filename.split('.');
+    const ext = parts.length > 1 ? parts.pop()! : '';
+    const safe = `${randomUUID()}${ext ? '.' + this.sanitizeName(ext) : ''}`;
+    return `${tenantId}/${this.sanitizeName(annee)}/${type}/${userId}/${safe}`;
   }
 
   buildPublicAccessUrl(key: string): string {
@@ -186,6 +209,9 @@ export class StorageService {
    */
   resolveUrl(stored: string | null | undefined): string | null {
     if (!stored) return null;
+
+    // Data URLs (base64) stockés directement quand S3 n'est pas configuré
+    if (stored.startsWith('data:')) return stored;
 
     if (!stored.startsWith('http')) {
       return this.buildPublicAccessUrl(stored);

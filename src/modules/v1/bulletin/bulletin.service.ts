@@ -294,7 +294,7 @@ export class BulletinService {
     if (!eleve) return;
 
     const generated = await this.bulletinDocument.generate(tenantId, bulletin.id);
-    const key = this.storage.buildBulletinKey(tenantId, bulletin.eleveId, bulletin.trimestre);
+    const key = this.storage.buildBulletinKey(tenantId, bulletin.eleveId, bulletin.trimestre, (bulletin as any).anneeScolaire);
     const fichierPdfUrl = await this.storage.upload(key, generated.buffer, 'application/pdf').catch(() => null);
     if (fichierPdfUrl) {
       await this.prisma.bulletin.update({ where: { id: bulletin.id }, data: { fichierPdfUrl } }).catch(() => undefined);

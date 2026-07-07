@@ -442,14 +442,14 @@ export class EcoleConfigService {
     tenantId: string,
     logoUrl?: string,
   ): Promise<{ logoUrl: string | null; logoS3Key: string | null } | null> {
-    return (await this.resolveImagePatch(tenantId, 'logos', 'logo', logoUrl, 'Logo')) as { logoUrl: string | null; logoS3Key: string | null } | null;
+    return (await this.resolveImagePatch(tenantId, 'configuration/logo', 'logo', logoUrl, 'Logo')) as { logoUrl: string | null; logoS3Key: string | null } | null;
   }
 
   private async resolveCachetPatch(
     tenantId: string,
     cachetUrl?: string,
   ): Promise<{ cachetUrl: string | null; cachetS3Key: string | null } | null> {
-    return (await this.resolveImagePatch(tenantId, 'cachets', 'cachet', cachetUrl, 'Cachet')) as { cachetUrl: string | null; cachetS3Key: string | null } | null;
+    return (await this.resolveImagePatch(tenantId, 'configuration/cachet', 'cachet', cachetUrl, 'Cachet')) as { cachetUrl: string | null; cachetS3Key: string | null } | null;
   }
 
   private async resolveImagePatch(
@@ -475,6 +475,15 @@ export class EcoleConfigService {
     const match = imageUrl.match(/^data:image\/(png|jpe?g|svg\+xml|webp);base64,(.+)$/i);
     if (!match) {
       throw new BadRequestException(`${label} invalide`);
+    }
+
+    // En local (S3 non configuré) : stocker le data URL directement en DB
+    if (!this.storage.isConfigured()) {
+      const sizeBytes = Math.ceil((match[2].length * 3) / 4);
+      if (sizeBytes > 2_000_000) {
+        throw new BadRequestException(`${label} invalide ou trop volumineux`);
+      }
+      return { [`${basename}Url`]: imageUrl, [`${basename}S3Key`]: null };
     }
 
     const subtype = match[1].toLowerCase();

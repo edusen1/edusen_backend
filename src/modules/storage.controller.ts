@@ -16,18 +16,24 @@ export class StorageController {
       return reply?.status(400).send({ message: 'Clé de fichier manquante' });
     }
 
-    const object = await this.storage.getObject(key);
+    const cleanKey = key.split('?')[0];
+    const object = await this.storage.getObject(cleanKey);
     if (!object.Body) {
       return reply?.status(404).send({ message: 'Fichier introuvable' });
     }
 
-    reply?.header('Content-Type', object.ContentType ?? 'application/octet-stream');
-    reply?.header('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
-    reply?.header('Content-Disposition', 'inline');
-    if (object.ContentLength != null) {
-      reply?.header('Content-Length', String(object.ContentLength));
+    const chunks: Buffer[] = [];
+    for await (const chunk of object.Body as AsyncIterable<Uint8Array>) {
+      chunks.push(Buffer.from(chunk));
     }
+    const buffer = Buffer.concat(chunks);
 
-    return reply?.send(object.Body as never);
+    const isPhoto = key.includes('/photos/');
+    reply?.header('Content-Type', object.ContentType ?? 'application/octet-stream');
+    reply?.header('Cache-Control', isPhoto ? 'no-cache' : 'public, max-age=86400, stale-while-revalidate=604800');
+    reply?.header('Content-Disposition', 'inline');
+    reply?.header('Content-Length', String(buffer.length));
+
+    return reply?.send(buffer);
   }
 }

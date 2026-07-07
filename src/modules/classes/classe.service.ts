@@ -19,7 +19,6 @@ const PROF_SELECT = {
 };
 
 const CLASSE_INCLUDE = {
-  cycle: { select: { id: true, code: true, libelle: true } },
   niveau: {
     select: {
       id: true,
@@ -70,7 +69,7 @@ export class ClasseService {
     if (resolvedAnneeId) where.anneeAcademiqueId = resolvedAnneeId;
     if (niveauId) where.niveauId = niveauId;
     if (cycleId && !niveauId) {
-      where.OR = [{ cycleId }, { niveau: { cycleId } }];
+      where.niveau = { cycleId };
     }
 
     const classes = await this.prisma.classe.findMany({
@@ -79,7 +78,7 @@ export class ClasseService {
       orderBy: [{ niveau: { ordre: 'asc' } }, { nom: 'asc' }],
     });
 
-    return classes.map(this.toResponse);
+    return this.withActiveEnrollmentCounts(tenantId, classes).then((items) => items.map(this.toResponse));
   }
 
   async getTeacherClasses(tenantId: string, enseignantId: string) {
@@ -106,7 +105,7 @@ export class ClasseService {
       orderBy: [{ niveau: { ordre: 'asc' } }, { nom: 'asc' }],
     });
 
-    return classes.map(this.toResponse);
+    return this.withActiveEnrollmentCounts(tenantId, classes).then((items) => items.map(this.toResponse));
   }
 
   async assertTeacherClasseAccess(tenantId: string, enseignantId: string, classeId: string): Promise<void> {
@@ -223,7 +222,6 @@ export class ClasseService {
       data: {
         tenantId,
         nom: dto.nom.trim(),
-        cycleId: cycle.id,
         niveauId: niveau?.id ?? null,
         anneeAcademiqueId: dto.anneeAcademiqueId,
         professeurResponsableId: dto.professeurResponsableId ?? null,
@@ -246,7 +244,7 @@ export class ClasseService {
       include: CLASSE_INCLUDE,
     });
     if (!classe) throw new NotFoundException('Classe introuvable');
-    return this.toResponse(classe);
+    return this.withActiveEnrollmentCounts(tenantId, [classe]).then(([item]) => this.toResponse(item));
   }
 
   async getClasseEleves(tenantId: string, classeId: string) {
@@ -260,6 +258,7 @@ export class ClasseService {
       where: {
         tenantId,
         classeId,
+        statut: 'ACTIF',
         ...(classe.anneeAcademiqueId ? { anneeAcademiqueId: classe.anneeAcademiqueId } : {}),
       },
       orderBy: { createdAt: 'asc' },
@@ -284,21 +283,24 @@ export class ClasseService {
     return inscriptions.map((inscription) => {
       const eleve = eleveById.get(inscription.eleveId);
       return ({
-      inscriptionId: inscription.id,
-      statut: inscription.statut,
-      eleve: eleve
-        ? {
-            id: eleve.id,
-            nom: `${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim(),
-            firstName: eleve.firstName,
-            lastName: eleve.lastName,
-            email: eleve.email,
-            telephone: eleve.telephone,
-            matricule: eleve.matricule,
-            photoUrl: eleve.photoUrl,
-            genre: eleve.genre,
-          }
-        : null,
+        inscriptionId: inscription.id,
+        numeroInscription: inscription.numeroInscription,
+        fraisInscription: inscription.fraisInscription,
+        statut: inscription.statut,
+        createdAt: inscription.createdAt,
+        eleve: eleve
+          ? {
+              id: eleve.id,
+              nom: `${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim(),
+              firstName: eleve.firstName,
+              lastName: eleve.lastName,
+              email: eleve.email,
+              telephone: eleve.telephone,
+              matricule: eleve.matricule,
+              photoUrl: eleve.photoUrl,
+              genre: eleve.genre,
+            }
+          : null,
       });
     });
   }
@@ -307,7 +309,6 @@ export class ClasseService {
     const classe = await this.prisma.classe.findFirst({
       where: { id: classeId, tenantId },
       include: {
-        cycle: true,
         niveau: { include: { cycle: true } },
         anneeAcademique: true,
       },
@@ -330,7 +331,7 @@ export class ClasseService {
     });
     if (!eleve) throw new NotFoundException('Élève introuvable');
 
-    const cycleCode = (classe.cycle?.code ?? classe.niveau?.cycle?.code ?? '').toUpperCase();
+    const cycleCode = (classe.niveau?.cycle?.code ?? '').toUpperCase();
     const periods = ['MATERNELLE', 'PRIMAIRE', 'CRECHE'].includes(cycleCode)
       ? ['SEMESTRE_1', 'SEMESTRE_2', 'SEMESTRE_3']
       : ['SEMESTRE_1', 'SEMESTRE_2'];
@@ -475,7 +476,7 @@ export class ClasseService {
         id: classe.id,
         nom: classe.nom,
         annee: classe.anneeAcademique?.libelle ?? null,
-        cycle: classe.cycle?.libelle ?? classe.niveau?.cycle?.libelle ?? null,
+        cycle: classe.niveau?.cycle?.libelle ?? null,
         bareme: noteScale,
       },
       periodes,
@@ -951,7 +952,7 @@ export class ClasseService {
     }
 
     const { buffer } = await this.bulletinDocument.generate(tenantId, bulletin.id);
-    const key = this.storage.buildBulletinKey(tenantId, eleveId, bulletin.trimestre);
+    const key = this.storage.buildBulletinKey(tenantId, eleveId, bulletin.trimestre, (bulletin as any).anneeScolaire);
     const fichierPdfUrl = await this.storage.upload(key, buffer, 'application/pdf');
     await this.prisma.bulletin.update({ where: { id: bulletin.id }, data: { fichierPdfUrl } });
 
@@ -1177,7 +1178,6 @@ export class ClasseService {
       include: {
         classe: {
           include: {
-            cycle: true,
             niveau: { include: { cycle: true } },
             anneeAcademique: true,
           },
@@ -1192,7 +1192,7 @@ export class ClasseService {
         .filter((i) => i.classe)
         .map(async (i) => {
           const classe = i.classe!;
-          const cycleCode = (classe.cycle?.code ?? classe.niveau?.cycle?.code ?? '').toUpperCase();
+          const cycleCode = (classe.niveau?.cycle?.code ?? '').toUpperCase();
           const noteScale = ['MATERNELLE', 'PRIMAIRE', 'COLLEGE', 'CRECHE'].includes(cycleCode) ? 10 : 20;
           const periods = ['MATERNELLE', 'PRIMAIRE', 'CRECHE'].includes(cycleCode)
             ? ['SEMESTRE_1', 'SEMESTRE_2', 'SEMESTRE_3']
@@ -1235,7 +1235,7 @@ export class ClasseService {
               id: classe.id,
               nom: classe.nom,
               annee: classe.anneeAcademique?.libelle ?? null,
-              cycle: classe.cycle?.libelle ?? classe.niveau?.cycle?.libelle ?? null,
+              cycle: classe.niveau?.cycle?.libelle ?? null,
               bareme: noteScale,
             },
             periodes,
@@ -1255,7 +1255,6 @@ export class ClasseService {
     const existing = await this.prisma.classe.findFirst({
       where: { id, tenantId },
       include: {
-        cycle: { select: { id: true, code: true, libelle: true } },
         niveau: { select: { id: true, cycleId: true, cycle: { select: { id: true, code: true, libelle: true } } } },
       },
     });
@@ -1263,7 +1262,7 @@ export class ClasseService {
 
     const requestedNiveauId = dto.niveauId === undefined ? existing.niveauId : dto.niveauId;
     const requestedCycleId = dto.cycleId === undefined
-      ? existing.cycleId ?? existing.niveau?.cycleId ?? null
+      ? existing.niveau?.cycleId ?? null
       : dto.cycleId;
     const { niveau, cycle } = await this.resolveClasseCycleAndNiveau(
       tenantId,
@@ -1283,7 +1282,7 @@ export class ClasseService {
       where: { id },
       data: {
         ...(dto.nom ? { nom: dto.nom.trim() } : {}),
-        ...(dto.niveauId !== undefined || dto.cycleId !== undefined ? { cycleId: cycle.id, niveauId: niveau?.id ?? null } : {}),
+        ...(dto.niveauId !== undefined || dto.cycleId !== undefined ? { niveauId: niveau?.id ?? null } : {}),
         ...(dto.professeurResponsableId !== undefined
           ? { professeurResponsableId: dto.professeurResponsableId }
           : {}),
@@ -1417,10 +1416,10 @@ export class ClasseService {
   async addStagiaire(tenantId: string, classeId: string, stagiaireId: string) {
     const classe = await this.prisma.classe.findFirst({
       where: { id: classeId, tenantId },
-      include: { cycle: true, niveau: { include: { cycle: true } } },
+      include: { niveau: { include: { cycle: true } } },
     });
     if (!classe) throw new NotFoundException('Classe introuvable');
-    const cycleCode = (classe.cycle?.code ?? classe.niveau?.cycle?.code ?? '').toUpperCase();
+    const cycleCode = (classe.niveau?.cycle?.code ?? '').toUpperCase();
     if (!['MATERNELLE', 'PRIMAIRE', 'CRECHE'].includes(cycleCode)) {
       throw new ConflictException('Les stagiaires ne sont disponibles que pour les classes Crèche / Maternelle / Primaire');
     }
@@ -1503,7 +1502,6 @@ export class ClasseService {
         professeurResponsableId: true,
         anneeAcademiqueId: true,
         anneeAcademique: { select: { id: true, libelle: true } },
-        cycle: { select: { code: true } },
         niveau: { select: { cycle: { select: { code: true } } } },
         matiereClasses: {
           where: { enseignantId },
@@ -1761,8 +1759,28 @@ export class ClasseService {
     return String(code ?? '').trim().toUpperCase() === 'PRIMAIRE';
   }
 
+  private async withActiveEnrollmentCounts<T extends { id: string }>(tenantId: string, classes: T[]): Promise<(T & { nbElevesActifs: number })[]> {
+    if (!classes.length) return [];
+
+    const counts = await this.prisma.inscription.groupBy({
+      by: ['classeId'],
+      where: {
+        tenantId,
+        classeId: { in: classes.map((classe) => classe.id) },
+        statut: 'ACTIF',
+      },
+      _count: { _all: true },
+    });
+    const countByClasseId = new Map(counts.map((row) => [row.classeId, row._count._all]));
+
+    return classes.map((classe) => ({
+      ...classe,
+      nbElevesActifs: countByClasseId.get(classe.id) ?? 0,
+    }));
+  }
+
   private toResponse(classe: any) {
-    const cycle = classe.cycle ?? classe.niveau?.cycle ?? null;
+    const cycle = classe.niveau?.cycle ?? null;
     const cycleCode = cycle?.code ?? '';
     const isUnifiedSection = ['MATERNELLE', 'PRIMAIRE', 'CRECHE'].includes(cycleCode.toUpperCase());
 
@@ -1805,7 +1823,7 @@ export class ClasseService {
         dateFin: s.dateFin?.toISOString?.() ?? null,
         actif: s.actif,
       })),
-      nbEleves: classe._count?.eleves ?? 0,
+      nbEleves: classe.nbElevesActifs ?? classe._count?.inscriptions ?? classe._count?.eleves ?? 0,
       actif: classe.actif,
       isUnifiedSection,
       createdAt: classe.createdAt,

@@ -70,6 +70,7 @@ const V1_RESOURCES: Record<string, CrudConfig> = {
   reclamations: { model: 'reclamation', tenantScoped: true, paged: true },
   matieres: { model: 'matiere', tenantScoped: true, paged: true, defaultOrderBy: { libelle: 'asc' } },
   'matieres-classes': { model: 'matiereClasse', tenantScoped: true, paged: true },
+  'matieres-niveaux': { model: 'matiereNiveau', tenantScoped: true, defaultOrderBy: { createdAt: 'asc' } },
   'calendrier-scolaire': {
     model: 'calendrierScolaire',
     tenantScoped: true,
@@ -87,6 +88,7 @@ const ADMIN_RESOURCES: Record<string, CrudConfig> = {
   salles: V1_RESOURCES.salles,
   batiments: V1_RESOURCES.batiments,
   'matieres-classes': V1_RESOURCES['matieres-classes'],
+  'matieres-niveaux': V1_RESOURCES['matieres-niveaux'],
   notes: V1_RESOURCES.notes,
   bulletins: V1_RESOURCES.bulletins,
   paiements: V1_RESOURCES.paiements,
@@ -214,6 +216,9 @@ export class LegacyCrudService {
     } : config.model === 'matiereClasse' ? {
       matiere: true,
       enseignant: true
+    } : config.model === 'matiereNiveau' ? {
+      matiere: { select: { id: true, code: true, libelle: true, categorie: true } },
+      niveau: { select: { id: true, libelle: true } },
     } : config.model === 'personnel' ? {
       utilisateur: {
         select: {
@@ -341,6 +346,9 @@ export class LegacyCrudService {
     } : config.model === 'matiereClasse' ? {
       matiere: true,
       enseignant: true
+    } : config.model === 'matiereNiveau' ? {
+      matiere: { select: { id: true, code: true, libelle: true, categorie: true } },
+      niveau: { select: { id: true, libelle: true } },
     } : config.model === 'personnel' ? {
       utilisateur: {
         select: {
@@ -1121,8 +1129,13 @@ export class LegacyCrudService {
   }
 
   async activateAnnee(tenantId: string | undefined, id: string) {
-    await this.prisma.anneeAcademique.updateMany({ where: { tenantId }, data: { estCourante: false } });
-    return this.prisma.anneeAcademique.update({ where: { id }, data: { estCourante: true } });
+    await this.prisma.anneeAcademique.updateMany({
+      where: { tenantId, id: { not: id } },
+      data: { estCourante: false, actif: false, dateFin: new Date() },
+    });
+    const updated = await this.prisma.anneeAcademique.update({ where: { id }, data: { estCourante: true, actif: true } });
+    await this.terminatePreviousYearInscriptions(tenantId, id);
+    return updated;
   }
 
   getBatimentSalles(tenantId: string | undefined, batimentId: string) {
@@ -1140,16 +1153,65 @@ export class LegacyCrudService {
   async desactiverInscription(tenantId: string | undefined, id: string) {
     const inscription = await this.prisma.inscription.findFirst({
       where: { id, ...this.fixedWhere(V1_RESOURCES.inscriptions, tenantId) },
-      select: { id: true, eleveId: true, classeId: true },
+      select: { id: true },
     });
     if (!inscription) throw new NotFoundException('Inscription introuvable');
 
     const updated = await this.prisma.inscription.update({
       where: { id },
-      data: { statut: 'TERMINE' },
+      data: { statut: 'INACTIF' },
     });
-    await this.clearEleveClasseIfCurrent(inscription.eleveId, inscription.classeId);
-    return this.findOne(V1_RESOURCES.inscriptions, tenantId, updated.id);
+    return this.findOne(V1_RESOURCES.inscriptions, tenantId, inscription.id);
+  }
+
+  async exclureInscription(tenantId: string | undefined, id: string, nbAnnees = 1) {
+    const inscription = await this.prisma.inscription.findFirst({
+      where: { id, ...this.fixedWhere(V1_RESOURCES.inscriptions, tenantId) },
+      include: { anneeAcademique: { select: { id: true, dateDebut: true } } },
+    });
+    if (!inscription) throw new NotFoundException('Inscription introuvable');
+
+    const resolvedTenantId = tenantId ?? inscription.tenantId;
+    const count = Math.max(1, Math.min(10, Math.trunc(Number(nbAnnees) || 1)));
+    const annees = await this.prisma.anneeAcademique.findMany({
+      where: {
+        tenantId: resolvedTenantId,
+        dateDebut: { gte: inscription.anneeAcademique.dateDebut },
+      },
+      orderBy: { dateDebut: 'asc' },
+      take: count,
+    });
+
+    await this.prisma.$transaction(
+      annees.map((annee, index) => {
+        if (index === 0 && annee.id === inscription.anneeAcademiqueId) {
+          return this.prisma.inscription.update({
+            where: { id: inscription.id },
+            data: { statut: 'EXCLU' },
+          });
+        }
+        return this.prisma.inscription.upsert({
+          where: {
+            tenantId_eleveId_anneeAcademiqueId: {
+              tenantId: resolvedTenantId,
+              eleveId: inscription.eleveId,
+              anneeAcademiqueId: annee.id,
+            },
+          },
+          update: { statut: 'EXCLU' },
+          create: {
+            tenantId: resolvedTenantId,
+            eleveId: inscription.eleveId,
+            classeId: inscription.classeId,
+            anneeAcademiqueId: annee.id,
+            numeroInscription: this.generateInscriptionNumero(resolvedTenantId),
+            statut: 'EXCLU',
+            creePar: inscription.creePar,
+          },
+        });
+      }),
+    );
+    return this.findOne(V1_RESOURCES.inscriptions, tenantId, inscription.id);
   }
 
   async reactiverInscription(tenantId: string | undefined, id: string) {
@@ -2540,14 +2602,8 @@ export class LegacyCrudService {
         }
       }
       if (create && data.role === 'ELEVE') {
-        if (!data.numeroIdentificationNational) {
-          throw new BadRequestException("Le numéro d'identification national est obligatoire pour un élève");
-        }
         const lieuNaissance = String(data.lieuNaissance ?? '').trim();
-        if (!lieuNaissance) {
-          throw new BadRequestException("Le lieu de naissance est obligatoire pour un élève");
-        }
-        data.lieuNaissance = lieuNaissance;
+        if (lieuNaissance) data.lieuNaissance = lieuNaissance;
       }
 
       const incomingFirstName = data.firstName ?? data.prenom ?? data.first_name;
@@ -2562,6 +2618,7 @@ export class LegacyCrudService {
       data.genre = this.normalizeGenre(data.genre ?? data.sexe);
       if (data.active !== undefined) data.actif = Boolean(data.active);
       if (data.statut !== undefined) data.actif = String(data.statut).toLowerCase() !== 'inactif';
+      if (typeof data.photoUrl === 'string' && data.photoUrl.startsWith('data:')) delete data.photoUrl;
       if (create) {
         data.username = await this.generateUsername(
           tenantId ?? String(data.tenantId ?? ''),
@@ -2849,7 +2906,7 @@ export class LegacyCrudService {
 
   private async attachEleveIfNeeded<T extends Payload>(model: string, rows: T[], tenantId?: string): Promise<T[]> {
     if (model === 'user') return this.attachCurrentClasseForStudents(rows, tenantId);
-    if (model === 'inscription') return this.attachInscriptionEleves(rows);
+    if (model === 'inscription') return this.attachInscriptionEleves(rows, tenantId);
     if (model === 'bulletin' || model === 'absenceEleve' || model === 'reclamation') {
       return this.attachEleveById(rows);
     }
@@ -2989,6 +3046,8 @@ export class LegacyCrudService {
     if (config.model === 'note' && ['type', 'typeEval', 'periode', 'classeId', 'niveauId'].includes(key)) return true;
     if (config.model === 'reclamation' && ['type', 'priorite'].includes(key)) return true;
     if (config.model === 'paiement' && ['classeId', 'niveauId', 'eleveId', 'dateFrom', 'dateTo'].includes(key)) return true;
+    if (config.model === 'inscription' && key === 'statut') return true;
+    if (config.model === 'user' && key === 'statut') return true;
 
     return false;
   }
@@ -3046,8 +3105,33 @@ export class LegacyCrudService {
         }
         break;
       }
+      case 'inscription': {
+        const statut = this.first(query.statut)?.toUpperCase();
+        const currentAnnee = await this.findCurrentAnnee(tenantId);
+        if (statut === 'ACTIF') {
+          where.statut = 'ACTIF';
+          if (currentAnnee && !where.anneeAcademiqueId) where.anneeAcademiqueId = currentAnnee.id;
+        } else if (statut === 'INACTIF') {
+          const inactiveScope: Payload[] = [
+            { statut: 'INACTIF' },
+            { statut: 'TERMINE' },
+            ...(currentAnnee ? [{ statut: 'ACTIF', anneeAcademiqueId: { not: currentAnnee.id } }] : []),
+          ];
+          const existingAnd = Array.isArray(where.AND) ? where.AND as Payload[] : [];
+          where.AND = [...existingAnd, { OR: inactiveScope }];
+        } else if (statut) {
+          where.statut = statut;
+        }
+        break;
+      }
       case 'appel': {
         this.applyDateRangeFilter(where, 'dateCours', from, to);
+        break;
+      }
+      case 'user': {
+        const statut = this.first(query.statut);
+        if (statut === 'actif') where.actif = true;
+        else if (statut === 'inactif') where.actif = false;
         break;
       }
       default:
@@ -3138,18 +3222,27 @@ export class LegacyCrudService {
     return rows.map((r) => ({ ...r, eleve: map.get(String(r.eleveId ?? '')) ?? null }));
   }
 
-  private async attachInscriptionEleves<T extends Payload>(inscriptions: T[]): Promise<T[]> {
+  private async attachInscriptionEleves<T extends Payload>(inscriptions: T[], tenantId?: string): Promise<T[]> {
     const eleveIds = [...new Set(inscriptions.map((inscription) => String(inscription.eleveId ?? '')).filter(Boolean))];
     if (eleveIds.length === 0) return inscriptions;
 
     const eleves = await this.prisma.user.findMany({
       where: { id: { in: eleveIds } },
-      select: { id: true, firstName: true, lastName: true, matricule: true },
+      select: { id: true, firstName: true, lastName: true, matricule: true, photoUrl: true },
     });
-    const elevesById = new Map(eleves.map((eleve) => [eleve.id, eleve]));
+    const elevesById = new Map(eleves.map((eleve) => [
+      eleve.id,
+      { ...eleve, photoUrl: eleve.photoUrl ? (this.storage.resolveUrl(eleve.photoUrl) ?? undefined) : undefined },
+    ]));
+    const currentAnnee = tenantId ? await this.findCurrentAnnee(tenantId) : null;
 
     return inscriptions.map((inscription) => ({
       ...inscription,
+      statut: currentAnnee
+        && inscription.statut === 'ACTIF'
+        && String(inscription.anneeAcademiqueId ?? '') !== currentAnnee.id
+          ? 'INACTIF'
+          : inscription.statut,
       eleve: elevesById.get(String(inscription.eleveId ?? '')) ?? null,
     }));
   }
@@ -3238,6 +3331,7 @@ export class LegacyCrudService {
       notification: [...common, 'destinataireId'],
       reclamation: [...common, 'eleveId', 'noteId'],
       matiereClasse: [...common, 'matiereId', 'classeId', 'enseignantId', 'anneeAcademiqueId'],
+      matiereNiveau: [...common, 'niveauId', 'matiereId'],
       calendrierScolaire: common,
       personnel: [...common, 'utilisateurId'],
       pointage: [...common, 'personnelId', 'createdBy'],
@@ -4219,7 +4313,7 @@ export class LegacyCrudService {
   private async attachBulletinPdf(tenantId: string | undefined, bulletin: Record<string, any>) {
     if (!tenantId) return bulletin;
     const { buffer } = await this.bulletinDocument.generate(tenantId, String(bulletin.id));
-    const key = this.storage.buildBulletinKey(tenantId, String(bulletin.eleveId), String(bulletin.trimestre));
+    const key = this.storage.buildBulletinKey(tenantId, String(bulletin.eleveId), String(bulletin.trimestre), String((bulletin as any).anneeScolaire ?? ''));
     const fichierPdfUrl = await this.storage.upload(key, buffer, 'application/pdf');
     return this.prisma.bulletin.update({ where: { id: bulletin.id }, data: { fichierPdfUrl } });
   }
@@ -4227,14 +4321,6 @@ export class LegacyCrudService {
   private async syncEleveClasse(eleveId?: string, classeId?: string): Promise<void> {
     if (!eleveId || !classeId) return;
     await this.prisma.user.updateMany({ where: { id: eleveId, role: 'ELEVE' }, data: { classeId } });
-  }
-
-  private async clearEleveClasseIfCurrent(eleveId?: string, classeId?: string): Promise<void> {
-    if (!eleveId || !classeId) return;
-    await this.prisma.user.updateMany({
-      where: { id: eleveId, role: 'ELEVE', classeId },
-      data: { classeId: null },
-    });
   }
 
   private async generateUsername(tenantId: string, firstName: string, lastName: string): Promise<string> {
@@ -4292,7 +4378,7 @@ export class LegacyCrudService {
     const [existing, classe] = await Promise.all([
       this.prisma.inscription.findFirst({
         where: { tenantId, eleveId, anneeAcademiqueId },
-        select: { id: true },
+        select: { id: true, statut: true },
       }),
       this.prisma.classe.findFirst({
         where: { tenantId, id: classeId },
@@ -4301,6 +4387,9 @@ export class LegacyCrudService {
     ]);
 
     if (existing) {
+      if (existing.statut === 'EXCLU') {
+        throw new BadRequestException('ELEVE_EXCLU: cet élève est exclu pour cette année scolaire');
+      }
       throw new BadRequestException('INSCRIPTION_DEJA_EXISTANTE: cet élève est déjà inscrit pour cette année scolaire');
     }
 
@@ -4311,6 +4400,18 @@ export class LegacyCrudService {
     if (classe.anneeAcademiqueId !== anneeAcademiqueId) {
       throw new BadRequestException('CLASSE_ANNEE_INVALIDE: la classe ne correspond pas à l’année scolaire choisie');
     }
+  }
+
+  private async terminatePreviousYearInscriptions(tenantId: string | undefined, currentAnneeId: string): Promise<void> {
+    if (!tenantId) return;
+    await this.prisma.inscription.updateMany({
+      where: {
+        tenantId,
+        statut: 'ACTIF',
+        anneeAcademiqueId: { not: currentAnneeId },
+      },
+      data: { statut: 'INACTIF' },
+    });
   }
 
   private async assertInscriptionClassAllowed(tenantId: string | undefined, data: Record<string, any>, user?: JwtUser): Promise<void> {
@@ -4393,6 +4494,7 @@ export class LegacyCrudService {
     return {
       lastInscription: {
         id: lastInscription.id,
+        statut: lastInscription.statut,
         classe: { id: lastInscription.classe.id, nom: lastInscription.classe.nom },
         niveau: {
           id: currentNiveau.id,

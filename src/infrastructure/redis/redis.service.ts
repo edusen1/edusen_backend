@@ -6,47 +6,68 @@ export type RedisLockResult = 'acquired' | 'locked' | 'unavailable';
 @Injectable()
 export class RedisService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
-  private client!: Redis;
+  private client?: Redis;
+  private errorLogged = false;
 
   onModuleInit(): void {
+    if (String(process.env.REDIS_DISABLED ?? '').toLowerCase() === 'true') {
+      this.logger.warn('Redis disabled by REDIS_DISABLED=true. Running without cache.');
+      return;
+    }
+
     const url = process.env.REDIS_URL;
+    const options = {
+      lazyConnect: true,
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 1,
+      retryStrategy: () => null,
+    };
 
     this.client = url
-      ? new Redis(url, { lazyConnect: true })
+      ? new Redis(url, options)
       : new Redis({
           host: process.env.REDIS_HOST ?? 'localhost',
           port: Number(process.env.REDIS_PORT ?? 6379),
           password: process.env.REDIS_PASSWORD || undefined,
-          lazyConnect: true,
+          ...options,
         });
 
     this.client.on('error', (err: Error) => {
-      this.logger.warn(`Redis error: ${err.message}`);
+      if (this.errorLogged) return;
+      this.errorLogged = true;
+      this.logger.warn(`Redis unavailable: ${err.message}. Running without cache.`);
     });
 
     this.client.connect().catch((err: Error) => {
       this.logger.warn(`Redis connect failed: ${err.message}. Running without cache.`);
+      this.client?.disconnect();
     });
   }
 
   async onModuleDestroy(): Promise<void> {
-    await this.client.quit().catch(() => undefined);
+    await this.client?.quit().catch(() => undefined);
+  }
+
+  private isReady(): boolean {
+    return this.client?.status === 'ready';
   }
 
   async get(key: string): Promise<string | null> {
+    if (!this.isReady()) return null;
     try {
-      return await this.client.get(key);
+      return await this.client!.get(key);
     } catch {
       return null;
     }
   }
 
   async set(key: string, value: string, ttlSeconds?: number): Promise<void> {
+    if (!this.isReady()) return;
     try {
       if (ttlSeconds) {
-        await this.client.set(key, value, 'EX', ttlSeconds);
+        await this.client!.set(key, value, 'EX', ttlSeconds);
       } else {
-        await this.client.set(key, value);
+        await this.client!.set(key, value);
       }
     } catch (err) {
       this.logger.warn(`Redis set failed for key=${key}: ${(err as Error).message}`);
@@ -54,19 +75,21 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   async getBuffer(key: string): Promise<Buffer | null> {
+    if (!this.isReady()) return null;
     try {
-      return await this.client.getBuffer(key);
+      return await this.client!.getBuffer(key);
     } catch {
       return null;
     }
   }
 
   async setBuffer(key: string, value: Buffer, ttlSeconds?: number): Promise<void> {
+    if (!this.isReady()) return;
     try {
       if (ttlSeconds) {
-        await this.client.set(key, value, 'EX', ttlSeconds);
+        await this.client!.set(key, value, 'EX', ttlSeconds);
       } else {
-        await this.client.set(key, value);
+        await this.client!.set(key, value);
       }
     } catch (err) {
       this.logger.warn(`Redis setBuffer failed for key=${key}: ${(err as Error).message}`);
@@ -74,8 +97,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   async setIfAbsent(key: string, value: string, ttlSeconds: number): Promise<boolean> {
+    if (!this.isReady()) return false;
     try {
-      const result = await this.client.set(key, value, 'EX', ttlSeconds, 'NX');
+      const result = await this.client!.set(key, value, 'EX', ttlSeconds, 'NX');
       return result === 'OK';
     } catch (err) {
       this.logger.warn(`Redis setIfAbsent failed for key=${key}: ${(err as Error).message}`);
@@ -89,8 +113,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
    */
   async acquireLock(key: string, value: string, ttlSeconds: number): Promise<RedisLockResult> {
     try {
-      if (this.client.status !== 'ready') return 'unavailable';
-      const result = await this.client.set(key, value, 'EX', ttlSeconds, 'NX');
+      if (!this.isReady()) return 'unavailable';
+      const result = await this.client!.set(key, value, 'EX', ttlSeconds, 'NX');
       return result === 'OK' ? 'acquired' : 'locked';
     } catch (err) {
       this.logger.warn(`Redis acquireLock failed for key=${key}: ${(err as Error).message}`);
@@ -99,16 +123,18 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   async exists(key: string): Promise<boolean> {
+    if (!this.isReady()) return false;
     try {
-      return (await this.client.exists(key)) > 0;
+      return (await this.client!.exists(key)) > 0;
     } catch {
       return false;
     }
   }
 
   async ttl(key: string): Promise<number> {
+    if (!this.isReady()) return -2;
     try {
-      return await this.client.ttl(key);
+      return await this.client!.ttl(key);
     } catch {
       return -2;
     }
@@ -130,8 +156,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   async del(key: string): Promise<void> {
+    if (!this.isReady()) return;
     try {
-      await this.client.del(key);
+      await this.client!.del(key);
     } catch (err) {
       this.logger.warn(`Redis del failed for key=${key}: ${(err as Error).message}`);
     }
@@ -139,131 +166,147 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   async delMany(keys: string[]): Promise<void> {
     if (!keys.length) return;
+    if (!this.isReady()) return;
     try {
-      await this.client.del(...keys);
+      await this.client!.del(...keys);
     } catch (err) {
       this.logger.warn(`Redis delMany failed: ${(err as Error).message}`);
     }
   }
 
   async incr(key: string): Promise<number> {
+    if (!this.isReady()) return 0;
     try {
-      return await this.client.incr(key);
+      return await this.client!.incr(key);
     } catch {
       return 0;
     }
   }
 
   async expire(key: string, ttlSeconds: number): Promise<void> {
+    if (!this.isReady()) return;
     try {
-      await this.client.expire(key, ttlSeconds);
+      await this.client!.expire(key, ttlSeconds);
     } catch {
       // ignore
     }
   }
 
   async rpush(key: string, ...values: string[]): Promise<number> {
+    if (!this.isReady()) return 0;
     try {
-      return await this.client.rpush(key, ...values);
+      return await this.client!.rpush(key, ...values);
     } catch {
       return 0;
     }
   }
 
   async lpush(key: string, ...values: string[]): Promise<number> {
+    if (!this.isReady()) return 0;
     try {
-      return await this.client.lpush(key, ...values);
+      return await this.client!.lpush(key, ...values);
     } catch {
       return 0;
     }
   }
 
   async lrange(key: string, start: number, stop: number): Promise<string[]> {
+    if (!this.isReady()) return [];
     try {
-      return await this.client.lrange(key, start, stop);
+      return await this.client!.lrange(key, start, stop);
     } catch {
       return [];
     }
   }
 
   async lpop(key: string): Promise<string | null> {
+    if (!this.isReady()) return null;
     try {
-      return await this.client.lpop(key);
+      return await this.client!.lpop(key);
     } catch {
       return null;
     }
   }
 
   async ltrim(key: string, start: number, stop: number): Promise<void> {
+    if (!this.isReady()) return;
     try {
-      await this.client.ltrim(key, start, stop);
+      await this.client!.ltrim(key, start, stop);
     } catch {
       // ignore
     }
   }
 
   async llen(key: string): Promise<number> {
+    if (!this.isReady()) return 0;
     try {
-      return await this.client.llen(key);
+      return await this.client!.llen(key);
     } catch {
       return 0;
     }
   }
 
   async lrem(key: string, count: number, value: string): Promise<number> {
+    if (!this.isReady()) return 0;
     try {
-      return await this.client.lrem(key, count, value);
+      return await this.client!.lrem(key, count, value);
     } catch {
       return 0;
     }
   }
 
   async rpoplpush(source: string, destination: string): Promise<string | null> {
+    if (!this.isReady()) return null;
     try {
-      return await this.client.rpoplpush(source, destination);
+      return await this.client!.rpoplpush(source, destination);
     } catch {
       return null;
     }
   }
 
   async sadd(key: string, ...members: string[]): Promise<number> {
+    if (!this.isReady()) return 0;
     try {
       if (!members.length) return 0;
-      return await this.client.sadd(key, ...members);
+      return await this.client!.sadd(key, ...members);
     } catch {
       return 0;
     }
   }
 
   async srem(key: string, ...members: string[]): Promise<number> {
+    if (!this.isReady()) return 0;
     try {
       if (!members.length) return 0;
-      return await this.client.srem(key, ...members);
+      return await this.client!.srem(key, ...members);
     } catch {
       return 0;
     }
   }
 
   async smembers(key: string): Promise<string[]> {
+    if (!this.isReady()) return [];
     try {
-      return await this.client.smembers(key);
+      return await this.client!.smembers(key);
     } catch {
       return [];
     }
   }
 
   async zadd(key: string, score: number, member: string): Promise<number> {
+    if (!this.isReady()) return 0;
     try {
-      return await this.client.zadd(key, String(score), member);
+      return await this.client!.zadd(key, String(score), member);
     } catch {
       return 0;
     }
   }
 
   async zrangebyscore(key: string, min: number | string, max: number | string, limit?: { offset: number; count: number }): Promise<string[]> {
+    if (!this.isReady()) return [];
     try {
       if (limit) {
-        return await this.client.zrangebyscore(
+        return await this.client!.zrangebyscore(
           key,
           String(min),
           String(max),
@@ -272,78 +315,86 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           String(limit.count),
         );
       }
-      return await this.client.zrangebyscore(key, String(min), String(max));
+      return await this.client!.zrangebyscore(key, String(min), String(max));
     } catch {
       return [];
     }
   }
 
   async zrem(key: string, ...members: string[]): Promise<number> {
+    if (!this.isReady()) return 0;
     try {
       if (!members.length) return 0;
-      return await this.client.zrem(key, ...members);
+      return await this.client!.zrem(key, ...members);
     } catch {
       return 0;
     }
   }
 
   async zcard(key: string): Promise<number> {
+    if (!this.isReady()) return 0;
     try {
-      return await this.client.zcard(key);
+      return await this.client!.zcard(key);
     } catch {
       return 0;
     }
   }
 
   async scard(key: string): Promise<number> {
+    if (!this.isReady()) return 0;
     try {
-      return await this.client.scard(key);
+      return await this.client!.scard(key);
     } catch {
       return 0;
     }
   }
 
   async hset(key: string, values: Record<string, string>): Promise<void> {
+    if (!this.isReady()) return;
     try {
       const entries = Object.entries(values);
       if (!entries.length) return;
-      await this.client.hset(key, Object.fromEntries(entries));
+      await this.client!.hset(key, Object.fromEntries(entries));
     } catch (err) {
       this.logger.warn(`Redis hset failed for key=${key}: ${(err as Error).message}`);
     }
   }
 
   async hget(key: string, field: string): Promise<string | null> {
+    if (!this.isReady()) return null;
     try {
-      return await this.client.hget(key, field);
+      return await this.client!.hget(key, field);
     } catch {
       return null;
     }
   }
 
   async hgetall(key: string): Promise<Record<string, string>> {
+    if (!this.isReady()) return {};
     try {
-      return await this.client.hgetall(key);
+      return await this.client!.hgetall(key);
     } catch {
       return {};
     }
   }
 
   async hdel(key: string, ...fields: string[]): Promise<number> {
+    if (!this.isReady()) return 0;
     try {
       if (!fields.length) return 0;
-      return await this.client.hdel(key, ...fields);
+      return await this.client!.hdel(key, ...fields);
     } catch {
       return 0;
     }
   }
 
   async scanKeys(matchPattern: string, count = 100): Promise<string[]> {
+    if (!this.isReady()) return [];
     try {
       let cursor = '0';
       const keys: string[] = [];
       do {
-        const [nextCursor, found] = await this.client.scan(cursor, 'MATCH', matchPattern, 'COUNT', String(count));
+        const [nextCursor, found] = await this.client!.scan(cursor, 'MATCH', matchPattern, 'COUNT', String(count));
         cursor = nextCursor;
         keys.push(...found);
       } while (cursor !== '0');
