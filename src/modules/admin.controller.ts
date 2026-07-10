@@ -90,6 +90,7 @@ export class AdminController {
   // Classes
   // ----------------------------------------------------------------
 
+  @Roles('ADMIN', 'SURVEILLANT', 'ENSEIGNANT')
   @Get('classes')
   getClasses(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -421,6 +422,304 @@ export class AdminController {
   }
 
   // ----------------------------------------------------------------
+  // Absences élèves — routes spécifiques (avant le générique :resource)
+  // ----------------------------------------------------------------
+
+  @Get('absences-eleves')
+  async listAbsencesEleves(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Query('classeId') classeId?: string,
+    @Query('eleveId') eleveId?: string,
+    @Query('typeAbsence') typeAbsence?: string,
+    @Query('statut') statut?: string,
+    @Query('justifiee') justifieeStr?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('search') search?: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page = 1,
+    @Query('size', new DefaultValuePipe(100), ParseIntPipe) size = 100,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    const skip = (page - 1) * size;
+    const where: Record<string, unknown> = { tenantId: tid };
+    if (classeId) where.classeId = classeId;
+    if (eleveId) where.eleveId = eleveId;
+    if (typeAbsence) where.typeAbsence = typeAbsence;
+    if (statut) where.statut = statut;
+    if (justifieeStr === 'true') where.justifiee = true;
+    else if (justifieeStr === 'false') where.justifiee = false;
+    if (dateFrom || dateTo) {
+      const dateFilter: Record<string, Date> = {};
+      if (dateFrom) dateFilter.gte = new Date(dateFrom);
+      if (dateTo) dateFilter.lte = new Date(dateTo);
+      where.date = dateFilter;
+    }
+
+    const [absences, total] = await Promise.all([
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this.prisma.absenceEleve.findMany({ where: where as any, skip, take: size, orderBy: { date: 'desc' }, include: { classe: { select: { id: true, nom: true } } } }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this.prisma.absenceEleve.count({ where: where as any }),
+    ]);
+
+    const eleveIds = [...new Set(absences.map((a) => a.eleveId))];
+    const eleves = eleveIds.length > 0
+      ? await this.prisma.user.findMany({ where: { id: { in: eleveIds } }, select: { id: true, firstName: true, lastName: true, matricule: true, photoUrl: true } })
+      : [];
+    const eleveMap = new Map(eleves.map((e) => [e.id, e]));
+
+    let data = absences.map((a) => {
+      const eleve = eleveMap.get(a.eleveId);
+      return {
+        ...a,
+        eleveNom: eleve?.lastName ?? null,
+        elevePrenom: eleve?.firstName ?? null,
+        eleveMatricule: eleve?.matricule ?? null,
+        elevePhoto: eleve?.photoUrl ?? null,
+        classeNom: (a.classe as { nom?: string } | null)?.nom ?? null,
+        documentJustificatifUrl: a.documentUrl ?? null,
+      };
+    });
+
+    if (search) {
+      const s = search.toLowerCase();
+      data = data.filter((a) =>
+        `${a.elevePrenom ?? ''} ${a.eleveNom ?? ''} ${a.classeNom ?? ''}`.toLowerCase().includes(s),
+      );
+    }
+
+    return { data, total, page, size };
+  }
+
+  @Get('absences-eleves/stats')
+  async statsAbsencesEleves(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    const where = { tenantId: tid };
+
+    const [total, enAttente, justifiees, nonJustifiees, retards, journeesCompletes] = await Promise.all([
+      this.prisma.absenceEleve.count({ where }),
+      this.prisma.absenceEleve.count({ where: { ...where, statut: 'EN_ATTENTE' } }),
+      this.prisma.absenceEleve.count({ where: { ...where, statut: 'JUSTIFIEE' } }),
+      this.prisma.absenceEleve.count({ where: { ...where, statut: 'NON_JUSTIFIEE' } }),
+      this.prisma.absenceEleve.count({ where: { ...where, typeAbsence: 'RETARD' } }),
+      this.prisma.absenceEleve.count({ where: { ...where, typeAbsence: 'ABSENT' } }),
+    ]);
+
+    return {
+      total,
+      enAttente,
+      approuvees: justifiees,
+      rejetees: nonJustifiees,
+      justifiees,
+      nonJustifiees,
+      retards,
+      journeesCompletes,
+      demandesEleves: enAttente,
+    };
+  }
+
+  @Get('absences-eleves/demandes')
+  async demandesAbsencesEleves(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    const absences = await this.prisma.absenceEleve.findMany({
+      where: { tenantId: tid, statut: 'EN_ATTENTE' },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      include: { classe: { select: { id: true, nom: true } } },
+    });
+
+    const eleveIds = [...new Set(absences.map((a) => a.eleveId))];
+    const eleves = eleveIds.length > 0
+      ? await this.prisma.user.findMany({ where: { id: { in: eleveIds } }, select: { id: true, firstName: true, lastName: true, matricule: true } })
+      : [];
+    const eleveMap = new Map(eleves.map((e) => [e.id, e]));
+
+    return absences.map((a) => {
+      const eleve = eleveMap.get(a.eleveId);
+      return {
+        ...a,
+        eleveNom: eleve?.lastName ?? null,
+        elevePrenom: eleve?.firstName ?? null,
+        eleveMatricule: eleve?.matricule ?? null,
+        classeNom: (a.classe as { nom?: string } | null)?.nom ?? null,
+        documentJustificatifUrl: a.documentUrl ?? null,
+        source: 'ADMIN',
+      };
+    });
+  }
+
+  @Get('absences-eleves/top-absents')
+  async topAbsentsEleves(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit = 10,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    const where = { tenantId: tid };
+
+    const [absGroups, retardGroups, nonJustGroups] = await Promise.all([
+      this.prisma.absenceEleve.groupBy({ by: ['eleveId'], where: { ...where, typeAbsence: 'ABSENT' }, _count: { _all: true } }),
+      this.prisma.absenceEleve.groupBy({ by: ['eleveId'], where: { ...where, typeAbsence: 'RETARD' }, _count: { _all: true } }),
+      this.prisma.absenceEleve.groupBy({ by: ['eleveId'], where: { ...where, statut: 'NON_JUSTIFIEE' }, _count: { _all: true } }),
+    ]);
+
+    const statsMap = new Map<string, { nbAbsences: number; nbRetards: number; nbNonJustifiees: number }>();
+    for (const g of absGroups) statsMap.set(g.eleveId, { nbAbsences: g._count._all, nbRetards: 0, nbNonJustifiees: 0 });
+    for (const g of retardGroups) {
+      const s = statsMap.get(g.eleveId) ?? { nbAbsences: 0, nbRetards: 0, nbNonJustifiees: 0 };
+      s.nbRetards = g._count._all;
+      statsMap.set(g.eleveId, s);
+    }
+    for (const g of nonJustGroups) {
+      const s = statsMap.get(g.eleveId) ?? { nbAbsences: 0, nbRetards: 0, nbNonJustifiees: 0 };
+      s.nbNonJustifiees = g._count._all;
+      statsMap.set(g.eleveId, s);
+    }
+
+    const sorted = [...statsMap.entries()]
+      .map(([eleveId, s]) => ({ eleveId, ...s, total: s.nbAbsences + s.nbRetards }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, limit);
+
+    if (sorted.length === 0) return [];
+
+    const eleveIds = sorted.map((s) => s.eleveId);
+    const [eleves, latestAbsences] = await Promise.all([
+      this.prisma.user.findMany({ where: { id: { in: eleveIds } }, select: { id: true, firstName: true, lastName: true } }),
+      this.prisma.absenceEleve.findMany({
+        where: { eleveId: { in: eleveIds }, tenantId: tid },
+        orderBy: { date: 'desc' },
+        distinct: ['eleveId'],
+        include: { classe: { select: { nom: true } } },
+      }),
+    ]);
+
+    const eleveMap = new Map(eleves.map((e) => [e.id, e]));
+    const classeMap = new Map(latestAbsences.map((a) => [a.eleveId, (a.classe as { nom?: string } | null)?.nom ?? '—']));
+
+    return sorted.map((s) => ({
+      eleveId: s.eleveId,
+      eleveNom: eleveMap.get(s.eleveId)?.lastName ?? '—',
+      elevePrenom: eleveMap.get(s.eleveId)?.firstName ?? '—',
+      classeNom: classeMap.get(s.eleveId) ?? '—',
+      nbAbsences: s.nbAbsences,
+      nbRetards: s.nbRetards,
+      nbNonJustifiees: s.nbNonJustifiees,
+    }));
+  }
+
+  @Get('absences-eleves/stats/par-cycle')
+  async absencesStatsParCycle(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    const cycles = await this.prisma.cycle.findMany({ where: { tenantId: tid, actif: true }, orderBy: { libelle: 'asc' } });
+
+    return Promise.all(cycles.map(async (cycle) => {
+      const classes = await this.prisma.classe.findMany({ where: { tenantId: tid, cycleId: cycle.id }, select: { id: true } });
+      const classeIds = classes.map((c) => c.id);
+      if (classeIds.length === 0) return { cycleId: cycle.id, cycleLibelle: cycle.libelle, nbEleves: 0, nbAbsences: 0, nbRetards: 0, nbJustifiees: 0, nbNonJustifiees: 0, moyenneParEleve: 0 };
+
+      const [nbEleves, nbAbsences, nbRetards, nbJustifiees, nbNonJustifiees] = await Promise.all([
+        this.prisma.inscription.count({ where: { tenantId: tid, classeId: { in: classeIds }, statut: 'ACTIF' } }),
+        this.prisma.absenceEleve.count({ where: { tenantId: tid, classeId: { in: classeIds }, typeAbsence: 'ABSENT' } }),
+        this.prisma.absenceEleve.count({ where: { tenantId: tid, classeId: { in: classeIds }, typeAbsence: 'RETARD' } }),
+        this.prisma.absenceEleve.count({ where: { tenantId: tid, classeId: { in: classeIds }, statut: 'JUSTIFIEE' } }),
+        this.prisma.absenceEleve.count({ where: { tenantId: tid, classeId: { in: classeIds }, statut: 'NON_JUSTIFIEE' } }),
+      ]);
+      const total = nbAbsences + nbRetards;
+      return { cycleId: cycle.id, cycleLibelle: cycle.libelle, nbEleves, nbAbsences, nbRetards, nbJustifiees, nbNonJustifiees, moyenneParEleve: nbEleves > 0 ? Math.round((total / nbEleves) * 10) / 10 : 0 };
+    }));
+  }
+
+  @Get('absences-eleves/stats/par-niveau')
+  async absencesStatsParNiveau(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Query('cycleId') cycleId?: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    const niveaux = await this.prisma.niveau.findMany({
+      where: { tenantId: tid, ...(cycleId ? { cycleId } : {}) },
+      orderBy: { ordre: 'asc' },
+    });
+
+    return Promise.all(niveaux.map(async (niveau) => {
+      const classes = await this.prisma.classe.findMany({ where: { tenantId: tid, niveauId: niveau.id }, select: { id: true } });
+      const classeIds = classes.map((c) => c.id);
+      if (classeIds.length === 0) return { niveauId: niveau.id, niveauLibelle: niveau.libelle, cycleId: niveau.cycleId, nbClasses: 0, nbEleves: 0, nbAbsences: 0, nbRetards: 0, nbJustifiees: 0, moyenneParEleve: 0 };
+
+      const [nbEleves, nbAbsences, nbRetards, nbJustifiees] = await Promise.all([
+        this.prisma.inscription.count({ where: { tenantId: tid, classeId: { in: classeIds }, statut: 'ACTIF' } }),
+        this.prisma.absenceEleve.count({ where: { tenantId: tid, classeId: { in: classeIds }, typeAbsence: 'ABSENT' } }),
+        this.prisma.absenceEleve.count({ where: { tenantId: tid, classeId: { in: classeIds }, typeAbsence: 'RETARD' } }),
+        this.prisma.absenceEleve.count({ where: { tenantId: tid, classeId: { in: classeIds }, statut: 'JUSTIFIEE' } }),
+      ]);
+      const total = nbAbsences + nbRetards;
+      return { niveauId: niveau.id, niveauLibelle: niveau.libelle, cycleId: niveau.cycleId, nbClasses: classeIds.length, nbEleves, nbAbsences, nbRetards, nbJustifiees, moyenneParEleve: nbEleves > 0 ? Math.round((total / nbEleves) * 10) / 10 : 0 };
+    }));
+  }
+
+  @Get('absences-eleves/stats/par-classe')
+  async absencesStatsParClasse(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Query('niveauId') niveauId?: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    const classes = await this.prisma.classe.findMany({
+      where: { tenantId: tid, ...(niveauId ? { niveauId } : {}) },
+      orderBy: { nom: 'asc' },
+    });
+
+    return Promise.all(classes.map(async (classe) => {
+      const [nbEleves, nbAbsences, nbRetards, nbJustifiees] = await Promise.all([
+        this.prisma.inscription.count({ where: { tenantId: tid, classeId: classe.id, statut: 'ACTIF' } }),
+        this.prisma.absenceEleve.count({ where: { tenantId: tid, classeId: classe.id, typeAbsence: 'ABSENT' } }),
+        this.prisma.absenceEleve.count({ where: { tenantId: tid, classeId: classe.id, typeAbsence: 'RETARD' } }),
+        this.prisma.absenceEleve.count({ where: { tenantId: tid, classeId: classe.id, statut: 'JUSTIFIEE' } }),
+      ]);
+      const total = nbAbsences + nbRetards;
+      return { classeId: classe.id, classeNom: classe.nom, niveauId: classe.niveauId, nbEleves, nbAbsences, nbRetards, nbJustifiees, moyenneParEleve: nbEleves > 0 ? Math.round((total / nbEleves) * 10) / 10 : 0 };
+    }));
+  }
+
+  @Get('absences-eleves/stats/evolution')
+  async absencesEvolution(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    const absences = await this.prisma.absenceEleve.findMany({
+      where: { tenantId: tid },
+      select: { date: true, typeAbsence: true, statut: true },
+      orderBy: { date: 'asc' },
+    });
+
+    const monthMap = new Map<string, { nbAbsences: number; nbRetards: number; nbJustifiees: number }>();
+    for (const a of absences) {
+      const key = a.date.toISOString().slice(0, 7);
+      const s = monthMap.get(key) ?? { nbAbsences: 0, nbRetards: 0, nbJustifiees: 0 };
+      if (a.typeAbsence === 'RETARD') s.nbRetards++;
+      else s.nbAbsences++;
+      if (a.statut === 'JUSTIFIEE') s.nbJustifiees++;
+      monthMap.set(key, s);
+    }
+
+    return [...monthMap.entries()]
+      .map(([periode, s]) => ({ periode, ...s }))
+      .sort((a, b) => a.periode.localeCompare(b.periode));
+  }
+
+  // ----------------------------------------------------------------
   // Présences professeurs — contrôle surveillant et synthèse caisse
   // ----------------------------------------------------------------
 
@@ -663,7 +962,7 @@ export class AdminController {
     @CurrentUser() user?: JwtUser,
   ) {
     const tid = tenantId?.trim() || user?.tenantId;
-    return this.academiqueConfig.createSection(tid!, String(body.nom ?? body.libelle ?? ''));
+    return this.academiqueConfig.createSection(tid!, String(body.nom ?? body.libelle ?? ''), body.typePeriode ? String(body.typePeriode) : undefined);
   }
 
   @Roles('ADMIN')
@@ -678,6 +977,7 @@ export class AdminController {
     return this.academiqueConfig.updateSection(tid!, id, {
       nom: body.nom !== undefined || body.libelle !== undefined ? String(body.nom ?? body.libelle) : undefined,
       actif: body.actif !== undefined ? Boolean(body.actif) : undefined,
+      typePeriode: body.typePeriode ? String(body.typePeriode) : undefined,
     });
   }
 
@@ -916,6 +1216,39 @@ export class AdminController {
   ) {
     return this.resolveTenantId(tenantId, user)
       .then((tid) => this.crud.adminParentChildren(tid, id));
+  }
+
+  @Roles('ADMIN', 'SURVEILLANT', 'ENSEIGNANT')
+  @Get('eleves')
+  async listEleves(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Query() query: Record<string, string>,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    const classeId = query.classeId;
+    const size = Math.min(Number(query.size ?? 200), 500);
+
+    if (classeId) {
+      // Cherche via inscriptions actives pour fiabilité (User.classeId peut être null)
+      const inscriptions = await this.prisma.inscription.findMany({
+        where: { tenantId: tid, classeId, statut: 'ACTIF' },
+        select: { eleveId: true },
+      });
+      const eleveIds = inscriptions.map((i) => i.eleveId);
+      if (eleveIds.length === 0) return [];
+      const eleves = await this.prisma.user.findMany({
+        where: { tenantId: tid, role: 'ELEVE', id: { in: eleveIds } },
+        select: { id: true, firstName: true, lastName: true, matricule: true, photoUrl: true, classeId: true },
+        take: size,
+        orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      });
+      return eleves;
+    }
+
+    // Sans filtre classeId : retour générique paginé
+    return this.crud.findAll(this.crud.adminConfig('eleves'), tid, query);
   }
 
   @Get('eleves/:id/parcours')
@@ -1244,6 +1577,129 @@ export class AdminController {
       this.prisma.auditLog.count({ where }),
     ]);
     return { data, total, page, size };
+  }
+
+  // ----------------------------------------------------------------
+  // Discipline
+  // ----------------------------------------------------------------
+
+  @Roles('ADMIN', 'SURVEILLANT', 'ENSEIGNANT')
+  @Get('discipline')
+  async listDiscipline(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Query() query: Record<string, string>,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    const where: Record<string, unknown> = { tenantId: tid };
+    if (query.statut) where.statut = query.statut;
+    if (query.type) where.type = query.type;
+    if (query.rapporteurRole) where.rapporteurRole = query.rapporteurRole;
+    if (query.signaleParId) where.signaleParId = query.signaleParId;
+    const data = await (this.prisma as any).discipline.findMany({
+      where,
+      orderBy: { dateIncident: 'desc' },
+    });
+    return data;
+  }
+
+  @Roles('ADMIN', 'SURVEILLANT', 'ENSEIGNANT')
+  @Post('discipline')
+  async createDiscipline(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    const data = await (this.prisma as any).discipline.create({
+      data: {
+        tenantId: tid,
+        eleveNom: body.eleveNom as string,
+        eleveClasse: body.eleveClasse as string | undefined,
+        type: body.type ?? 'AVERTISSEMENT',
+        motif: body.motif as string,
+        dateIncident: body.dateIncident ? new Date(body.dateIncident as string) : new Date(),
+        gravite: Number(body.gravite ?? 2),
+        statut: body.statut ?? 'OUVERT',
+        rapporteur: body.rapporteur as string | undefined,
+        rapporteurRole: body.rapporteurRole as string | undefined,
+        signaleParId: body.signaleParId as string | undefined ?? user?.sub,
+      },
+    });
+    return data;
+  }
+
+  @Roles('ADMIN', 'SURVEILLANT', 'ENSEIGNANT')
+  @Put('discipline/:id')
+  async updateDiscipline(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    const updateData: Record<string, unknown> = {};
+    if (body.statut !== undefined) updateData.statut = body.statut;
+    if (body.type !== undefined) updateData.type = body.type;
+    if (body.motif !== undefined) updateData.motif = body.motif;
+    if (body.gravite !== undefined) updateData.gravite = Number(body.gravite);
+    if (body.sanction !== undefined) updateData.sanction = body.sanction;
+    if (body.compteRendu !== undefined) updateData.compteRendu = body.compteRendu;
+    if (body.dateDecision !== undefined) updateData.dateDecision = body.dateDecision ? new Date(body.dateDecision as string) : null;
+    const data = await (this.prisma as any).discipline.update({
+      where: { id, tenantId: tid },
+      data: updateData,
+    });
+    return data;
+  }
+
+  @Roles('ADMIN', 'SURVEILLANT', 'ENSEIGNANT')
+  @Post('discipline/:id/cloturer')
+  async cloturerDiscipline(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    const data = await (this.prisma as any).discipline.update({
+      where: { id, tenantId: tid },
+      data: {
+        statut: 'CLOTURE',
+        sanction: body.sanction,
+        compteRendu: body.compteRendu,
+        dateDecision: body.dateDecision ? new Date(body.dateDecision as string) : new Date(),
+      },
+    });
+    return data;
+  }
+
+  @Delete('discipline/:id')
+  async deleteDiscipline(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    await (this.prisma as any).discipline.delete({ where: { id, tenantId: tid } });
+    return { message: 'Dossier supprimé' };
+  }
+
+  @Roles('ADMIN')
+  @Post('personnel/:id/reset-credentials')
+  @HttpCode(HttpStatus.OK)
+  async resetPersonnelCredentials(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    return this.crud.resetPersonnelCredentials(tid, id);
   }
 
   // ----------------------------------------------------------------

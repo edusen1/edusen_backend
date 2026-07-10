@@ -332,7 +332,9 @@ export class UtilisateurService {
       ELEVE: 'élève',
       PARENT: 'parent',
       SURVEILLANT: 'surveillant',
+      SECURITE: 'sécurité',
       CAISSIER: 'caissier',
+      COMPTABLE: 'comptable',
       RH: 'ressources humaines',
       GESTIONNAIRE: 'gestionnaire',
     };

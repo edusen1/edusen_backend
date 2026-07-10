@@ -215,7 +215,8 @@ export class LegacyCrudService {
       anneeAcademique: { select: { id: true, libelle: true } },
     } : config.model === 'matiereClasse' ? {
       matiere: true,
-      enseignant: true
+      enseignant: true,
+      anneeAcademique: { select: { id: true, libelle: true, estCourante: true } }
     } : config.model === 'matiereNiveau' ? {
       matiere: { select: { id: true, code: true, libelle: true, categorie: true } },
       niveau: { select: { id: true, libelle: true } },
@@ -232,6 +233,7 @@ export class LegacyCrudService {
           role: true,
           actif: true,
           specialite: true,
+          photoUrl: true,
           surveillantCycles: {
             select: {
               cycle: { select: { id: true, code: true, libelle: true } },
@@ -345,7 +347,8 @@ export class LegacyCrudService {
       anneeAcademique: { select: { id: true, libelle: true } },
     } : config.model === 'matiereClasse' ? {
       matiere: true,
-      enseignant: true
+      enseignant: true,
+      anneeAcademique: { select: { id: true, libelle: true, estCourante: true } }
     } : config.model === 'matiereNiveau' ? {
       matiere: { select: { id: true, code: true, libelle: true, categorie: true } },
       niveau: { select: { id: true, libelle: true } },
@@ -362,6 +365,7 @@ export class LegacyCrudService {
           role: true,
           actif: true,
           specialite: true,
+          photoUrl: true,
           surveillantCycles: {
             select: {
               cycle: { select: { id: true, code: true, libelle: true } },
@@ -1314,6 +1318,15 @@ export class LegacyCrudService {
     return updated;
   }
 
+  async resetPersonnelCredentials(tenantId: string | undefined, personnelId: string) {
+    const personnel = await this.prisma.personnel.findFirst({
+      where: { id: personnelId, ...(tenantId ? { tenantId } : {}) },
+      select: { utilisateurId: true },
+    });
+    if (!personnel) throw new NotFoundException('Personnel introuvable');
+    return this.resetPassword(tenantId, personnel.utilisateurId);
+  }
+
   async compteRenduConvocation(tenantId: string | undefined, id: string, compteRendu?: string) {
     await this.findOne(V1_RESOURCES.convocations, tenantId, id);
     return this.prisma.convocation.update({
@@ -1436,7 +1449,7 @@ export class LegacyCrudService {
       this.prisma.user.count({ where: { ...tenantFilter, role: 'ELEVE' } }),
       this.prisma.user.count({ where: { ...tenantFilter, role: 'ENSEIGNANT' } }),
       this.prisma.user.count({ where: { ...tenantFilter, role: 'PARENT' } }),
-      this.prisma.user.count({ where: { ...tenantFilter, role: { in: ['ADMIN', 'CAISSIER', 'SURVEILLANT', 'RH', 'GESTIONNAIRE'] } } }),
+      this.prisma.user.count({ where: { ...tenantFilter, role: { in: ['ADMIN', 'CAISSIER', 'COMPTABLE', 'SURVEILLANT', 'SECURITE', 'RH', 'GESTIONNAIRE'] } } }),
       this.prisma.classe.count({ where: tenantFilter }),
       this.prisma.salle.count({ where: tenantFilter }),
       this.prisma.inscription.count({ where: { ...tenantFilter, statut: 'ACTIF' } }),
@@ -2665,6 +2678,25 @@ export class LegacyCrudService {
       data.numeroInscription ??= `INS-${Date.now().toString(36).toUpperCase()}`;
       data.creePar ??= userId ?? data.utilisateurId ?? '00000000-0000-0000-0000-000000000000';
       data.statut ??= 'ACTIF';
+
+      // Auto-remplir fraisInscription depuis la config si non fourni
+      if (data.fraisInscription === undefined || data.fraisInscription === null) {
+        try {
+          const classe = await this.prisma.classe.findFirst({
+            where: { id: String(data.classeId) },
+            include: { niveau: { include: { cycle: true } } },
+          });
+          if (classe?.niveau?.cycle) {
+            const fraisConfig = await this.prisma.fraisNiveauConfig.findFirst({
+              where: { tenantId: tenantId ?? String(data.tenantId ?? ''), section: classe.niveau.cycle.libelle, niveau: classe.niveau.libelle, actif: true },
+            });
+            if (fraisConfig) {
+              data.fraisInscription = fraisConfig.inscription + (fraisConfig.mensualite * fraisConfig.nbMois);
+            }
+          }
+        } catch { /* silencieux si pas de config frais */ }
+      }
+
       delete data.ignoreImpayes;
       delete data.utilisateurId;
       delete data.sectionId;
@@ -2695,7 +2727,10 @@ export class LegacyCrudService {
 
     if (config.model === 'absenceEleve') {
       await this.normalizeAbsenceEleveData(tenantId ?? String(data.tenantId ?? ''), data, create);
-      if (create) data.statut ??= 'EN_ATTENTE';
+      if (create) {
+        if (data.justifiee) data.statut ??= 'JUSTIFIEE';
+        else data.statut ??= 'EN_ATTENTE';
+      }
     }
 
     if (config.model === 'convocation' && create) data.statut ??= 'EN_ATTENTE';
@@ -2810,7 +2845,9 @@ export class LegacyCrudService {
       ELEVE: 'élève',
       PARENT: 'parent',
       SURVEILLANT: 'surveillant',
+      SECURITE: 'sécurité',
       CAISSIER: 'caissier',
+      COMPTABLE: 'comptable',
       RH: 'ressources humaines',
       GESTIONNAIRE: 'gestionnaire',
     };
@@ -3869,11 +3906,13 @@ export class LegacyCrudService {
     ]);
   }
 
-  private normalizePersonnelRole(value: unknown): 'ENSEIGNANT' | 'SURVEILLANT' | 'CAISSIER' | 'RH' {
+  private normalizePersonnelRole(value: unknown): 'ENSEIGNANT' | 'SURVEILLANT' | 'SECURITE' | 'CAISSIER' | 'RH' | 'COMPTABLE' {
     const role = String(value ?? '').trim().toUpperCase();
     if (role === 'ENSEIGNANT') return 'ENSEIGNANT';
-    if (role === 'SURVEILLANT') return 'SURVEILLANT';
+    if (role === 'SURVEILLANT' || role === 'SURVEILLANT_GENERAL' || role === 'SECRETAIRE_SURVEILLANT') return 'SURVEILLANT';
+    if (role === 'SECURITE' || role === 'GARDIEN' || role === 'AGENT_SECURITE' || role === 'AGENT_DE_SECURITE') return 'SECURITE';
     if (role === 'CAISSIER') return 'CAISSIER';
+    if (role === 'COMPTABLE') return 'COMPTABLE';
     return 'RH';
   }
 
@@ -3889,6 +3928,9 @@ export class LegacyCrudService {
       'SECRETAIRE_SURVEILLANT',
       'BIBLIOTHECAIRE',
       'COMPTABLE',
+      'SECURITE',
+      'GARDIEN',
+      'AGENT_SECURITE',
     ].some((key) => normalized.includes(key));
   }
 

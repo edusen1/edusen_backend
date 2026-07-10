@@ -85,6 +85,7 @@ export class PlatformService {
       });
 
       const initialAdmin = await this.createInitialTenantAdmin(tenant.id, tenant.nom, dto);
+      await this.seedCyclesAndNiveaux(tenant.id);
       await this.invalidatePlatformCache();
       return {
         ...tenant,
@@ -311,6 +312,70 @@ export class PlatformService {
     });
     this.mailService.sendCompteCree(admin.email ?? email, admin.firstName, admin.lastName, password, tenantName);
     return { ...admin, temporaryPassword: password };
+  }
+
+  private async seedCyclesAndNiveaux(tenantId: string): Promise<void> {
+    const CYCLES = [
+      { code: 'PRESCOLAIRE', libelle: 'Préscolaire', typePeriode: 'TRIMESTRE', moyenneMaximale: 10,
+        niveaux: [
+          { code: 'PS', libelle: 'Petite Section', ordre: 1 },
+          { code: 'MS', libelle: 'Moyenne Section', ordre: 2 },
+          { code: 'GS', libelle: 'Grande Section', ordre: 3 },
+        ] },
+      { code: 'PRIMAIRE', libelle: 'Primaire', typePeriode: 'TRIMESTRE', moyenneMaximale: 10,
+        niveaux: [
+          { code: 'CI', libelle: 'CI', ordre: 1 },
+          { code: 'CP', libelle: 'CP', ordre: 2 },
+          { code: 'CE1', libelle: 'CE1', ordre: 3 },
+          { code: 'CE2', libelle: 'CE2', ordre: 4 },
+          { code: 'CM1', libelle: 'CM1', ordre: 5 },
+          { code: 'CM2', libelle: 'CM2', ordre: 6 },
+        ] },
+      { code: 'COLLEGE', libelle: 'Collège', typePeriode: 'TRIMESTRE', moyenneMaximale: 20,
+        niveaux: [
+          { code: '6EME', libelle: '6ème', ordre: 1 },
+          { code: '5EME', libelle: '5ème', ordre: 2 },
+          { code: '4EME', libelle: '4ème', ordre: 3 },
+          { code: '3EME', libelle: '3ème', ordre: 4 },
+        ] },
+      { code: 'LYCEE', libelle: 'Lycée', typePeriode: 'SEMESTRE', moyenneMaximale: 20,
+        niveaux: [
+          { code: 'SECONDE', libelle: 'Seconde', ordre: 1 },
+          { code: 'PREMIERE', libelle: 'Première', ordre: 2 },
+          { code: 'TERMINALE', libelle: 'Terminale', ordre: 3 },
+        ] },
+    ];
+
+    for (const cycleDef of CYCLES) {
+      const existing = await this.prisma.cycle.findFirst({ where: { tenantId, code: cycleDef.code } });
+      if (existing) continue;
+
+      const cycle = await this.prisma.cycle.create({
+        data: {
+          tenantId,
+          code: cycleDef.code,
+          libelle: cycleDef.libelle,
+          typePeriode: cycleDef.typePeriode,
+          moyenneMaximale: cycleDef.moyenneMaximale,
+          seeded: true,
+          actif: true,
+        },
+      });
+
+      for (const niveauDef of cycleDef.niveaux) {
+        await this.prisma.niveau.create({
+          data: {
+            tenantId,
+            cycleId: cycle.id,
+            code: niveauDef.code,
+            libelle: niveauDef.libelle,
+            ordre: niveauDef.ordre,
+            seeded: true,
+            actif: true,
+          },
+        });
+      }
+    }
   }
 
   private async invalidatePlatformCache(): Promise<void> {

@@ -16,6 +16,7 @@ enum UserRole {
   CAISSIER
   COMPTABLE
   SURVEILLANT
+  SECURITE
   ENSEIGNANT
   ELEVE
   PARENT
@@ -183,6 +184,33 @@ enum StatutNotification {
   ECHEC
 }
 
+enum TypeSanction {
+  AVERTISSEMENT
+  BLAME
+  RETENUE
+  EXCLUSION_COURS
+  EXCLUSION_TEMPORAIRE
+  EXCLUSION_DEFINITIVE
+  TRAVAUX_INTERET_SCOLAIRE
+  CONSEIL_DISCIPLINE
+}
+
+enum StatutDiscipline {
+  OUVERT
+  EN_TRAITEMENT
+  CLOTURE
+  APPEL
+}
+
+enum RoleRapporteur {
+  ADMIN
+  PROFESSEUR
+  SURVEILLANT
+  ELEVE
+  PERSONNEL
+  PARENT
+}
+
 // ==================== TENANT ====================
 
 model Tenant {
@@ -237,6 +265,7 @@ model Tenant {
   liensBulletin       LienBulletinParent[]
   liensPaiement       LienPaiementParent[]
   demandesPassage     DemandePassage[]
+  disciplines         Discipline[]
   personnels          Personnel[]
   personnelNiveauAffectations PersonnelNiveauAffectation[]
   pointages           Pointage[]
@@ -494,14 +523,17 @@ model EleveParent {
 // ==================== ACADEMIC STRUCTURE ====================
 
 model Cycle {
-  id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String   @db.Uuid
-  tenant    Tenant   @relation(fields: [tenantId], references: [id])
-  code      String   @db.VarChar(20)
-  libelle   String
-  actif     Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @db.Uuid
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  code            String   @db.VarChar(20)
+  libelle         String
+  typePeriode     String   @default("TRIMESTRE") @db.VarChar(10) // TRIMESTRE | SEMESTRE
+  moyenneMaximale Float    @default(20) // 20 pour collège/lycée, 10 pour primaire/préscolaire
+  seeded          Boolean  @default(false) // true = créé par seed, non modifiable
+  actif           Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   niveaux           Niveau[]
   classes           Classe[] @relation("ClasseCycle")
@@ -512,18 +544,19 @@ model Cycle {
 }
 
 model Niveau {
-  id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String   @db.Uuid
-  tenant    Tenant   @relation(fields: [tenantId], references: [id])
-  cycleId   String   @db.Uuid
-  cycle     Cycle    @relation(fields: [cycleId], references: [id])
-  code      String   @db.VarChar(20)
-  libelle   String
-  ordre     Int
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @db.Uuid
+  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+  cycleId        String   @db.Uuid
+  cycle          Cycle    @relation(fields: [cycleId], references: [id])
+  code           String   @db.VarChar(20)
+  libelle        String
+  ordre          Int
   moyennePassage Float    @default(10)
-  actif     Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  seeded         Boolean  @default(false) // true = créé par seed, non modifiable
+  actif          Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   classes               Classe[]
   personnelAffectations PersonnelNiveauAffectation[]
@@ -700,6 +733,7 @@ model MatiereNiveau {
   matiereId          String   @db.Uuid
   matiere            Matiere  @relation(fields: [matiereId], references: [id])
   coefficient        Float    @default(1)
+  noteMaximum        Float    @default(20) // barème de la matière pour ce niveau (ex: 100 pour maths en primaire)
   volumeHoraireHebdo Int?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
@@ -1350,4 +1384,31 @@ model DemandePassage {
 
   @@index([tenantId, statut])
   @@index([tenantId, eleveId])
+}
+
+// ==================== DISCIPLINE ====================
+
+model Discipline {
+  id              String           @id @default(uuid()) @db.Uuid
+  tenantId        String           @db.Uuid
+  tenant          Tenant           @relation(fields: [tenantId], references: [id])
+  eleveNom        String           @db.VarChar(200)
+  eleveClasse     String?          @db.VarChar(100)
+  type            TypeSanction     @default(AVERTISSEMENT)
+  motif           String           @db.Text
+  dateIncident    DateTime         @db.Date
+  gravite         Int              @default(2)
+  statut          StatutDiscipline @default(OUVERT)
+  sanction        String?          @db.Text
+  compteRendu     String?          @db.Text
+  dateDecision    DateTime?        @db.Date
+  rapporteur      String?          @db.VarChar(200)
+  rapporteurRole  RoleRapporteur?
+  signaleParId    String?          @db.Uuid
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([tenantId, statut])
+  @@index([tenantId, dateIncident])
+  @@index([tenantId, signaleParId])
 }

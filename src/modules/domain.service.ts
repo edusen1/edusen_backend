@@ -348,7 +348,9 @@ export class DomainService {
       ENSEIGNANT: "Enseignant",
       PARENT: "Parent",
       SURVEILLANT: "Surveillant",
+      SECURITE: "Sécurité",
       CAISSIER: "Caissier",
+      COMPTABLE: "Comptable",
       RH: "Ressources humaines",
     };
     const content = [

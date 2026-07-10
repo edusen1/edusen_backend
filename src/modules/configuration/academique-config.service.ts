@@ -31,6 +31,9 @@ export interface SectionResponse {
   code: string;
   nom: string;
   actif: boolean;
+  typePeriode: string;
+  moyenneMaximale: number;
+  seeded: boolean;
 }
 
 export interface NiveauResponse {
@@ -42,6 +45,7 @@ export interface NiveauResponse {
   ordre: number;
   moyennePassage: number;
   actif: boolean;
+  seeded: boolean;
 }
 
 export interface CalendrierScolaireResponse {
@@ -60,6 +64,9 @@ type CycleRow = {
   code: string;
   libelle: string;
   actif: boolean;
+  typePeriode: string;
+  moyenneMaximale: number;
+  seeded: boolean;
 };
 
 type NiveauRow = {
@@ -199,37 +206,116 @@ export class AcademiqueConfigService {
 
   async getSections(tenantId: string): Promise<SectionResponse[]> {
     await this.assertTenantExists(tenantId);
+
+    // Auto-seed si aucun cycle seedé n'existe
+    const seededCount = await this.prisma.cycle.count({ where: { tenantId, seeded: true } });
+    if (seededCount === 0) {
+      await this.seedDefaultCycles(tenantId);
+    }
+
     const cycles = (await this.prisma.cycle.findMany({
       where: { tenantId },
       orderBy: { libelle: 'asc' },
     })) as CycleRow[];
-    return cycles.map((c: CycleRow) => ({ id: c.id, code: c.code, nom: c.libelle, actif: c.actif }));
+    return cycles.map((c: CycleRow) => ({ id: c.id, code: c.code, nom: c.libelle, actif: c.actif, typePeriode: c.typePeriode ?? 'TRIMESTRE', moyenneMaximale: c.moyenneMaximale ?? 20, seeded: c.seeded ?? false }));
   }
 
-  async createSection(tenantId: string, nom: string): Promise<SectionResponse> {
+  private async seedDefaultCycles(tenantId: string): Promise<void> {
+    const CYCLES = [
+      { code: 'PRESCOLAIRE', libelle: 'Préscolaire', typePeriode: 'TRIMESTRE', moyenneMaximale: 10,
+        niveaux: [
+          { code: 'PS', libelle: 'Petite Section', ordre: 1 },
+          { code: 'MS', libelle: 'Moyenne Section', ordre: 2 },
+          { code: 'GS', libelle: 'Grande Section', ordre: 3 },
+        ] },
+      { code: 'PRIMAIRE', libelle: 'Primaire', typePeriode: 'TRIMESTRE', moyenneMaximale: 10,
+        niveaux: [
+          { code: 'CI', libelle: 'CI', ordre: 1 },
+          { code: 'CP', libelle: 'CP', ordre: 2 },
+          { code: 'CE1', libelle: 'CE1', ordre: 3 },
+          { code: 'CE2', libelle: 'CE2', ordre: 4 },
+          { code: 'CM1', libelle: 'CM1', ordre: 5 },
+          { code: 'CM2', libelle: 'CM2', ordre: 6 },
+        ] },
+      { code: 'COLLEGE', libelle: 'Collège', typePeriode: 'TRIMESTRE', moyenneMaximale: 20,
+        niveaux: [
+          { code: '6EME', libelle: '6ème', ordre: 1 },
+          { code: '5EME', libelle: '5ème', ordre: 2 },
+          { code: '4EME', libelle: '4ème', ordre: 3 },
+          { code: '3EME', libelle: '3ème', ordre: 4 },
+        ] },
+      { code: 'LYCEE', libelle: 'Lycée', typePeriode: 'SEMESTRE', moyenneMaximale: 20,
+        niveaux: [
+          { code: 'SECONDE', libelle: 'Seconde', ordre: 1 },
+          { code: 'PREMIERE', libelle: 'Première', ordre: 2 },
+          { code: 'TERMINALE', libelle: 'Terminale', ordre: 3 },
+        ] },
+    ];
+
+    for (const cycleDef of CYCLES) {
+      const existing = await this.prisma.cycle.findFirst({ where: { tenantId, code: cycleDef.code } });
+      if (existing) {
+        // Marquer comme seedé si déjà existant mais pas encore flaggé
+        if (!existing.seeded) {
+          await this.prisma.cycle.update({ where: { id: existing.id }, data: { seeded: true, typePeriode: cycleDef.typePeriode, moyenneMaximale: cycleDef.moyenneMaximale } });
+        }
+        // S'assurer que les niveaux existent
+        for (const niveauDef of cycleDef.niveaux) {
+          const existingNiveau = await this.prisma.niveau.findFirst({ where: { tenantId, code: niveauDef.code } });
+          if (!existingNiveau) {
+            await this.prisma.niveau.create({
+              data: { tenantId, cycleId: existing.id, code: niveauDef.code, libelle: niveauDef.libelle, ordre: niveauDef.ordre, seeded: true, actif: true },
+            });
+          } else if (!existingNiveau.seeded) {
+            await this.prisma.niveau.update({ where: { id: existingNiveau.id }, data: { seeded: true } });
+          }
+        }
+        continue;
+      }
+
+      const cycle = await this.prisma.cycle.create({
+        data: { tenantId, code: cycleDef.code, libelle: cycleDef.libelle, typePeriode: cycleDef.typePeriode, moyenneMaximale: cycleDef.moyenneMaximale, seeded: true, actif: true },
+      });
+
+      for (const niveauDef of cycleDef.niveaux) {
+        await this.prisma.niveau.create({
+          data: { tenantId, cycleId: cycle.id, code: niveauDef.code, libelle: niveauDef.libelle, ordre: niveauDef.ordre, seeded: true, actif: true },
+        });
+      }
+    }
+  }
+
+  async createSection(tenantId: string, nom: string, typePeriode?: string): Promise<SectionResponse> {
     await this.assertTenantExists(tenantId);
     const code = this.slugCode(nom);
-    const duplicate = await this.prisma.cycle.findFirst({ where: { tenantId, code }, select: { id: true } });
-    if (duplicate) throw new ConflictException('Cette section existe déjà');
+    const duplicateCode = await this.prisma.cycle.findFirst({ where: { tenantId, code }, select: { id: true } });
+    if (duplicateCode) throw new ConflictException('Un cycle avec ce code existe déjà');
+    const duplicateName = await this.prisma.cycle.findFirst({ where: { tenantId, libelle: nom.trim() }, select: { id: true } });
+    if (duplicateName) throw new ConflictException('Un cycle avec ce nom existe déjà');
+    const tp = typePeriode === 'SEMESTRE' ? 'SEMESTRE' : 'TRIMESTRE';
     const created = await this.prisma.cycle.create({
-      data: { tenantId, code, libelle: nom.trim(), actif: true },
+      data: { tenantId, code, libelle: nom.trim(), actif: true, typePeriode: tp },
     });
-    return { id: created.id, code: created.code, nom: created.libelle, actif: created.actif };
+    return { id: created.id, code: created.code, nom: created.libelle, actif: created.actif, typePeriode: created.typePeriode ?? tp, moyenneMaximale: created.moyenneMaximale ?? 20, seeded: false };
   }
 
-  async updateSection(tenantId: string, id: string, dto: Partial<{ nom: string; actif: boolean }>): Promise<SectionResponse> {
+  async updateSection(tenantId: string, id: string, dto: Partial<{ nom: string; actif: boolean; typePeriode: string }>): Promise<SectionResponse> {
     await this.assertTenantExists(tenantId);
     const existing = await this.prisma.cycle.findFirst({ where: { id, tenantId } });
-    if (!existing) throw new NotFoundException('Section introuvable');
+    if (!existing) throw new NotFoundException('Cycle introuvable');
+
+    // Seedé = seule activation/désactivation autorisée
+    if (existing.seeded && (dto.nom || dto.typePeriode)) {
+      throw new BadRequestException('Ce cycle est prédéfini et ne peut pas être modifié. Seule l\'activation/désactivation est autorisée.');
+    }
 
     const nextNom = dto.nom?.trim();
     if (nextNom) {
       const nextCode = this.slugCode(nextNom);
-      const duplicate = await this.prisma.cycle.findFirst({
-        where: { tenantId, code: nextCode, id: { not: id } },
-        select: { id: true },
-      });
-      if (duplicate) throw new ConflictException('Cette section existe déjà');
+      const duplicateCode = await this.prisma.cycle.findFirst({ where: { tenantId, code: nextCode, id: { not: id } }, select: { id: true } });
+      if (duplicateCode) throw new ConflictException('Un cycle avec ce code existe déjà');
+      const duplicateName = await this.prisma.cycle.findFirst({ where: { tenantId, libelle: nextNom, id: { not: id } }, select: { id: true } });
+      if (duplicateName) throw new ConflictException('Un cycle avec ce nom existe déjà');
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -238,6 +324,7 @@ export class AcademiqueConfigService {
         data: {
           ...(nextNom ? { libelle: nextNom, code: this.slugCode(nextNom) } : {}),
           ...(dto.actif !== undefined ? { actif: dto.actif } : {}),
+          ...(dto.typePeriode ? { typePeriode: dto.typePeriode === 'SEMESTRE' ? 'SEMESTRE' : 'TRIMESTRE' } : {}),
         },
       });
 
@@ -250,35 +337,11 @@ export class AcademiqueConfigService {
 
       return section;
     });
-    return { id: updated.id, code: updated.code, nom: updated.libelle, actif: updated.actif };
+    return { id: updated.id, code: updated.code, nom: updated.libelle, actif: updated.actif, typePeriode: updated.typePeriode ?? 'TRIMESTRE', moyenneMaximale: updated.moyenneMaximale ?? 20, seeded: updated.seeded ?? false };
   }
 
-  async deleteSection(tenantId: string, id: string): Promise<{ deleted: true }> {
-    await this.assertTenantExists(tenantId);
-    const existing = await this.prisma.cycle.findFirst({ where: { id, tenantId }, select: { id: true, libelle: true } });
-    if (!existing) throw new NotFoundException('Section introuvable');
-
-    const niveauxCount = await this.prisma.niveau.count({ where: { tenantId, cycleId: id } });
-    if (niveauxCount > 0) {
-      throw new BadRequestException(`Impossible de supprimer cette section car elle contient ${niveauxCount} niveau${niveauxCount > 1 ? 'x' : ''}.`);
-    }
-
-    const calendriersCount = await this.prisma.calendrierScolaire.count({ where: { tenantId, sectionId: id } });
-    if (calendriersCount > 0) {
-      throw new BadRequestException(`Impossible de supprimer cette section car elle contient ${calendriersCount} événement${calendriersCount > 1 ? 's' : ''} du calendrier.`);
-    }
-
-    const surveillantsCount = await this.prisma.surveillantCycle.count({ where: { tenantId, cycleId: id } });
-    if (surveillantsCount > 0) {
-      throw new BadRequestException(`Impossible de supprimer cette section car elle est liée à ${surveillantsCount} surveillant${surveillantsCount > 1 ? 's' : ''}.`);
-    }
-
-    await this.prisma.$transaction([
-      this.prisma.fraisNiveauConfig.deleteMany({ where: { tenantId, section: existing.libelle } }),
-      this.prisma.cycle.delete({ where: { id } }),
-    ]);
-
-    return { deleted: true };
+  async deleteSection(_tenantId: string, _id: string): Promise<{ deleted: true }> {
+    throw new BadRequestException('La suppression des cycles n\'est pas autorisée. Vous pouvez désactiver un cycle à la place.');
   }
 
   // ----------------------------------------------------------------
@@ -287,6 +350,10 @@ export class AcademiqueConfigService {
 
   async getNiveaux(tenantId: string, sectionId?: string): Promise<NiveauResponse[]> {
     await this.assertTenantExists(tenantId);
+    // Auto-seed si besoin
+    const seededCount = await this.prisma.cycle.count({ where: { tenantId, seeded: true } });
+    if (seededCount === 0) await this.seedDefaultCycles(tenantId);
+
     const rows = (await this.prisma.niveau.findMany({
       where: { tenantId, ...(sectionId ? { cycleId: sectionId } : {}) },
       include: { cycle: { select: { id: true, libelle: true } } },
@@ -301,6 +368,7 @@ export class AcademiqueConfigService {
       ordre: n.ordre,
       moyennePassage: n.moyennePassage ?? 10,
       actif: n.actif,
+      seeded: (n as NiveauRow & { seeded?: boolean }).seeded ?? false,
     }));
   }
 
@@ -346,6 +414,7 @@ export class AcademiqueConfigService {
       ordre: created.ordre,
       moyennePassage: created.moyennePassage ?? 10,
       actif: created.actif,
+      seeded: false,
     };
   }
 
@@ -356,6 +425,11 @@ export class AcademiqueConfigService {
       include: { cycle: { select: { id: true, libelle: true } } },
     });
     if (!existing) throw new NotFoundException('Niveau introuvable');
+
+    // Seedé = seule activation/désactivation et moyennePassage autorisées
+    if (existing.seeded && (dto.nom || dto.sectionId || dto.ordre !== undefined)) {
+      throw new BadRequestException('Ce niveau est prédéfini et ne peut pas être modifié. Seule l\'activation/désactivation et la moyenne de passage sont autorisées.');
+    }
 
     let nextSection = existing.cycle;
     if (dto.sectionId && dto.sectionId !== existing.cycleId) {
@@ -410,35 +484,12 @@ export class AcademiqueConfigService {
       ordre: updated.ordre,
       moyennePassage: updated.moyennePassage ?? 10,
       actif: updated.actif,
+      seeded: updated.seeded ?? false,
     };
   }
 
-  async deleteNiveau(tenantId: string, id: string): Promise<{ deleted: true }> {
-    await this.assertTenantExists(tenantId);
-    const existing = await this.prisma.niveau.findFirst({
-      where: { id, tenantId },
-      include: { cycle: { select: { libelle: true } } },
-    });
-    if (!existing) throw new NotFoundException('Niveau introuvable');
-
-    const classesCount = await this.prisma.classe.count({ where: { tenantId, niveauId: id } });
-    if (classesCount > 0) {
-      throw new BadRequestException(`Impossible de supprimer ce niveau car il contient ${classesCount} classe${classesCount > 1 ? 's' : ''}.`);
-    }
-
-    const personnelsCount = await this.prisma.personnelNiveauAffectation.count({ where: { tenantId, niveauId: id } });
-    if (personnelsCount > 0) {
-      throw new BadRequestException(`Impossible de supprimer ce niveau car il est lié à ${personnelsCount} affectation${personnelsCount > 1 ? 's' : ''} du personnel.`);
-    }
-
-    await this.prisma.$transaction([
-      this.prisma.fraisNiveauConfig.deleteMany({
-        where: { tenantId, section: existing.cycle.libelle, niveau: existing.libelle },
-      }),
-      this.prisma.niveau.delete({ where: { id } }),
-    ]);
-
-    return { deleted: true };
+  async deleteNiveau(_tenantId: string, _id: string): Promise<{ deleted: true }> {
+    throw new BadRequestException('La suppression des niveaux n\'est pas autorisée. Vous pouvez désactiver un niveau à la place.');
   }
 
   // ----------------------------------------------------------------

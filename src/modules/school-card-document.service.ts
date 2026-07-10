@@ -290,7 +290,7 @@ body{font-family:Arial,sans-serif;background:transparent;-webkit-font-smoothing:
     const labels: Record<string, string> = {
       ELEVE: 'Élève', PROFESSEUR: 'Professeur', ADMIN: 'Administration',
       RH: 'Ressources humaines', COMPTABLE: 'Comptable',
-      CAISSIER: 'Caissier', SURVEILLANT: 'Surveillant', PARENT: 'Parent',
+      CAISSIER: 'Caissier', SURVEILLANT: 'Surveillant', SECURITE: 'Sécurité', PARENT: 'Parent',
     };
     return labels[role] ?? role;
   }
