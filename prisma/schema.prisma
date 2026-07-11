@@ -261,6 +261,7 @@ model Tenant {
   appels              Appel[]
   cahiersTexte        CahierTexte[]
   annonces            Annonce[]
+  communications      Communication[]
   convocations        Convocation[]
   liensBulletin       LienBulletinParent[]
   liensPaiement       LienPaiementParent[]
@@ -1030,6 +1031,40 @@ model Annonce {
   actif     Boolean   @default(true)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+}
+
+model Communication {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @db.Uuid
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  titre           String   @db.VarChar(200)
+  contenu         String   @db.Text
+  canal           String   @default("IN_APP") @db.VarChar(20)
+  statut          String   @default("BROUILLON") @db.VarChar(20)
+  cibleType       String   @default("ROLES") @db.VarChar(30)
+  cible           String?  @db.VarChar(40)
+  roles           Json?
+  classeIds       Json?
+  niveauIds       Json?
+  cycleIds        Json?
+  utilisateurIds  Json?
+  inclureParents  Boolean  @default(false)
+  inclureEleves   Boolean  @default(true)
+  nbDestinataires Int      @default(0)
+  nbLus           Int      @default(0)
+  documentUrl     String?  @db.Text
+  documentNom     String?  @db.VarChar(300)
+  documentMimeType String? @db.VarChar(120)
+  documentTaille  Int?
+  datePlanifiee   DateTime?
+  envoyeLe        DateTime?
+  auteurId        String?  @db.Uuid
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId, statut, createdAt])
+  @@index([tenantId, canal])
+  @@map("communications")
 }
 
 model Convocation {

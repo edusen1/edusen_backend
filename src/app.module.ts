@@ -44,6 +44,7 @@ import { PresenceProfesseurService } from '@/modules/presence-professeur.service
 import { PushNotificationService } from '@/modules/push-notification.service';
 import { DemandeReductionService } from '@/modules/v1/demande-reduction/demande-reduction.service';
 import { EleveDocumentService } from '@/modules/eleve-document.service';
+import { CommunicationService } from '@/modules/communication.service';
 
 @Module({
   imports: [
@@ -94,6 +95,7 @@ import { EleveDocumentService } from '@/modules/eleve-document.service';
     MensualitesSchedulerService,
     DemandeReductionService,
     EleveDocumentService,
+    CommunicationService,
     { provide: APP_GUARD, useClass: AppAuthGuard },
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },

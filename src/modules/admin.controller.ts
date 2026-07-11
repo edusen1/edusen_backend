@@ -43,6 +43,7 @@ import { PresenceProfesseurService } from '@/modules/presence-professeur.service
 import { DemandeReductionService } from '@/modules/v1/demande-reduction/demande-reduction.service';
 import { SchoolCardDocumentService } from '@/modules/school-card-document.service';
 import { EleveDocumentService } from '@/modules/eleve-document.service';
+import { CommunicationService } from '@/modules/communication.service';
 import { StatutPresence, TypeDocument } from '@prisma/client';
 
 type QueryParams = Record<string, string | string[] | undefined>;
@@ -66,6 +67,7 @@ export class AdminController {
     private readonly demandeReduction: DemandeReductionService,
     private readonly schoolCards: SchoolCardDocumentService,
     private readonly eleveDocuments: EleveDocumentService,
+    private readonly communications: CommunicationService,
   ) {}
 
   private resolveTenantId(tenantId: string | undefined, user?: JwtUser) {
@@ -1700,6 +1702,80 @@ export class AdminController {
   ) {
     const tid = await this.resolveTenantId(tenantId, user);
     return this.crud.resetPersonnelCredentials(tid, id);
+  }
+
+  @Roles('ADMIN')
+  @Get('communications')
+  async listCommunications(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Query() query: QueryParams,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    return this.communications.list(tid, query);
+  }
+
+  @Roles('ADMIN')
+  @Post('communications/preview-destinataires')
+  async previewCommunicationDestinataires(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    return this.communications.preview(tid, body);
+  }
+
+  @Roles('ADMIN')
+  @Post('communications')
+  async createCommunication(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    return this.communications.create(tid, body, user?.sub);
+  }
+
+  @Roles('ADMIN')
+  @Post('communications/:id/envoyer')
+  async envoyerCommunication(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    return this.communications.send(tid, id);
+  }
+
+  @Roles('ADMIN')
+  @Patch('communications/:id')
+  async updateCommunication(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    return this.communications.update(tid, id, body);
+  }
+
+  @Roles('ADMIN')
+  @Delete('communications/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteCommunication(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    return this.communications.delete(tid, id);
   }
 
   // ----------------------------------------------------------------
