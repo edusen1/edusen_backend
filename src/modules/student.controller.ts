@@ -17,6 +17,7 @@ import { CurrentUser } from "@/common/decorators/current-user.decorator";
 import type { JwtUser } from "@/common/types/auth.types";
 import { DomainService } from "@/modules/domain.service";
 import { StorageService } from "@/infrastructure/storage/storage.service";
+import { PrismaService } from "@/config/prisma.service";
 
 @Roles("ELEVE")
 @Controller("eleve")
@@ -24,6 +25,7 @@ export class StudentController {
   constructor(
     private readonly domain: DomainService,
     private readonly storage: StorageService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Get("profil") profil(@CurrentUser() user?: JwtUser) {
@@ -142,5 +144,29 @@ export class StudentController {
       body.noteId,
       body.pieceJointeUrl,
     );
+  }
+
+  @Get("communications")
+  async communications(@Headers("x-tenant-id") tenantId: string, @CurrentUser() user?: JwtUser) {
+    // Find student's class
+    const inscription = await this.prisma.inscription.findFirst({
+      where: { tenantId, eleveId: user?.sub, statut: 'ACTIF' },
+      select: { classeId: true },
+    });
+    // Communications sent to this student's class or to all students
+    return this.prisma.communication.findMany({
+      where: {
+        tenantId,
+        statut: 'ENVOYE',
+        OR: [
+          { cibleType: 'TOUS' },
+          { cibleType: 'ROLES', roles: { path: [], array_contains: 'ELEVE' } },
+          ...(inscription?.classeId ? [{ cibleType: 'CLASSE', classeIds: { path: [], array_contains: inscription.classeId } }] : []),
+        ],
+      },
+      select: { id: true, titre: true, contenu: true, envoyeLe: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
   }
 }

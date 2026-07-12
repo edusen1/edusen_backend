@@ -2,15 +2,19 @@ import { Body, Controller, Get, Headers, Param, Post, Query, Req } from "@nestjs
 import { Roles } from "@/common/decorators/roles.decorator";
 import { DomainService } from "@/modules/domain.service";
 
-@Roles("CAISSIER", "ADMIN", "SUPER_ADMIN", "GESTIONNAIRE")
+@Roles("CAISSIER", "COMPTABLE", "ADMIN", "SUPER_ADMIN", "GESTIONNAIRE")
 @Controller("caisse")
 export class CaisseController {
   constructor(private readonly domain: DomainService) {}
 
-  /** Dashboard stats pour le caissier */
+  /** Dashboard stats — full pour COMPTABLE/ADMIN, perso pour CAISSIER */
   @Get("dashboard")
-  dashboard(@Headers("x-tenant-id") tenantId: string) {
-    return this.domain.caisseDashboard(tenantId);
+  dashboard(
+    @Headers("x-tenant-id") tenantId: string,
+    @Req() req: { user?: { sub?: string; role?: string } },
+    @Query("periode") periode?: string,
+  ) {
+    return this.domain.caisseDashboard(tenantId, req.user?.role === 'CAISSIER' ? req.user?.sub : undefined, periode);
   }
 
   /** Liste des élèves actifs (pour formulaire d'encaissement) */

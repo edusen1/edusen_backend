@@ -202,6 +202,13 @@ export class LegacyCrudService {
           matiere: { select: { id: true, code: true, libelle: true } },
         },
       },
+      coursEnseignant: {
+        select: {
+          id: true,
+          matiere: { select: { id: true, code: true, libelle: true } },
+          classe: { select: { id: true, nom: true } },
+        },
+      },
     } : config.model === 'classe' ? {
       cycle: true,
       niveau: { include: { cycle: true } },
@@ -217,6 +224,8 @@ export class LegacyCrudService {
       matiere: true,
       enseignant: true,
       anneeAcademique: { select: { id: true, libelle: true, estCourante: true } }
+    } : config.model === 'note' ? {
+      matiere: { select: { id: true, code: true, libelle: true } },
     } : config.model === 'matiereNiveau' ? {
       matiere: { select: { id: true, code: true, libelle: true, categorie: true } },
       niveau: { select: { id: true, libelle: true } },
@@ -334,6 +343,13 @@ export class LegacyCrudService {
           matiere: { select: { id: true, code: true, libelle: true } },
         },
       },
+      coursEnseignant: {
+        select: {
+          id: true,
+          matiere: { select: { id: true, code: true, libelle: true } },
+          classe: { select: { id: true, nom: true } },
+        },
+      },
     } : config.model === 'classe' ? {
       cycle: true,
       niveau: { include: { cycle: true } },
@@ -349,6 +365,8 @@ export class LegacyCrudService {
       matiere: true,
       enseignant: true,
       anneeAcademique: { select: { id: true, libelle: true, estCourante: true } }
+    } : config.model === 'note' ? {
+      matiere: { select: { id: true, code: true, libelle: true } },
     } : config.model === 'matiereNiveau' ? {
       matiere: { select: { id: true, code: true, libelle: true, categorie: true } },
       niveau: { select: { id: true, libelle: true } },
@@ -1681,11 +1699,6 @@ export class LegacyCrudService {
         classeNom: absence.classe?.nom ?? null,
       })),
       alertes: [
-        ...(classesSansProfPrincipal > 0 ? [{
-          type: 'danger',
-          texte: `${classesSansProfPrincipal} classe(s) sans professeur principal`,
-          href: '/admin/classes',
-        }] : []),
         ...(absencesDuJourEleves > 0 ? [{
           type: 'danger',
           texte: `${absencesDuJourEleves} absence(s) élève aujourd'hui`,
@@ -2347,28 +2360,30 @@ export class LegacyCrudService {
     const studentIds = inscriptions.map((inscription) => inscription.eleveId);
     if (!studentIds.length) return [];
 
-    // All class data is read in parallel. Avoid one database round-trip per student.
-    const [notes, absenceRows, cours] = await Promise.all([
+    // Resolve niveauId for this class
+    const classe = await this.prisma.classe.findUnique({ where: { id: classeId }, select: { niveauId: true } });
+
+    // All class data is read in parallel.
+    const [notes, absenceRows, matiereNiveaux] = await Promise.all([
       this.prisma.note.findMany({
         where: { tenantId, eleveId: { in: studentIds }, trimestre, anneeScolaire },
-        select: { eleveId: true, matiereId: true, note: true, noteSur: true },
+        select: { eleveId: true, matiereId: true, note: true, noteSur: true, typeEvaluation: true },
       }),
       this.prisma.absenceEleve.groupBy({
         by: ['eleveId', 'typeAbsence'],
         where: { tenantId, eleveId: { in: studentIds } },
         _count: { _all: true },
       }),
-      this.prisma.cours.findMany({
-        where: {
-          tenantId,
-          classeId,
-          OR: [{ anneeAcademique: { libelle: anneeScolaire } }, { anneeAcademiqueId: null }],
-        },
-        select: { matiereId: true, coefficient: true },
-      }),
+      classe?.niveauId
+        ? this.prisma.matiereNiveau.findMany({
+            where: { tenantId, niveauId: classe.niveauId },
+            select: { matiereId: true, coefficient: true },
+          })
+        : [],
     ]);
 
-    const coefficients = new Map(cours.map((cours) => [cours.matiereId, cours.coefficient ?? 1]));
+    // Coefficients from MatiereNiveau (source of truth)
+    const coefficients = new Map(matiereNiveaux.map((mn) => [mn.matiereId, mn.coefficient ?? 1]));
     const averages = calculateBulletinAverages(studentIds, notes, coefficients);
     const absencesByStudent = new Map<string, { total: number; retards: number }>();
     for (const row of absenceRows) {
@@ -2595,6 +2610,11 @@ export class LegacyCrudService {
 
     if (config.model === 'user') {
       if (data.email) data.email = String(data.email).trim().toLowerCase();
+      // Normalisation des noms : NOM en MAJUSCULES, Prénom capitalize, lieu de naissance en MAJUSCULES
+      if (data.lastName) data.lastName = String(data.lastName).trim().toUpperCase();
+      if (data.firstName) data.firstName = String(data.firstName).trim().replace(/\b\w/g, (c: string) => c.toUpperCase());
+      if (data.lieuNaissance) data.lieuNaissance = String(data.lieuNaissance).trim().toUpperCase();
+      if (data.adresse) data.adresse = String(data.adresse).trim().toUpperCase();
       const phoneCountry = await this.resolveTenantPhoneCountry(tenantId ?? String(data.tenantId ?? ''));
       for (const field of ['telephone', 'numeroUrgence', 'telephoneTravail']) {
         if (data[field] !== undefined) {

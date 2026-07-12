@@ -87,11 +87,10 @@ export class AuthService {
     refreshExpiresIn: number;
     passwordChangeRequired: boolean;
   } | null> {
+    // Login par username ou matricule (les deux sont uniques)
     const loginConditions: Prisma.UserWhereInput[] = [
-      ...this.phoneLoginVariants(rawLogin).map((telephone) => ({ telephone })),
-      { email: { equals: normalizedLogin, mode: Prisma.QueryMode.insensitive } },
       { username: { equals: normalizedLogin, mode: Prisma.QueryMode.insensitive } },
-      { matricule: { equals: rawLogin, mode: Prisma.QueryMode.insensitive } },
+      { matricule: { equals: normalizedLogin, mode: Prisma.QueryMode.insensitive } },
     ];
 
     const candidates = await this.prisma.user.findMany({
@@ -106,6 +105,7 @@ export class AuthService {
         actif: true,
         mustChangePwd: true,
         role: true,
+        roles: true,
         email: true,
         telephone: true,
         tenant: { select: { actif: true } },
@@ -141,11 +141,13 @@ export class AuthService {
 
     await this.redis.del(lockoutKey);
 
-    const payload: JwtUser & { userId: string; accountType: 'TENANT'; groups: string[] } = {
+    const allRoles = [...new Set([user.role, ...(user.roles ?? [])])];
+    const payload: JwtUser & { userId: string; accountType: 'TENANT'; groups: string[]; allRoles: string[] } = {
       sub: user.id,
       userId: user.id,
       role: user.role,
-      groups: [user.role],
+      groups: allRoles,
+      allRoles,
       accountType: 'TENANT',
       tenantId: user.tenantId,
       email: user.email ?? undefined,
@@ -330,6 +332,32 @@ export class AuthService {
   }
 
   // ==================== UPDATE PROFILE ====================
+
+  async switchRole(userId: string, targetRole: string): Promise<{ accessToken: string }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, tenantId: true, role: true, roles: true, email: true, telephone: true },
+    });
+    if (!user) throw new UnauthorizedException('Utilisateur introuvable');
+    const allRoles = [...new Set([user.role, ...(user.roles ?? [])])];
+    if (!allRoles.includes(targetRole as never)) {
+      throw new UnauthorizedException('Rôle non autorisé');
+    }
+    const payload: JwtUser & { userId: string; accountType: 'TENANT'; groups: string[]; allRoles: string[] } = {
+      sub: user.id,
+      userId: user.id,
+      role: targetRole as never,
+      groups: allRoles,
+      allRoles,
+      accountType: 'TENANT',
+      tenantId: user.tenantId,
+      email: user.email ?? undefined,
+      telephone: user.telephone ?? undefined,
+      isPlatform: false,
+    };
+    const accessToken = this.jwtService.sign(payload, { expiresIn: ACCESS_TOKEN_EXPIRY });
+    return { accessToken };
+  }
 
   async updateProfile(userId: string, dto: { firstName?: string; lastName?: string; email?: string; telephone?: string | null }): Promise<unknown> {
     const user = await this.prisma.user.findUnique({

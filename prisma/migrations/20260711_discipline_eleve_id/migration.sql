@@ -1,0 +1,2 @@
+ALTER TABLE "disciplines" ADD COLUMN IF NOT EXISTS "eleveId" UUID;
+ALTER TABLE "disciplines" ADD COLUMN IF NOT EXISTS "classeId" UUID;

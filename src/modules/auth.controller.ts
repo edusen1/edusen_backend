@@ -1,4 +1,5 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Patch, Post, Req } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, HttpCode, HttpStatus, Patch, Post, Req } from '@nestjs/common';
+import { PrismaService } from '@/config/prisma.service';
 import type { MultipartFastifyRequest } from '@/common/types/multipart-request.types';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '@/common/decorators/public.decorator';
@@ -33,6 +34,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly domain: DomainService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Public()
@@ -95,7 +97,6 @@ export class AuthController {
   }
 
   @Patch('me')
-  @Roles('ADMIN', 'SUPER_ADMIN', 'GESTIONNAIRE')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mise à jour du profil' })
   updateProfile(
@@ -103,6 +104,72 @@ export class AuthController {
     @Body() dto: { firstName?: string; lastName?: string; email?: string; telephone?: string | null },
   ) {
     return this.authService.updateProfile(user.sub, dto);
+  }
+
+  @Post('switch-role')
+  @HttpCode(HttpStatus.OK)
+  switchRole(@CurrentUser() user: JwtUser, @Body() dto: { role: string }) {
+    return this.authService.switchRole(user.sub, dto.role);
+  }
+
+  @Post('mark-seen')
+  @HttpCode(HttpStatus.OK)
+  async markSeen(@CurrentUser() user: JwtUser, @Body() dto: { feature: string }) {
+    if (!dto.feature) return;
+    await this.prisma.userFeatureSeen.upsert({
+      where: { userId_feature: { userId: user.sub, feature: dto.feature } },
+      update: { seenAt: new Date() },
+      create: { userId: user.sub, feature: dto.feature, seenAt: new Date() },
+    });
+    return { ok: true };
+  }
+
+  @Get('badges')
+  async getBadges(@CurrentUser() user: JwtUser, @Headers('x-tenant-id') tenantId?: string) {
+    const tid = tenantId?.trim() || user.tenantId;
+    const seenRecords = await this.prisma.userFeatureSeen.findMany({
+      where: { userId: user.sub },
+    });
+    const seenMap = new Map(seenRecords.map((s) => [s.feature, s.seenAt]));
+
+    const badges: Record<string, number> = {};
+
+    // Reductions : count updated after last seen
+    const reductionsSeen = seenMap.get('reductions') ?? new Date(0);
+    if (user.role === 'ADMIN') {
+      badges.reductions = await this.prisma.demandeReduction.count({
+        where: { tenantId: tid, statut: 'EN_ATTENTE', createdAt: { gt: reductionsSeen } },
+      });
+    } else {
+      badges.reductions = await this.prisma.demandeReduction.count({
+        where: { tenantId: tid, demandePar: user.sub, updatedAt: { gt: reductionsSeen }, statut: { in: ['APPROUVEE', 'REJETEE'] } },
+      });
+    }
+
+    // Alertes
+    const alertesSeen = seenMap.get('alertes') ?? new Date(0);
+    const today = new Date();
+    const startDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const absToday = await this.prisma.absenceEleve.count({ where: { tenantId: tid, date: { gte: startDay } } });
+    const reclamations = await this.prisma.reclamation.count({ where: { tenantId: tid, statut: 'EN_ATTENTE' } });
+    const convocations = await this.prisma.convocation.count({ where: { tenantId: tid, statut: 'EN_ATTENTE' } });
+    const paiementsAtt = await this.prisma.paiement.count({ where: { tenantId: tid, statut: 'EN_ATTENTE' } });
+    // Only show if seenAt is before today (badges reset daily)
+    if (alertesSeen < startDay) {
+      const total = absToday + reclamations + convocations;
+      if (total > 0) badges.alertes = total;
+    }
+    if (seenMap.get('paiements') == null || (seenMap.get('paiements') as Date) < startDay) {
+      if (paiementsAtt > 0) badges.paiements = paiementsAtt;
+    }
+    if (seenMap.get('reclamations') == null || (seenMap.get('reclamations') as Date) < startDay) {
+      if (reclamations > 0) badges.reclamations = reclamations;
+    }
+    if (seenMap.get('convocations') == null || (seenMap.get('convocations') as Date) < startDay) {
+      if (convocations > 0) badges.convocations = convocations;
+    }
+
+    return badges;
   }
 
   @Post('profile-change-request')

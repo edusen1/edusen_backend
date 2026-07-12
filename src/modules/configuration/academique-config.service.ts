@@ -56,7 +56,15 @@ export interface CalendrierScolaireResponse {
   description?: string | null;
   dateDebut: string;
   dateFin?: string | null;
+  heureDebut?: string | null;
+  heureFin?: string | null;
   type: string;
+  statut: string;
+  visibilite: string;
+  classeId?: string | null;
+  niveauId?: string | null;
+  couleur?: string | null;
+  important: boolean;
 }
 
 type CycleRow = {
@@ -356,13 +364,14 @@ export class AcademiqueConfigService {
 
     const rows = (await this.prisma.niveau.findMany({
       where: { tenantId, ...(sectionId ? { cycleId: sectionId } : {}) },
-      include: { cycle: { select: { id: true, libelle: true } } },
+      include: { cycle: { select: { id: true, libelle: true, typePeriode: true } } },
       orderBy: [{ ordre: 'asc' }, { libelle: 'asc' }],
     })) as NiveauRow[];
     return rows.map((n: NiveauRow) => ({
       id: n.id,
       sectionId: n.cycleId,
       section: n.cycle.libelle,
+      typePeriode: (n.cycle as NiveauRow['cycle'] & { typePeriode?: string }).typePeriode ?? 'TRIMESTRE',
       code: n.code,
       nom: n.libelle,
       ordre: n.ordre,
@@ -514,7 +523,15 @@ export class AcademiqueConfigService {
       description?: string | null;
       dateDebut: string;
       dateFin?: string | null;
+      heureDebut?: string | null;
+      heureFin?: string | null;
       type?: string;
+      statut?: string;
+      visibilite?: string;
+      classeId?: string | null;
+      niveauId?: string | null;
+      couleur?: string | null;
+      important?: boolean;
     },
   ): Promise<CalendrierScolaireResponse> {
     await this.assertTenantExists(tenantId);
@@ -527,7 +544,15 @@ export class AcademiqueConfigService {
         description: dto.description?.trim() || null,
         dateDebut: new Date(dto.dateDebut),
         dateFin: dto.dateFin ? new Date(dto.dateFin) : null,
-        type: dto.type || 'AUTRE',
+        heureDebut: dto.heureDebut || null,
+        heureFin: dto.heureFin || null,
+        type: (dto.type as never) || 'AUTRE',
+        statut: (dto.statut as never) || 'PLANIFIE',
+        visibilite: (dto.visibilite as never) || 'TOUS',
+        classeId: dto.classeId || null,
+        niveauId: dto.niveauId || null,
+        couleur: dto.couleur || null,
+        important: dto.important ?? false,
       },
       include: { section: { select: { libelle: true } } },
     });
@@ -547,7 +572,15 @@ export class AcademiqueConfigService {
       description: string | null;
       dateDebut: string;
       dateFin: string | null;
+      heureDebut: string | null;
+      heureFin: string | null;
       type: string;
+      statut: string;
+      visibilite: string;
+      classeId: string | null;
+      niveauId: string | null;
+      couleur: string | null;
+      important: boolean;
     }>,
   ): Promise<CalendrierScolaireResponse> {
     await this.assertTenantExists(tenantId);
@@ -555,16 +588,25 @@ export class AcademiqueConfigService {
     const existing = await this.prisma.calendrierScolaire.findFirst({ where: { id, tenantId }, select: { id: true } });
     if (!existing) throw new NotFoundException('Événement introuvable');
 
+    const data: Record<string, unknown> = {};
+    if (dto.sectionId !== undefined) data.sectionId = dto.sectionId || null;
+    if (dto.titre !== undefined) data.titre = dto.titre.trim();
+    if (dto.description !== undefined) data.description = dto.description?.trim() || null;
+    if (dto.dateDebut !== undefined) data.dateDebut = new Date(dto.dateDebut);
+    if (dto.dateFin !== undefined) data.dateFin = dto.dateFin ? new Date(dto.dateFin) : null;
+    if (dto.heureDebut !== undefined) data.heureDebut = dto.heureDebut || null;
+    if (dto.heureFin !== undefined) data.heureFin = dto.heureFin || null;
+    if (dto.type !== undefined) data.type = dto.type || 'AUTRE';
+    if (dto.statut !== undefined) data.statut = dto.statut || 'PLANIFIE';
+    if (dto.visibilite !== undefined) data.visibilite = dto.visibilite || 'TOUS';
+    if (dto.classeId !== undefined) data.classeId = dto.classeId || null;
+    if (dto.niveauId !== undefined) data.niveauId = dto.niveauId || null;
+    if (dto.couleur !== undefined) data.couleur = dto.couleur || null;
+    if (dto.important !== undefined) data.important = dto.important;
+
     const updated = await this.prisma.calendrierScolaire.update({
       where: { id },
-      data: {
-        ...(dto.sectionId !== undefined ? { sectionId: dto.sectionId || null } : {}),
-        ...(dto.titre !== undefined ? { titre: dto.titre.trim() } : {}),
-        ...(dto.description !== undefined ? { description: dto.description?.trim() || null } : {}),
-        ...(dto.dateDebut !== undefined ? { dateDebut: new Date(dto.dateDebut) } : {}),
-        ...(dto.dateFin !== undefined ? { dateFin: dto.dateFin ? new Date(dto.dateFin) : null } : {}),
-        ...(dto.type !== undefined ? { type: dto.type || 'AUTRE' } : {}),
-      },
+      data,
       include: { section: { select: { libelle: true } } },
     });
     return this.toCalendrierResponse(updated);
@@ -961,7 +1003,7 @@ export class AcademiqueConfigService {
     await this.whatsapp.broadcastToRoles(tenantId, message, this.WA_ROLES);
   }
 
-  private toCalendrierResponse(row: {
+  private toCalendrierResponse(row: Record<string, unknown> & {
     id: string;
     sectionId: string | null;
     section?: { libelle: string } | null;
@@ -969,7 +1011,6 @@ export class AcademiqueConfigService {
     description: string | null;
     dateDebut: Date;
     dateFin: Date | null;
-    type: string | null;
   }): CalendrierScolaireResponse {
     return {
       id: row.id,
@@ -979,7 +1020,114 @@ export class AcademiqueConfigService {
       description: row.description,
       dateDebut: row.dateDebut.toISOString(),
       dateFin: row.dateFin?.toISOString() ?? null,
-      type: row.type ?? 'AUTRE',
+      heureDebut: (row.heureDebut as string) ?? null,
+      heureFin: (row.heureFin as string) ?? null,
+      type: (row.type as string) ?? 'AUTRE',
+      statut: (row.statut as string) ?? 'PLANIFIE',
+      visibilite: (row.visibilite as string) ?? 'TOUS',
+      classeId: (row.classeId as string) ?? null,
+      niveauId: (row.niveauId as string) ?? null,
+      couleur: (row.couleur as string) ?? null,
+      important: (row.important as boolean) ?? false,
     };
+  }
+
+  // ── Jours fériés Sénégal ────────────────────────────────────────────────
+
+  /**
+   * Synchronise les jours fériés du Sénégal pour une année donnée sur TOUS les tenants.
+   * Appelé automatiquement au démarrage ou via cron.
+   * Source : Calendarific API (CALENDARIFIC_API_KEY requis).
+   */
+  async syncFeriesSenegalAllTenants(annee: number): Promise<number> {
+    const apiKey = process.env.CALENDARIFIC_API_KEY;
+    if (!apiKey) {
+      this.logger.warn('[Fériés Sénégal] CALENDARIFIC_API_KEY non configurée — sync ignorée');
+      return 0;
+    }
+
+    const FR_NAMES: Record<string, string> = {
+      "New Year's Day": "Jour de l'An",
+      'Independence Day': 'Fête de l\'Indépendance',
+      'Easter Monday': 'Lundi de Pâques',
+      'Labour Day': 'Fête du Travail',
+      'Labor Day': 'Fête du Travail',
+      'Ascension Day': 'Ascension',
+      'Whit Monday': 'Lundi de Pentecôte',
+      'Assumption of Mary': 'Assomption',
+      'Assumption Day': 'Assomption',
+      "All Saints' Day": 'Toussaint',
+      'Christmas Day': 'Noël',
+      'Eid al-Fitr': 'Korité (Aïd al-Fitr)',
+      'Eid ul Fitr': 'Korité (Aïd al-Fitr)',
+      'Eid al-Adha': 'Tabaski (Aïd al-Adha)',
+      'Eid ul Adha': 'Tabaski (Aïd al-Adha)',
+      'Mawlid': 'Maouloud (Mawlid)',
+      "Prophet's Birthday": 'Maouloud (Mawlid)',
+      "The Prophet's Birthday": 'Maouloud (Mawlid)',
+      'Mawlid al-Nabi': 'Maouloud (Mawlid)',
+      'Muharram': 'Tamkharit (Achoura)',
+      'Ashura': 'Tamkharit (Achoura)',
+      'Islamic New Year': 'Tamkharit (Nouvel An islamique)',
+      'Laylat al-Qadr': 'Nuit du Destin (Laylat al-Qadr)',
+      'Grand Magal of Touba': 'Grand Magal de Touba',
+      'Magal de Touba': 'Magal de Touba',
+      'Good Friday': 'Vendredi Saint',
+      'Easter Sunday': 'Dimanche de Pâques',
+      'Whit Sunday': 'Dimanche de Pentecôte',
+    };
+
+    let holidays: { date: string; name: string; description: string }[];
+    try {
+      const url = `https://calendarific.com/api/v2/holidays?api_key=${apiKey}&country=SN&year=${annee}&type=national`;
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Calendarific ${response.status}`);
+      const json = await response.json() as {
+        response: { holidays: { date: { iso: string }; name: string; description: string }[] };
+      };
+      holidays = (json.response?.holidays ?? []).map((h) => ({
+        date: h.date.iso.slice(0, 10),
+        name: FR_NAMES[h.name] ?? h.name,
+        description: h.description,
+      }));
+    } catch (err) {
+      this.logger.warn(`[Fériés Sénégal] Erreur Calendarific: ${(err as Error).message}`);
+      return 0;
+    }
+
+    if (holidays.length === 0) return 0;
+
+    // Get all active tenants
+    const tenants = await this.prisma.tenant.findMany({
+      where: { actif: true },
+      select: { id: true },
+    });
+
+    let totalCreated = 0;
+    for (const tenant of tenants) {
+      for (const h of holidays) {
+        const exists = await this.prisma.calendrierScolaire.findFirst({
+          where: { tenantId: tenant.id, type: 'JOUR_FERIE', dateDebut: new Date(h.date), titre: h.name },
+        });
+        if (!exists) {
+          await this.prisma.calendrierScolaire.create({
+            data: {
+              tenantId: tenant.id,
+              titre: h.name,
+              description: h.description,
+              dateDebut: new Date(h.date),
+              type: 'JOUR_FERIE',
+              statut: 'CONFIRME',
+              visibilite: 'TOUS',
+              important: true,
+            },
+          });
+          totalCreated++;
+        }
+      }
+    }
+
+    this.logger.log(`[Fériés Sénégal] ${holidays.length} fériés synchronisés pour ${tenants.length} écoles (${totalCreated} créés)`);
+    return totalCreated;
   }
 }

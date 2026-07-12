@@ -37,6 +37,8 @@ import { HealthController } from '@/modules/health.controller';
 import { EmploiDuTempsService } from '@/modules/v1/emploi-du-temps/emploi-du-temps.service';
 import { BulletinService } from '@/modules/v1/bulletin/bulletin.service';
 import { MensualitesSchedulerService } from '@/modules/mensualites-scheduler.service';
+import { FeriesSyncService } from '@/modules/feries-sync.service';
+import { ProgrammeService } from '@/modules/programme/programme.service';
 import { BulletinDocumentService } from '@/modules/bulletin-document.service';
 import { PaymentReceiptDocumentService } from '@/modules/payment-receipt-document.service';
 import { SchoolCardDocumentService } from '@/modules/school-card-document.service';
@@ -45,6 +47,7 @@ import { PushNotificationService } from '@/modules/push-notification.service';
 import { DemandeReductionService } from '@/modules/v1/demande-reduction/demande-reduction.service';
 import { EleveDocumentService } from '@/modules/eleve-document.service';
 import { CommunicationService } from '@/modules/communication.service';
+import { RapportDocumentService } from '@/modules/rapport-document.service';
 
 @Module({
   imports: [
@@ -93,9 +96,12 @@ import { CommunicationService } from '@/modules/communication.service';
     PresenceProfesseurService,
     PushNotificationService,
     MensualitesSchedulerService,
+    FeriesSyncService,
+    ProgrammeService,
     DemandeReductionService,
     EleveDocumentService,
     CommunicationService,
+    RapportDocumentService,
     { provide: APP_GUARD, useClass: AppAuthGuard },
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },

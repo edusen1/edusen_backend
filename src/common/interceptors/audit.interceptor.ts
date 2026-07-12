@@ -1,8 +1,10 @@
 import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import type { FastifyRequest } from 'fastify';
 import { Observable, tap } from 'rxjs';
 import { PrismaService } from '@/config/prisma.service';
 import type { JwtUser } from '@/common/types/auth.types';
+import { AUDIT_READ_KEY } from '@/common/decorators/audit-read.decorator';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v);
@@ -44,6 +46,20 @@ const RESOURCE_LABELS: Record<string, string> = {
   'calendrier-scolaire': 'calendrier',
   'absences-par-cours': 'absenceEleve',
   stagiaires: 'stagiaire',
+  'liens-paiement': 'lienPaiement',
+  'liens-bulletin': 'lienBulletin',
+  communications: 'communication',
+  'carte-scolaire': 'carteScolaire',
+  discipline: 'discipline',
+  reductions: 'reduction',
+  'demandes-passage': 'demandePassage',
+  'demandes-audit': 'demandeAudit',
+  whatsapp: 'whatsapp',
+  profil: 'profil',
+  ecole: 'ecoleConfig',
+  apparence: 'apparenceConfig',
+  'apparence-palettes': 'palette',
+  'push-token': 'pushToken',
 };
 
 const VERB_ACTIONS: Record<string, string> = {
@@ -58,6 +74,40 @@ const VERB_ACTIONS: Record<string, string> = {
   repondre: 'REPONSE',
   dupliquer: 'DUPLICATION',
 };
+
+function parseUserAgent(ua: string): { deviceType: string | null; browserName: string | null; osName: string | null } {
+  if (!ua) return { deviceType: null, browserName: null, osName: null };
+
+  // Device type
+  const isMobile = /Mobile|Android|iPhone|iPad|iPod/i.test(ua);
+  const isTablet = /iPad|Tablet|PlayBook/i.test(ua);
+  const deviceType = isTablet ? 'tablet' : isMobile ? 'mobile' : 'desktop';
+
+  // Browser
+  let browserName: string | null = null;
+  if (/Edg\//i.test(ua)) browserName = 'Edge';
+  else if (/OPR\//i.test(ua) || /Opera/i.test(ua)) browserName = 'Opera';
+  else if (/Chrome\//i.test(ua)) browserName = 'Chrome';
+  else if (/Safari\//i.test(ua) && !/Chrome/i.test(ua)) browserName = 'Safari';
+  else if (/Firefox\//i.test(ua)) browserName = 'Firefox';
+  else if (/MSIE|Trident/i.test(ua)) browserName = 'IE';
+
+  // OS
+  let osName: string | null = null;
+  if (/Windows/i.test(ua)) osName = 'Windows';
+  else if (/Mac OS X/i.test(ua)) osName = 'macOS';
+  else if (/Android/i.test(ua)) osName = 'Android';
+  else if (/iPhone|iPad|iPod/i.test(ua)) osName = 'iOS';
+  else if (/Linux/i.test(ua)) osName = 'Linux';
+
+  return { deviceType, browserName, osName };
+}
+
+function parseGeoFromIp(_ip: string | undefined): { city: string | null; country: string | null } {
+  // IP geolocation requires an external service (MaxMind, geoip-lite, etc.)
+  // For now, return null — can be wired later with geoip-lite or an API call
+  return { city: null, country: null };
+}
 
 const SKIP_PREFIXES = ['/health', '/api/health', '/api/auth', '/auth', '/api/storage', '/storage'];
 const TENANT_PREFIXES = ['admin', 'v1', 'caisse', 'enseignant', 'eleve', 'parent'];
@@ -108,18 +158,27 @@ function sanitizeBody(body: unknown): unknown {
 
 @Injectable()
 export class AuditInterceptor implements NestInterceptor {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly reflector: Reflector,
+  ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const request = context.switchToHttp().getRequest<FastifyRequest & { user?: JwtUser }>();
     const method = request.method;
 
-    if (!MUTATION_METHODS.has(method)) return next.handle();
+    // Check if this GET endpoint is marked with @AuditRead
+    const auditReadAction = this.reflector.get<string | undefined>(AUDIT_READ_KEY, context.getHandler());
+    const isSensitiveRead = method === 'GET' && !!auditReadAction;
+
+    if (!isSensitiveRead && !MUTATION_METHODS.has(method)) return next.handle();
     if (SKIP_PREFIXES.some((p) => request.url.startsWith(p))) return next.handle();
+
+    const actionOverride = isSensitiveRead ? auditReadAction : undefined;
 
     return next.handle().pipe(
       tap((response) => {
-        void this.writeLog(request, method, response);
+        void this.writeLog(request, method, response, actionOverride);
       }),
     );
   }
@@ -128,10 +187,11 @@ export class AuditInterceptor implements NestInterceptor {
     request: FastifyRequest & { user?: JwtUser },
     method: string,
     response: unknown,
+    actionOverride?: string,
   ): Promise<void> {
     try {
       const { resourceType, resourceId: urlId, action: verbAction } = parsePath(request.url);
-      const action = verbAction === 'METHOD' ? methodToAction(method) : verbAction;
+      const action = actionOverride ?? (verbAction === 'METHOD' ? methodToAction(method) : verbAction);
 
       let resourceId: string | null = urlId;
       if (!resourceId && method === 'POST') {
@@ -142,6 +202,11 @@ export class AuditInterceptor implements NestInterceptor {
 
       const user = request.user;
       const tenantId = (request.headers['x-tenant-id'] as string | undefined)?.trim() || user?.tenantId;
+
+      // Fetch user details for enrichment
+      const userInfo = await this.fetchUserInfo(user?.sub);
+      const deviceInfo = parseUserAgent((request.headers['user-agent'] as string | undefined) ?? '');
+      const geoInfo = parseGeoFromIp(request.ip);
 
       await this.prisma.auditLog.create({
         data: {
@@ -158,10 +223,49 @@ export class AuditInterceptor implements NestInterceptor {
           },
           ipAddress: typeof request.ip === 'string' ? request.ip.slice(0, 45) : null,
           userAgent: (request.headers['user-agent'] as string | undefined) ?? null,
+          // Enriched user info
+          userMatricule: userInfo?.matricule ?? null,
+          userNomComplet: userInfo?.nomComplet ?? null,
+          userEmail: userInfo?.email ?? null,
+          userTelephone: userInfo?.telephone ?? null,
+          userUsername: userInfo?.username ?? null,
+          // Device info
+          deviceType: deviceInfo.deviceType,
+          browserName: deviceInfo.browserName,
+          osName: deviceInfo.osName,
+          // Geolocation
+          geoCity: geoInfo.city,
+          geoCountry: geoInfo.country,
         },
       });
     } catch {
       // Audit failure must never affect the response
+    }
+  }
+
+  private async fetchUserInfo(userId: string | undefined): Promise<{
+    matricule: string | null;
+    nomComplet: string;
+    email: string | null;
+    telephone: string | null;
+    username: string | null;
+  } | null> {
+    if (!userId || !isUuid(userId)) return null;
+    try {
+      const u = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { matricule: true, firstName: true, lastName: true, email: true, telephone: true, username: true },
+      });
+      if (!u) return null;
+      return {
+        matricule: u.matricule ?? null,
+        nomComplet: `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim(),
+        email: u.email ?? null,
+        telephone: u.telephone ?? null,
+        username: u.username ?? null,
+      };
+    } catch {
+      return null;
     }
   }
 }

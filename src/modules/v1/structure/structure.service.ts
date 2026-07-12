@@ -308,7 +308,7 @@ export class StructureService {
         description: dto.description,
         dateDebut: new Date(dto.dateDebut),
         dateFin: dto.dateFin ? new Date(dto.dateFin) : undefined,
-        type: dto.type,
+        type: (dto.type as never) || 'AUTRE',
       },
     });
   }

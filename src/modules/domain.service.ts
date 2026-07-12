@@ -119,10 +119,38 @@ export class DomainService {
     if (!matiereId) {
       throw new BadRequestException("matiereId (ou coursId valide) est requis");
     }
-    const createData = {
+    // Resolve anneeScolaire from the student's active inscription
+    let anneeScolaire = data.anneeScolaire;
+    if (!anneeScolaire || /^\d{4}$/.test(anneeScolaire)) {
+      const inscription = await this.prisma.inscription.findFirst({
+        where: { tenantId, eleveId: data.eleveId, statut: 'ACTIF' },
+        select: { anneeAcademique: { select: { libelle: true } } },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (inscription?.anneeAcademique?.libelle) {
+        anneeScolaire = inscription.anneeAcademique.libelle;
+      }
+    }
+    // Resolve coursId from matiereId + inscription classeId
+    let coursId = data.coursId ?? null;
+    if (!coursId && matiereId) {
+      const inscription = await this.prisma.inscription.findFirst({
+        where: { tenantId, eleveId: data.eleveId, statut: 'ACTIF' },
+        select: { classeId: true },
+      });
+      if (inscription?.classeId) {
+        const cours = await this.prisma.cours.findFirst({
+          where: { tenantId, matiereId, classeId: inscription.classeId },
+          select: { id: true },
+        });
+        coursId = cours?.id ?? null;
+      }
+    }
+    const createData: Record<string, unknown> = {
       tenantId,
       eleveId: data.eleveId,
       matiereId,
+      ...(coursId ? { coursId } : {}),
       typeEvaluation:
         (data.typeEval as
           | "DEVOIR"
@@ -131,15 +159,16 @@ export class DomainService {
           | "COMPOSITION"
           | "CONTROLE"
           | "TP"
-          | "ORAL") ?? "DEVOIR",
+          | "ORAL"
+          | "BONUS") ?? "DEVOIR",
       note: data.valeur,
       noteSur: data.noteSur ?? 20,
-      trimestre: data.trimestre ?? "TRIMESTRE_1",
-      anneeScolaire: data.anneeScolaire ?? new Date().getFullYear().toString(),
+      trimestre: data.trimestre ?? "SEMESTRE_1",
+      anneeScolaire: anneeScolaire ?? new Date().getFullYear().toString(),
       commentaire: data.commentaire ?? undefined,
     };
     await this.applyNoteEvaluationRules(tenantId, createData);
-    const note = await this.prisma.note.create({ data: createData });
+    const note = await this.prisma.note.create({ data: createData as any });
 
     void this.notifyNoteCreated(tenantId, note.eleveId, note.id).catch(() => {});
     return note;
@@ -159,7 +188,7 @@ export class DomainService {
     const trimestre = String(data.trimestre ?? '').trim();
     const anneeScolaire = String(data.anneeScolaire ?? '').trim();
     const typeEvaluation = String(data.typeEvaluation ?? 'DEVOIR').trim().toUpperCase();
-    const allowed = new Set(['DEVOIR', 'INTERROGATION', 'EXAMEN', 'COMPOSITION', 'CONTROLE', 'TP', 'ORAL']);
+    const allowed = new Set(['DEVOIR', 'INTERROGATION', 'EXAMEN', 'COMPOSITION', 'CONTROLE', 'TP', 'ORAL', 'BONUS']);
 
     if (!allowed.has(typeEvaluation)) {
       throw new BadRequestException(`Type d'évaluation invalide: ${typeEvaluation}`);
@@ -168,7 +197,27 @@ export class DomainService {
       throw new BadRequestException('eleveId, matiereId, trimestre et anneeScolaire sont requis pour une note');
     }
 
+    // Validation de la valeur
+    const note = Number(data.note ?? 0);
+    const noteSur = Number(data.noteSur ?? 20);
+    if (note < 0) {
+      throw new BadRequestException('La note ne peut pas être négative');
+    }
+    if (typeEvaluation === 'BONUS') {
+      // Bonus: pas de max, mais doit être positif
+    } else {
+      // Devoir/Composition: note ne peut pas dépasser noteSur
+      if (note > noteSur) {
+        throw new BadRequestException(`La note (${note}) ne peut pas dépasser le barème (${noteSur})`);
+      }
+    }
+
     data.typeEvaluation = typeEvaluation;
+
+    if (typeEvaluation === 'BONUS') {
+      data.commentaire = this.cleanNoteCommentaire(data.commentaire) || 'Bonus';
+      return;
+    }
 
     if (typeEvaluation === 'DEVOIR') {
       data.commentaire = await this.resolveDevoirCommentaire(tenantId, data);
@@ -268,7 +317,7 @@ export class DomainService {
       select: {
         ...this.userProfileSelect,
         tenantId: true,
-        eleveClasse: { select: { id: true, nom: true } },
+        eleveClasse: { select: { id: true, nom: true, niveau: { select: { id: true, libelle: true, cycle: { select: { code: true, typePeriode: true } } } }, anneeAcademique: { select: { id: true, libelle: true } } } },
       },
     });
     if (!user) return null;
@@ -281,15 +330,17 @@ export class DomainService {
     const inscription = await this.prisma.inscription.findFirst({
       where: { tenantId, eleveId: profile.id, statut: "ACTIF" },
       include: {
-        classe: { select: { id: true, nom: true } },
+        classe: { select: { id: true, nom: true, niveau: { select: { id: true, libelle: true, cycle: { select: { code: true, typePeriode: true } } } }, anneeAcademique: { select: { id: true, libelle: true } } } },
         anneeAcademique: { select: { id: true, libelle: true } },
       },
       orderBy: { createdAt: "desc" },
     });
     const classe = inscription?.classe ?? eleveClasse ?? null;
+    const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { nom: true } });
 
     return {
       ...profile,
+      ecoleNom: tenant?.nom ?? null,
       telephone: profile.telephone ?? null,
       numeroIdentificationNational: profile.numeroIdentificationNational ?? null,
       nni: profile.numeroIdentificationNational ?? null,
@@ -778,20 +829,32 @@ export class DomainService {
     });
   }
 
-  async caisseDashboard(tenantId: string) {
+  async caisseDashboard(tenantId: string, agentId?: string, periode?: string) {
     const now = new Date();
     const startDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    // Periode filter: 'jour' (default), 'semaine', 'mois', 'annee', 'tout'
+    let periodeStart: Date;
+    switch (periode) {
+      case 'semaine': { const d = new Date(now); d.setDate(d.getDate() - d.getDay() + 1); d.setHours(0, 0, 0, 0); periodeStart = d; break; }
+      case 'mois': periodeStart = startMonth; break;
+      case 'annee': periodeStart = new Date(now.getFullYear(), 0, 1); break;
+      case 'tout': periodeStart = new Date(2000, 0, 1); break;
+      default: periodeStart = startDay;
+    }
+    // agentId set = CAISSIER mode (ses propres transactions), undefined = COMPTABLE/ADMIN mode (tout)
+    const agentFilter = agentId ? { validePar: agentId } : {};
+    const baseWhere = { tenantId, ...agentFilter };
     const [todayCnt, todayAgg, monthCnt, monthAgg, enAttenteCnt, enAttenteAgg, rejeteCnt, totalCnt, debtRows] =
       await Promise.all([
-        this.prisma.paiement.count({ where: { tenantId, statut: 'VALIDE', datePaiement: { gte: startDay } } }),
-        this.prisma.paiement.aggregate({ where: { tenantId, statut: 'VALIDE', datePaiement: { gte: startDay } }, _sum: { montant: true } }),
-        this.prisma.paiement.count({ where: { tenantId, statut: 'VALIDE', datePaiement: { gte: startMonth } } }),
-        this.prisma.paiement.aggregate({ where: { tenantId, statut: 'VALIDE', datePaiement: { gte: startMonth } }, _sum: { montant: true } }),
-        this.prisma.paiement.count({ where: { tenantId, statut: 'EN_ATTENTE' } }),
-        this.prisma.paiement.aggregate({ where: { tenantId, statut: 'EN_ATTENTE' }, _sum: { montant: true } }),
-        this.prisma.paiement.count({ where: { tenantId, statut: 'REJETE' } }),
-        this.prisma.paiement.count({ where: { tenantId } }),
+        this.prisma.paiement.count({ where: { ...baseWhere, statut: 'VALIDE', datePaiement: { gte: periodeStart } } }),
+        this.prisma.paiement.aggregate({ where: { ...baseWhere, statut: 'VALIDE', datePaiement: { gte: periodeStart } }, _sum: { montant: true } }),
+        this.prisma.paiement.count({ where: { ...baseWhere, statut: 'VALIDE', datePaiement: { gte: startMonth } } }),
+        this.prisma.paiement.aggregate({ where: { ...baseWhere, statut: 'VALIDE', datePaiement: { gte: startMonth } }, _sum: { montant: true } }),
+        this.prisma.paiement.count({ where: { ...baseWhere, statut: 'EN_ATTENTE' } }),
+        this.prisma.paiement.aggregate({ where: { ...baseWhere, statut: 'EN_ATTENTE' }, _sum: { montant: true } }),
+        this.prisma.paiement.count({ where: { ...baseWhere, statut: 'REJETE' } }),
+        this.prisma.paiement.count({ where: baseWhere }),
         this.prisma.paiement.findMany({
           where: {
             tenantId,
@@ -811,7 +874,7 @@ export class DomainService {
         }),
       ]);
     const recentRows = await this.prisma.paiement.findMany({
-      where: { tenantId },
+      where: baseWhere,
       select: {
         id: true,
         reference: true,
@@ -842,13 +905,62 @@ export class DomainService {
       })),
     );
 
+    // Stats par type de paiement
+    const parType = await this.prisma.paiement.groupBy({
+      by: ['typePaiement'],
+      where: { ...baseWhere, statut: 'VALIDE' },
+      _count: { _all: true },
+      _sum: { montant: true },
+    });
+
+    // Stats par mode de paiement
+    const parMode = await this.prisma.paiement.groupBy({
+      by: ['modePaiement'],
+      where: { ...baseWhere, statut: 'VALIDE' },
+      _count: { _all: true },
+      _sum: { montant: true },
+    });
+
+    // Encaissements des 6 derniers mois
+    const mensuel: { mois: string; montant: number; count: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const fin = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59);
+      const agg = await this.prisma.paiement.aggregate({
+        where: { ...baseWhere, statut: 'VALIDE', datePaiement: { gte: d, lte: fin } },
+        _sum: { montant: true },
+        _count: true,
+      });
+      mensuel.push({
+        mois: d.toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }),
+        montant: Number(agg._sum.montant ?? 0),
+        count: agg._count,
+      });
+    }
+
+    // Total global encaissé
+    const totalValideAgg = await this.prisma.paiement.aggregate({
+      where: { ...baseWhere, statut: 'VALIDE' },
+      _sum: { montant: true },
+    });
+
+    // Nb eleves avec dettes
+    const nbEleves = await this.prisma.user.count({ where: { tenantId, role: 'ELEVE' } });
+
     return {
+      isPersonalView: !!agentId,
+      periode: periode ?? 'jour',
       today: { count: todayCnt, montant: todayAgg._sum.montant ?? 0 },
       month: { count: monthCnt, montant: monthAgg._sum.montant ?? 0 },
       enAttente: { count: enAttenteCnt, montant: enAttenteAgg._sum.montant ?? 0 },
       rejete: { count: rejeteCnt },
       total: totalCnt,
-      dettes,
+      totalEncaisse: totalValideAgg._sum.montant ?? 0,
+      nbEleves,
+      parType: parType.map((t) => ({ type: t.typePaiement, count: t._count._all, montant: Number(t._sum.montant ?? 0) })),
+      parMode: parMode.map((m) => ({ mode: m.modePaiement, count: m._count._all, montant: Number(m._sum.montant ?? 0) })),
+      mensuel,
+      dettes: agentId ? undefined : dettes,
       derniersPaiements,
     };
   }

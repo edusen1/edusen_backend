@@ -1,6 +1,8 @@
 ﻿import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req } from '@nestjs/common';
 import type { MultipartFastifyRequest } from '@/common/types/multipart-request.types';
 import { Roles } from '@/common/decorators/roles.decorator';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { PrismaService } from '@/config/prisma.service';
 import { PlatformService } from '@/modules/platform/platform.service';
 import { CreateTenantDto } from '@/modules/platform/dto/create-tenant.dto';
 import { CreateUserDto } from '@/modules/platform/dto/create-user.dto';
@@ -8,7 +10,10 @@ import { CreateUserDto } from '@/modules/platform/dto/create-user.dto';
 @Roles('SUPER_ADMIN', 'GESTIONNAIRE')
 @Controller('platform')
 export class PlatformController {
-  constructor(private readonly platformService: PlatformService) {}
+  constructor(
+    private readonly platformService: PlatformService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   @Get('tenants')
   findTenants() { return this.platformService.findTenants(); }
@@ -92,5 +97,65 @@ export class PlatformController {
     @Query('tenantId') tenantId?: string,
   ) {
     return this.platformService.auditLogs(Number(page ?? 0), Number(size ?? 20), { action, tenantId });
+  }
+
+  // ── Demandes d'audit (superadmin gère) ──────────────────────────────
+
+  @Get('demandes-audit')
+  async getDemandesAudit(
+    @Query('statut') statut?: string,
+    @Query('tenantId') tenantId?: string,
+  ) {
+    const where: Record<string, unknown> = {};
+    if (statut) where['statut'] = statut;
+    if (tenantId) where['tenantId'] = tenantId;
+    return this.prisma.demandeAudit.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        tenant: { select: { id: true, nom: true } },
+        demandeur: { select: { id: true, firstName: true, lastName: true, role: true } },
+      },
+    });
+  }
+
+  @Roles('SUPER_ADMIN')
+  @Patch('demandes-audit/:id/approuver')
+  async approuverDemandeAudit(
+    @Param('id') id: string,
+    @CurrentUser() user: { sub: string },
+    @Body() body: { commentaire?: string; dureeAccesJours?: number },
+  ) {
+    const duree = body.dureeAccesJours ?? 7;
+    const expiration = new Date();
+    expiration.setDate(expiration.getDate() + duree);
+    return this.prisma.demandeAudit.update({
+      where: { id },
+      data: {
+        statut: 'APPROUVEE',
+        traitePar: user.sub,
+        commentaire: body.commentaire?.trim() || null,
+        dateTraitement: new Date(),
+        expirationAcces: expiration,
+      },
+    });
+  }
+
+  @Roles('SUPER_ADMIN')
+  @Patch('demandes-audit/:id/rejeter')
+  async rejeterDemandeAudit(
+    @Param('id') id: string,
+    @CurrentUser() user: { sub: string },
+    @Body() body: { commentaire?: string },
+  ) {
+    return this.prisma.demandeAudit.update({
+      where: { id },
+      data: {
+        statut: 'REJETEE',
+        traitePar: user.sub,
+        commentaire: body.commentaire?.trim() || null,
+        dateTraitement: new Date(),
+      },
+    });
   }
 }

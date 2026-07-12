@@ -29,14 +29,23 @@ export class EmploiDuTempsService {
 
   async create(tenantId: string, dto: CreateEmploiDuTempsDto): Promise<unknown> {
     const resolved = await this.resolveCourseFields(tenantId, dto);
+
+    // Auto-create Cours if enseignant + classe + matiere are provided and no coursId
+    let coursId = dto.coursId ?? null;
+    const enseignantId = resolved.enseignantId ?? dto.enseignantId;
+    const matiereId = resolved.matiereId ?? dto.matiereId;
+    if (!coursId && enseignantId && dto.classeId && matiereId) {
+      coursId = await this.findOrCreateCours(tenantId, dto.classeId, matiereId, enseignantId);
+    }
+
     const created = await this.prisma.emploiDuTemps.create({
       data: {
         tenantId,
         classeId: dto.classeId,
-        coursId: dto.coursId ?? null,
+        coursId,
         salleId: dto.salleId ?? null,
-        enseignantId: resolved.enseignantId ?? null,
-        matiereId: resolved.matiereId ?? null,
+        enseignantId: enseignantId ?? null,
+        matiereId: matiereId ?? null,
         jourSemaine: dto.jourSemaine,
         heureDebut: dto.heureDebut,
         heureFin: dto.heureFin,
@@ -91,14 +100,44 @@ export class EmploiDuTempsService {
   }
 
   async update(tenantId: string, id: string, dto: Partial<CreateEmploiDuTempsDto>): Promise<unknown> {
-    await this.findOne(tenantId, id);
+    const existing = await this.prisma.emploiDuTemps.findFirst({ where: { id, tenantId }, select: { classeId: true, enseignantId: true, matiereId: true } });
+    if (!existing) throw new NotFoundException('Emploi du temps introuvable');
     const resolved = await this.resolveCourseFields(tenantId, dto);
-    await this.prisma.emploiDuTemps.update({
-      where: { id },
-      data: this.buildUpdateData(dto, resolved),
-    });
 
+    // Auto-create Cours if prof/matiere changed
+    const enseignantId = resolved.enseignantId ?? dto.enseignantId ?? existing.enseignantId;
+    const classeId = dto.classeId ?? existing.classeId;
+    const matiereId = resolved.matiereId ?? dto.matiereId ?? existing.matiereId;
+    let coursId = dto.coursId;
+    if (coursId === undefined && enseignantId && classeId && matiereId) {
+      coursId = await this.findOrCreateCours(tenantId, classeId, matiereId, enseignantId);
+    }
+
+    const updateData = this.buildUpdateData(dto, resolved);
+    if (coursId !== undefined) updateData.coursId = coursId;
+
+    await this.prisma.emploiDuTemps.update({ where: { id }, data: updateData });
     return this.findOne(tenantId, id);
+  }
+
+  private async findOrCreateCours(tenantId: string, classeId: string, matiereId: string, enseignantId: string): Promise<string> {
+    // Resolve annee academique from classe
+    const classe = await this.prisma.classe.findUnique({ where: { id: classeId }, select: { anneeAcademiqueId: true } });
+    const anneeId = classe?.anneeAcademiqueId ?? null;
+
+    // Find existing Cours for this exact combination
+    const existing = await this.prisma.cours.findFirst({
+      where: { tenantId, classeId, matiereId, enseignantId, ...(anneeId ? { anneeAcademiqueId: anneeId } : {}) },
+      select: { id: true },
+    });
+    if (existing) return existing.id;
+
+    // Create new Cours
+    const created = await this.prisma.cours.create({
+      data: { tenantId, classeId, matiereId, enseignantId, anneeAcademiqueId: anneeId },
+    });
+    this.logger.log(`Auto-created Cours ${created.id} for classe=${classeId} matiere=${matiereId} enseignant=${enseignantId}`);
+    return created.id;
   }
 
   async delete(tenantId: string, id: string): Promise<void> {

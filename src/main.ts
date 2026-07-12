@@ -1,3 +1,6 @@
+// Force UTC timezone for consistent timestamps across all environments
+process.env.TZ = 'UTC';
+
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';

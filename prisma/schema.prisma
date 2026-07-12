@@ -54,6 +54,7 @@ enum TypeEvaluation {
   CONTROLE
   TP
   ORAL
+  BONUS
 }
 
 enum StatutPaiement {
@@ -200,10 +201,12 @@ enum StatutDiscipline {
   EN_TRAITEMENT
   CLOTURE
   APPEL
+  ANNULE
 }
 
 enum RoleRapporteur {
   ADMIN
+  ENSEIGNANT
   PROFESSEUR
   SURVEILLANT
   ELEVE
@@ -283,6 +286,8 @@ model Tenant {
   matiereNiveaux      MatiereNiveau[]
   demandesReduction   DemandeReduction[]
   eleveDocuments      EleveDocument[]
+  demandesAudit       DemandeAudit[]
+  programmes          ProgrammePedagogique[]
 }
 
 // ==================== FRAIS NIVEAU CONFIG ====================
@@ -430,6 +435,7 @@ model User {
   numeroIdentificationNational String? @db.VarChar(10)
   adresse       String?
   role          UserRole
+  roles         UserRole[] @default([])
   actif         Boolean   @default(true)
   mustChangePwd Boolean   @default(true)
 
@@ -447,6 +453,7 @@ model User {
   specialite            String?
   dateEmbauche          DateTime? @db.Date
   numeroCNPS            String?   @db.VarChar(50)
+  modeCalculNotes       String?   @db.VarChar(20)  // MOYENNE ou MEILLEURE_NOTE
   numeroSecuriteSociale String?   @db.VarChar(50)
 
   // PARENT
@@ -487,6 +494,8 @@ model User {
   demandesPassageCreees      DemandePassage[]    @relation("DemandePassageCreateur")
   demandesPassageTraitees    DemandePassage[]    @relation("DemandePassageTraiteur")
   eleveDocuments             EleveDocument[]     @relation("EleveDocuments")
+  demandesAudit              DemandeAudit[]      @relation("demandeAuditDemandeur")
+  coursEnseignant            Cours[]             @relation("CoursEnseignant")
 }
 
 // ==================== ELEVE DOCUMENTS ====================
@@ -584,6 +593,7 @@ model AnneeAcademique {
   inscriptions    Inscription[]
   matiereClasses  MatiereClasse[]
   demandesPassage DemandePassage[]
+  programmes      ProgrammePedagogique[]
 
   @@unique([tenantId, libelle])
 }
@@ -752,6 +762,7 @@ model Cours {
   classeId          String           @db.Uuid
   classe            Classe           @relation(fields: [classeId], references: [id])
   enseignantId      String           @db.Uuid
+  enseignant        User             @relation("CoursEnseignant", fields: [enseignantId], references: [id])
   anneeAcademiqueId String?          @db.Uuid
   anneeAcademique   AnneeAcademique? @relation(fields: [anneeAcademiqueId], references: [id])
   volumeHoraireHebdo Int?
@@ -765,6 +776,7 @@ model Cours {
   emploisDuTemps EmploiDuTemps[]
   appels         Appel[]
   cahiersTexte   CahierTexte[]
+  notes          Note[]
   presencesProfesseur PresenceCoursProfesseur[]
 }
 
@@ -829,6 +841,8 @@ model Note {
   eleveId        String         @db.Uuid
   matiereId      String         @db.Uuid
   matiere        Matiere        @relation(fields: [matiereId], references: [id])
+  coursId        String?        @db.Uuid
+  cours          Cours?         @relation(fields: [coursId], references: [id])
   typeEvaluation TypeEvaluation
   note           Float
   noteSur        Float          @default(20)
@@ -901,20 +915,30 @@ model AbsenceEleve {
 }
 
 model AbsenceEnseignant {
-  id                      String   @id @default(uuid()) @db.Uuid
-  tenantId                String   @db.Uuid
-  tenant                  Tenant   @relation(fields: [tenantId], references: [id])
-  enseignantId            String   @db.Uuid
-  enseignant              User     @relation(fields: [enseignantId], references: [id])
-  dateDebut               DateTime @db.Date
-  dateFin                 DateTime @db.Date
+  id                      String                @id @default(uuid()) @db.Uuid
+  tenantId                String                @db.Uuid
+  tenant                  Tenant                @relation(fields: [tenantId], references: [id])
+  enseignantId            String                @db.Uuid
+  enseignant              User                  @relation(fields: [enseignantId], references: [id])
+  dateDebut               DateTime              @db.Date
+  dateFin                 DateTime              @db.Date
+  heureDebut              String?               @db.VarChar(5)
+  heureFin                String?               @db.VarChar(5)
+  typeAbsence             String                @default("AUTRE") @db.VarChar(20)
   motif                   String
-  justifiee               Boolean  @default(false)
+  statut                  StatutAbsenceEnseignant @default(EN_ATTENTE)
+  justifiee               Boolean               @default(false)
   documentJustificatifUrl String?
-  remplacantId            String?  @db.Uuid
-  notificationEnvoyee     Boolean  @default(false)
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  remplacantId            String?               @db.Uuid
+  notificationEnvoyee     Boolean               @default(false)
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
+}
+
+enum StatutAbsenceEnseignant {
+  EN_ATTENTE
+  APPROUVEE
+  REJETEE
 }
 
 // ==================== SCHEDULE ====================
@@ -1004,18 +1028,97 @@ model AppelLigne {
 }
 
 model CahierTexte {
-  id              String   @id @default(uuid()) @db.Uuid
-  tenantId        String   @db.Uuid
-  tenant          Tenant   @relation(fields: [tenantId], references: [id])
-  coursId         String   @db.Uuid
-  cours           Cours    @relation(fields: [coursId], references: [id])
-  dateCours       DateTime @db.Date
+  id              String            @id @default(uuid()) @db.Uuid
+  tenantId        String            @db.Uuid
+  tenant          Tenant            @relation(fields: [tenantId], references: [id])
+  coursId         String            @db.Uuid
+  cours           Cours             @relation(fields: [coursId], references: [id])
+  dateCours       DateTime          @db.Date
   contenuTraite   String
   observations    String?
   etapeProgramme  String?
-  programmeValide Boolean  @default(false)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  programmeValide Boolean           @default(false)
+  chapitreId      String?           @db.Uuid
+  chapitre        ChapitreProgamme? @relation(fields: [chapitreId], references: [id])
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+}
+
+// ==================== USER FEATURE SEEN ====================
+
+model UserFeatureSeen {
+  id       String   @id @default(uuid()) @db.Uuid
+  userId   String   @db.Uuid
+  feature  String   @db.VarChar(50)
+  seenAt   DateTime @default(now())
+
+  @@unique([userId, feature])
+  @@index([userId])
+}
+
+// ==================== PROGRAMME PEDAGOGIQUE ====================
+
+enum StatutProgramme {
+  BROUILLON
+  VALIDE
+  EN_COURS
+  TERMINE
+}
+
+enum StatutChapitre {
+  NON_COMMENCE
+  EN_COURS
+  TERMINE
+}
+
+model ProgrammePedagogique {
+  id                String              @id @default(uuid()) @db.Uuid
+  tenantId          String              @db.Uuid
+  tenant            Tenant              @relation(fields: [tenantId], references: [id])
+  niveauId          String              @db.Uuid
+  matiereId         String              @db.Uuid
+  anneeAcademiqueId String              @db.Uuid
+  anneeAcademique   AnneeAcademique     @relation(fields: [anneeAcademiqueId], references: [id])
+  titre             String
+  description       String?
+  statut            StatutProgramme     @default(BROUILLON)
+  valideParCellule  Boolean             @default(false)
+  dateValidation    DateTime?
+  chapitres         ChapitreProgamme[]
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@unique([tenantId, niveauId, matiereId, anneeAcademiqueId])
+  @@index([tenantId, anneeAcademiqueId])
+}
+
+model ChapitreProgamme {
+  id               String                @id @default(uuid()) @db.Uuid
+  programmeId      String                @db.Uuid
+  programme        ProgrammePedagogique  @relation(fields: [programmeId], references: [id], onDelete: Cascade)
+  numero           Int
+  titre            String
+  description      String?
+  objectifs        String?
+  competences      String?
+  ressources       String?
+  prerequis        String?
+  periode          String                @db.VarChar(20)
+  semaineDebut     Int?
+  semaineFin       Int?
+  dateLimite       DateTime              @db.Date
+  volumeHoraire    Float?
+  nbSeances        Int?
+  evaluationPrevue Boolean               @default(false)
+  typeEvaluation   String?               @db.VarChar(50)
+  statut           StatutChapitre        @default(NON_COMMENCE)
+  dateDebut        DateTime?
+  dateTermine      DateTime?
+  cahiersTexte     CahierTexte[]
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  @@index([programmeId, numero])
 }
 
 // ==================== COMMUNICATION ====================
@@ -1281,6 +1384,7 @@ model AbsencePersonnel {
   tenant          Tenant                 @relation(fields: [tenantId], references: [id])
   personnelId     String                 @db.Uuid
   personnel       Personnel              @relation(fields: [personnelId], references: [id])
+  userId          String?                @db.Uuid  // Lien direct vers User (migration progressive)
   dateDebut       DateTime               @db.Date
   dateFin         DateTime               @db.Date
   heureDebut      String?                @db.VarChar(10)
@@ -1329,21 +1433,85 @@ model Reclamation {
 
 // ==================== CALENDAR ====================
 
+enum TypeEvenementCalendrier {
+  // Periodes
+  RENTREE
+  FIN_ANNEE
+  DEBUT_TRIMESTRE
+  FIN_TRIMESTRE
+  REPRISE_COURS
+  // Vacances
+  VACANCES
+  JOUR_FERIE
+  PONT
+  // Evaluations
+  DEVOIR_SURVEILLE
+  COMPOSITION
+  EXAMEN_BLANC
+  EXAMEN_OFFICIEL
+  RATTRAPAGE
+  REMISE_COPIES
+  // Reunions
+  CONSEIL_CLASSE
+  CONSEIL_DISCIPLINE
+  REUNION_PARENTS
+  REUNION_PEDAGOGIQUE
+  ASSEMBLEE_GENERALE
+  // Vie scolaire
+  JOURNEE_PORTES_OUVERTES
+  JOURNEE_CULTURELLE
+  JOURNEE_SPORTIVE
+  REMISE_PRIX
+  SORTIE_PEDAGOGIQUE
+  SEMAINE_REVISION
+  PUBLICATION_BULLETINS
+  DISTRIBUTION_CARTES
+  // Administratif
+  DATE_LIMITE_INSCRIPTION
+  DATE_LIMITE_PAIEMENT
+  FORMATION_ENSEIGNANTS
+  AUTRE
+}
+
+enum StatutEvenement {
+  PLANIFIE
+  CONFIRME
+  ANNULE
+  REPORTE
+}
+
+enum VisibiliteEvenement {
+  TOUS
+  ADMIN_ONLY
+  ENSEIGNANTS
+  PARENTS
+  ELEVES
+}
+
 model CalendrierScolaire {
-  id          String    @id @default(uuid()) @db.Uuid
-  tenantId    String    @db.Uuid
-  tenant      Tenant    @relation(fields: [tenantId], references: [id])
-  sectionId   String?   @db.Uuid
-  section     Cycle?    @relation(fields: [sectionId], references: [id])
+  id          String                    @id @default(uuid()) @db.Uuid
+  tenantId    String                    @db.Uuid
+  tenant      Tenant                    @relation(fields: [tenantId], references: [id])
+  sectionId   String?                   @db.Uuid
+  section     Cycle?                    @relation(fields: [sectionId], references: [id])
   titre       String
   description String?
-  dateDebut   DateTime  @db.Date
-  dateFin     DateTime? @db.Date
-  type        String?   @db.VarChar(50)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  dateDebut   DateTime                  @db.Date
+  dateFin     DateTime?                 @db.Date
+  heureDebut  String?                   @db.VarChar(5)
+  heureFin    String?                   @db.VarChar(5)
+  type        TypeEvenementCalendrier   @default(AUTRE)
+  statut      StatutEvenement           @default(PLANIFIE)
+  visibilite  VisibiliteEvenement       @default(TOUS)
+  classeId    String?                   @db.Uuid
+  niveauId    String?                   @db.Uuid
+  couleur     String?                   @db.VarChar(7)
+  important   Boolean                   @default(false)
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
 
   @@index([tenantId, sectionId, dateDebut])
+  @@index([tenantId, type])
 }
 
 // ==================== AUDIT ====================
@@ -1363,10 +1531,58 @@ model AuditLog {
   details          Json?
   ipAddress        String?                @db.VarChar(45)
   userAgent        String?
+
+  // Enriched user info (denormalized for historical traceability)
+  userMatricule    String?                @db.VarChar(50)
+  userNomComplet   String?                @db.VarChar(200)
+  userEmail        String?                @db.VarChar(200)
+  userTelephone    String?                @db.VarChar(30)
+  userUsername      String?                @db.VarChar(100)
+
+  // Device info (parsed from userAgent)
+  deviceType       String?                @db.VarChar(50)
+  browserName      String?                @db.VarChar(100)
+  osName           String?                @db.VarChar(100)
+
+  // Geolocation (from IP)
+  geoCity          String?                @db.VarChar(100)
+  geoCountry       String?                @db.VarChar(100)
+
   createdAt        DateTime               @default(now())
 
   @@index([tenantId, createdAt])
   @@index([utilisateurId])
+}
+
+enum StatutDemandeAudit {
+  EN_ATTENTE
+  APPROUVEE
+  REJETEE
+}
+
+model DemandeAudit {
+  id              String              @id @default(uuid()) @db.Uuid
+  tenantId        String              @db.Uuid
+  tenant          Tenant              @relation(fields: [tenantId], references: [id])
+  demandePar      String              @db.Uuid
+  demandeur       User                @relation("demandeAuditDemandeur", fields: [demandePar], references: [id])
+  motif           String
+  dateDebut       DateTime            @db.Date
+  dateFin         DateTime            @db.Date
+  // Filtres de la demande (ce que l'admin veut auditer)
+  filtreActions   String[]            @default([])   // ex: ["CREATION","SUPPRESSION","MODIFICATION"]
+  filtreRoles     String[]            @default([])   // ex: ["ENSEIGNANT","CAISSIER"]
+  filtreUserId    String?             @db.Uuid       // user specifique
+  filtreResources String[]            @default([])   // ex: ["paiement","inscription","bulletin"]
+  statut          StatutDemandeAudit  @default(EN_ATTENTE)
+  traitePar       String?             @db.Uuid
+  commentaire     String?
+  dateTraitement  DateTime?
+  expirationAcces DateTime?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@index([tenantId, statut])
 }
 
 // ==================== AUTH TOKENS ====================
@@ -1427,16 +1643,18 @@ model Discipline {
   id              String           @id @default(uuid()) @db.Uuid
   tenantId        String           @db.Uuid
   tenant          Tenant           @relation(fields: [tenantId], references: [id])
+  eleveId         String?          @db.Uuid
+  classeId        String?          @db.Uuid
   eleveNom        String           @db.VarChar(200)
   eleveClasse     String?          @db.VarChar(100)
   type            TypeSanction     @default(AVERTISSEMENT)
   motif           String           @db.Text
-  dateIncident    DateTime         @db.Date
+  dateIncident    DateTime
   gravite         Int              @default(2)
   statut          StatutDiscipline @default(OUVERT)
   sanction        String?          @db.Text
   compteRendu     String?          @db.Text
-  dateDecision    DateTime?        @db.Date
+  dateDecision    DateTime?
   rapporteur      String?          @db.VarChar(200)
   rapporteurRole  RoleRapporteur?
   signaleParId    String?          @db.Uuid

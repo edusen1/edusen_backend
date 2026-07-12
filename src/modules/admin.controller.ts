@@ -17,8 +17,10 @@ import {
   ParseIntPipe,
   DefaultValuePipe,
   Req,
+  Res,
 } from '@nestjs/common';
 import { Roles } from '@/common/decorators/roles.decorator';
+import { AuditRead } from '@/common/decorators/audit-read.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import type { JwtUser } from '@/common/types/auth.types';
 import { LegacyCrudService } from '@/modules/legacy-crud.service';
@@ -44,12 +46,15 @@ import { DemandeReductionService } from '@/modules/v1/demande-reduction/demande-
 import { SchoolCardDocumentService } from '@/modules/school-card-document.service';
 import { EleveDocumentService } from '@/modules/eleve-document.service';
 import { CommunicationService } from '@/modules/communication.service';
+import { RapportDocumentService, RapportType } from '@/modules/rapport-document.service';
+import { ProgrammeService } from '@/modules/programme/programme.service';
 import { StatutPresence, TypeDocument } from '@prisma/client';
+import type { FastifyReply } from 'fastify';
 
 type QueryParams = Record<string, string | string[] | undefined>;
 type Payload = Record<string, unknown>;
 
-@Roles('ADMIN', 'SURVEILLANT', 'CAISSIER', 'RH')
+@Roles('ADMIN', 'SURVEILLANT', 'CAISSIER', 'COMPTABLE', 'RH')
 @Controller('admin')
 export class AdminController {
   constructor(
@@ -68,6 +73,8 @@ export class AdminController {
     private readonly schoolCards: SchoolCardDocumentService,
     private readonly eleveDocuments: EleveDocumentService,
     private readonly communications: CommunicationService,
+    private readonly rapportDocument: RapportDocumentService,
+    private readonly programmeService: ProgrammeService,
   ) {}
 
   private resolveTenantId(tenantId: string | undefined, user?: JwtUser) {
@@ -80,8 +87,9 @@ export class AdminController {
 
     const resourcesByRole: Partial<Record<JwtUser['role'], string[]>> = {
       RH: ['personnel', 'pointages', 'absences-personnel'],
-      CAISSIER: ['inscriptions'],
-      SURVEILLANT: ['absences-eleves', 'convocations'],
+      CAISSIER: ['eleves', 'parents', 'inscriptions', 'paiements'],
+      COMPTABLE: ['eleves', 'parents', 'inscriptions', 'paiements'],
+      SURVEILLANT: ['absences-eleves', 'convocations', 'discipline'],
     };
     if (!user?.role || !resourcesByRole[user.role]?.includes(resource)) {
       throw new ForbiddenException('Vous ne pouvez pas modifier cette ressource');
@@ -92,7 +100,7 @@ export class AdminController {
   // Classes
   // ----------------------------------------------------------------
 
-  @Roles('ADMIN', 'SURVEILLANT', 'ENSEIGNANT')
+  @Roles('ADMIN', 'SURVEILLANT', 'ENSEIGNANT', 'CAISSIER', 'COMPTABLE')
   @Get('classes')
   getClasses(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -323,16 +331,19 @@ export class AdminController {
     return this.crud.findAll(this.crud.adminConfig('bulletins'), tenantId, query);
   }
 
+  @AuditRead('EXPORT_BULLETINS')
   @Get('bulletins/download/by-classe')
   downloadByClasse(@Query() query: QueryParams) {
     return { type: 'classe', ...query };
   }
 
+  @AuditRead('EXPORT_BULLETINS')
   @Get('bulletins/download/all')
   downloadAll(@Query() query: QueryParams) {
     return { type: 'all', ...query };
   }
 
+  @AuditRead('EXPORT_BULLETIN')
   @Get('bulletins/:id/download')
   downloadBulletin(@Headers('x-tenant-id') tenantId: string | undefined, @Param('id') id: string) {
     return this.crud.getBulletinDownload(tenantId, id);
@@ -872,7 +883,6 @@ export class AdminController {
   // Configuration académique — ADMIN uniquement
   // ----------------------------------------------------------------
 
-  @Roles('ADMIN')
   @Get('configuration/annees-academiques')
   getAnnees(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -882,7 +892,6 @@ export class AdminController {
     return this.academiqueConfig.getAnnees(tid!);
   }
 
-  @Roles('ADMIN')
   @Get('configuration/annees-academiques/courante')
   getAnneeCourante(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -946,7 +955,6 @@ export class AdminController {
     return this.academiqueConfig.finishAnnee(tid!, id);
   }
 
-  @Roles('ADMIN')
   @Get('configuration/sections')
   getSections(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -994,7 +1002,6 @@ export class AdminController {
     return this.academiqueConfig.deleteSection(tid!, id);
   }
 
-  @Roles('ADMIN')
   @Get('configuration/niveaux')
   getNiveaux(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -1050,7 +1057,6 @@ export class AdminController {
     return this.academiqueConfig.deleteNiveau(tid!, id);
   }
 
-  @Roles('ADMIN')
   @Get('configuration/frais')
   getFrais(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -1071,6 +1077,7 @@ export class AdminController {
     return this.academiqueConfig.saveFrais(tid!, dto);
   }
 
+  @Roles('ADMIN')
   @Roles('ADMIN')
   @Get('configuration/calendrier-scolaire')
   getCalendrierScolaire(
@@ -1096,7 +1103,15 @@ export class AdminController {
       description: body.description !== undefined ? String(body.description) : null,
       dateDebut: String(body.dateDebut ?? ''),
       dateFin: body.dateFin ? String(body.dateFin) : null,
+      heureDebut: body.heureDebut ? String(body.heureDebut) : null,
+      heureFin: body.heureFin ? String(body.heureFin) : null,
       type: body.type ? String(body.type) : 'AUTRE',
+      statut: body.statut ? String(body.statut) : 'PLANIFIE',
+      visibilite: body.visibilite ? String(body.visibilite) : 'TOUS',
+      classeId: body.classeId ? String(body.classeId) : null,
+      niveauId: body.niveauId ? String(body.niveauId) : null,
+      couleur: body.couleur ? String(body.couleur) : null,
+      important: body.important === true,
     });
   }
 
@@ -1115,7 +1130,15 @@ export class AdminController {
       description: body.description !== undefined ? String(body.description) : undefined,
       dateDebut: body.dateDebut !== undefined ? String(body.dateDebut) : undefined,
       dateFin: body.dateFin !== undefined ? (body.dateFin ? String(body.dateFin) : null) : undefined,
+      heureDebut: body.heureDebut !== undefined ? (body.heureDebut ? String(body.heureDebut) : null) : undefined,
+      heureFin: body.heureFin !== undefined ? (body.heureFin ? String(body.heureFin) : null) : undefined,
       type: body.type !== undefined ? String(body.type) : undefined,
+      statut: body.statut !== undefined ? String(body.statut) : undefined,
+      visibilite: body.visibilite !== undefined ? String(body.visibilite) : undefined,
+      classeId: body.classeId !== undefined ? (body.classeId ? String(body.classeId) : null) : undefined,
+      niveauId: body.niveauId !== undefined ? (body.niveauId ? String(body.niveauId) : null) : undefined,
+      couleur: body.couleur !== undefined ? (body.couleur ? String(body.couleur) : null) : undefined,
+      important: body.important !== undefined ? Boolean(body.important) : undefined,
     });
   }
 
@@ -1220,7 +1243,7 @@ export class AdminController {
       .then((tid) => this.crud.adminParentChildren(tid, id));
   }
 
-  @Roles('ADMIN', 'SURVEILLANT', 'ENSEIGNANT')
+  @Roles('ADMIN', 'SURVEILLANT', 'ENSEIGNANT', 'CAISSIER', 'COMPTABLE')
   @Get('eleves')
   async listEleves(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -1302,6 +1325,7 @@ export class AdminController {
     return this.domain.caissePaiementById(id);
   }
 
+  @AuditRead('CONSULTATION_RECU')
   @Get('paiements/:id/recu')
   getPaiementRecu(@Param('id') id: string) {
     return this.domain.caissePaiementRecu(id);
@@ -1373,7 +1397,7 @@ export class AdminController {
   // Upload photo utilisateur (élève, enseignant, parent…)
   // ----------------------------------------------------------------
 
-  @Roles('ADMIN')
+  @Roles('ADMIN', 'CAISSIER', 'COMPTABLE')
   @Post('users/:id/photo')
   @HttpCode(HttpStatus.OK)
   async uploadUserPhoto(
@@ -1478,6 +1502,7 @@ export class AdminController {
   // ----------------------------------------------------------------
 
   @Roles('ADMIN', 'CAISSIER', 'COMPTABLE')
+  @AuditRead('CONSULTATION_DOCUMENTS')
   @Get('eleves/:id/documents')
   getEleveDocuments(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -1539,33 +1564,168 @@ export class AdminController {
   }
 
   // ----------------------------------------------------------------
+  // Programmes pédagogiques
+  // ----------------------------------------------------------------
+
+  @Roles('ADMIN', 'SURVEILLANT')
+  @Get('programmes')
+  getProgrammes(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser,
+    @Query('niveauId') niveauId?: string, @Query('matiereId') matiereId?: string,
+    @Query('anneeAcademiqueId') anneeAcademiqueId?: string, @Query('statut') statut?: string) {
+    return this.programmeService.findAll((tid?.trim() || u?.tenantId)!, { niveauId, matiereId, anneeAcademiqueId, statut });
+  }
+
+  @Roles('ADMIN', 'SURVEILLANT', 'ENSEIGNANT')
+  @Get('programmes/avancement')
+  getAvancement(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser,
+    @Query('niveauId') niveauId?: string, @Query('anneeAcademiqueId') anneeAcademiqueId?: string,
+    @Query('classeId') classeId?: string, @Query('enseignantId') enseignantId?: string) {
+    return this.programmeService.getAvancement((tid?.trim() || u?.tenantId)!, { niveauId, anneeAcademiqueId, classeId, enseignantId });
+  }
+
+  @Roles('ADMIN', 'SURVEILLANT')
+  @Get('programmes/:id')
+  getProgramme(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('id') id: string) {
+    return this.programmeService.findOne((tid?.trim() || u?.tenantId)!, id);
+  }
+
+  @Roles('ADMIN', 'SURVEILLANT')
+  @Post('programmes')
+  createProgramme(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Body() body: Payload) {
+    return this.programmeService.create((tid?.trim() || u?.tenantId)!, body as never);
+  }
+
+  @Roles('ADMIN', 'SURVEILLANT')
+  @Patch('programmes/:id')
+  updateProgramme(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('id') id: string, @Body() body: Payload) {
+    return this.programmeService.update((tid?.trim() || u?.tenantId)!, id, body as never);
+  }
+
+  @Roles('ADMIN', 'SURVEILLANT')
+  @Delete('programmes/:id')
+  deleteProgramme(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('id') id: string) {
+    return this.programmeService.remove((tid?.trim() || u?.tenantId)!, id);
+  }
+
+  @Roles('ADMIN', 'SURVEILLANT')
+  @Post('programmes/:id/valider')
+  validerProgramme(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('id') id: string) {
+    return this.programmeService.valider((tid?.trim() || u?.tenantId)!, id);
+  }
+
+  @Roles('ADMIN', 'SURVEILLANT')
+  @Post('programmes/:id/dupliquer')
+  dupliquerProgramme(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('id') id: string, @Body() body: { anneeAcademiqueId: string }) {
+    return this.programmeService.dupliquer((tid?.trim() || u?.tenantId)!, id, body.anneeAcademiqueId);
+  }
+
+  @Roles('ADMIN', 'SURVEILLANT')
+  @Post('programmes/:id/chapitres')
+  addChapitre(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('id') id: string, @Body() body: Payload) {
+    return this.programmeService.addChapitre((tid?.trim() || u?.tenantId)!, id, body as never);
+  }
+
+  @Roles('ADMIN', 'SURVEILLANT')
+  @Patch('programmes/:pid/chapitres/:cid')
+  updateChapitre(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('pid') pid: string, @Param('cid') cid: string, @Body() body: Payload) {
+    return this.programmeService.updateChapitre((tid?.trim() || u?.tenantId)!, pid, cid, body as never);
+  }
+
+  @Roles('ADMIN', 'SURVEILLANT')
+  @Delete('programmes/:pid/chapitres/:cid')
+  deleteChapitre(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('pid') pid: string, @Param('cid') cid: string) {
+    return this.programmeService.removeChapitre((tid?.trim() || u?.tenantId)!, pid, cid);
+  }
+
+  // ----------------------------------------------------------------
   // Audit logs — ADMIN uniquement
   // ----------------------------------------------------------------
 
+  // ── Demandes d'audit ─────────────────────────────────────────────────
+
   @Roles('ADMIN')
+  @Get('demandes-audit')
+  async getDemandesAudit(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    return this.prisma.demandeAudit.findMany({
+      where: { tenantId: tid },
+      orderBy: { createdAt: 'desc' },
+      include: { demandeur: { select: { id: true, firstName: true, lastName: true, role: true } } },
+    });
+  }
+
+  @Roles('ADMIN')
+  @Post('demandes-audit')
+  async createDemandeAudit(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user: JwtUser,
+    @Body() body: {
+      motif: string; dateDebut: string; dateFin: string;
+      filtreActions?: string[]; filtreRoles?: string[]; filtreUserId?: string; filtreResources?: string[];
+    },
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    if (!body.motif?.trim()) throw new BadRequestException('Motif requis');
+    if (!body.dateDebut || !body.dateFin) throw new BadRequestException('Période requise');
+    return this.prisma.demandeAudit.create({
+      data: {
+        tenantId: tid,
+        demandePar: user.sub,
+        motif: body.motif.trim(),
+        dateDebut: new Date(body.dateDebut),
+        dateFin: new Date(body.dateFin),
+        filtreActions: body.filtreActions ?? [],
+        filtreRoles: body.filtreRoles ?? [],
+        filtreUserId: body.filtreUserId || null,
+        filtreResources: body.filtreResources ?? [],
+      },
+    });
+  }
+
+  @Roles('ADMIN')
+  @AuditRead('CONSULTATION_AUDIT')
   @Get('audit-logs')
   async getAuditLogs(
     @Headers('x-tenant-id') tenantId: string | undefined,
     @CurrentUser() user?: JwtUser,
+    @Query('demandeId') demandeId?: string,
     @Query('page', new DefaultValuePipe(0), ParseIntPipe) page = 0,
     @Query('size', new DefaultValuePipe(50), ParseIntPipe) size = 50,
     @Query('resourceType') resourceType?: string,
     @Query('action') action?: string,
     @Query('utilisateurId') utilisateurId?: string,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
   ) {
     const tid = (tenantId?.trim() || user?.tenantId) ?? '';
-    const where: Record<string, unknown> = { tenantId: tid };
+
+    // Admin must have an approved, non-expired demande
+    if (!demandeId) throw new BadRequestException('Une demande d\'audit approuvée est requise (demandeId)');
+    const demande = await this.prisma.demandeAudit.findFirst({
+      where: { id: demandeId, tenantId: tid, statut: 'APPROUVEE' },
+    });
+    if (!demande) throw new BadRequestException('Demande d\'audit introuvable ou non approuvée');
+    if (demande.expirationAcces && demande.expirationAcces < new Date()) {
+      throw new BadRequestException('L\'accès à cet audit a expiré');
+    }
+
+    const where: Record<string, unknown> = {
+      tenantId: tid,
+      createdAt: { gte: demande.dateDebut, lte: demande.dateFin },
+    };
+    // Apply demande-level filters (restrict scope to what was approved)
+    if (demande.filtreActions.length > 0) where['action'] = { in: demande.filtreActions };
+    if (demande.filtreRoles.length > 0) where['role'] = { in: demande.filtreRoles };
+    if (demande.filtreUserId) where['utilisateurId'] = demande.filtreUserId;
+    if (demande.filtreResources.length > 0) where['resourceType'] = { in: demande.filtreResources };
+    // Additional user-side filters (within the approved scope)
     if (resourceType) where['resourceType'] = resourceType;
     if (action) where['action'] = action;
-    if (utilisateurId) where['utilisateurId'] = utilisateurId;
-    if (from || to) {
-      const range: Record<string, Date> = {};
-      if (from) range['gte'] = new Date(from);
-      if (to) range['lte'] = new Date(to);
-      where['createdAt'] = range;
-    }
+    if (utilisateurId && !demande.filtreUserId) where['utilisateurId'] = utilisateurId;
+
     const [data, total] = await Promise.all([
       this.prisma.auditLog.findMany({
         where,
@@ -1578,7 +1738,7 @@ export class AdminController {
       }),
       this.prisma.auditLog.count({ where }),
     ]);
-    return { data, total, page, size };
+    return { data, total, page, size, dateDebut: demande.dateDebut, dateFin: demande.dateFin };
   }
 
   // ----------------------------------------------------------------
@@ -1594,8 +1754,10 @@ export class AdminController {
   ) {
     const tid = await this.resolveTenantId(tenantId, user);
     if (!tid) throw new BadRequestException('Tenant introuvable');
-    const where: Record<string, unknown> = { tenantId: tid };
-    if (query.statut) where.statut = query.statut;
+    const where: Record<string, unknown> = { tenantId: tid, statut: { not: 'ANNULE' } };
+    if (query.eleveId) where.eleveId = query.eleveId;
+    if (query.classeId) where.classeId = query.classeId;
+    if (query.statut) where.statut = query.statut; // Override default filter if explicit
     if (query.type) where.type = query.type;
     if (query.rapporteurRole) where.rapporteurRole = query.rapporteurRole;
     if (query.signaleParId) where.signaleParId = query.signaleParId;
@@ -1615,22 +1777,23 @@ export class AdminController {
   ) {
     const tid = await this.resolveTenantId(tenantId, user);
     if (!tid) throw new BadRequestException('Tenant introuvable');
-    const data = await (this.prisma as any).discipline.create({
-      data: {
-        tenantId: tid,
-        eleveNom: body.eleveNom as string,
-        eleveClasse: body.eleveClasse as string | undefined,
-        type: body.type ?? 'AVERTISSEMENT',
-        motif: body.motif as string,
-        dateIncident: body.dateIncident ? new Date(body.dateIncident as string) : new Date(),
-        gravite: Number(body.gravite ?? 2),
-        statut: body.statut ?? 'OUVERT',
-        rapporteur: body.rapporteur as string | undefined,
-        rapporteurRole: body.rapporteurRole as string | undefined,
-        signaleParId: body.signaleParId as string | undefined ?? user?.sub,
-      },
-    });
-    return data;
+    const createData: Record<string, unknown> = {
+      tenantId: tid,
+      eleveNom: String(body.eleveNom ?? ''),
+      motif: String(body.motif ?? ''),
+      dateIncident: body.dateIncident ? new Date(String(body.dateIncident)) : new Date(),
+      type: body.type ?? 'AVERTISSEMENT',
+      gravite: Number(body.gravite ?? 2),
+      statut: body.statut ?? 'OUVERT',
+    };
+    if (body.eleveId) createData.eleveId = String(body.eleveId);
+    if (body.classeId) createData.classeId = String(body.classeId);
+    if (body.eleveClasse) createData.eleveClasse = String(body.eleveClasse);
+    if (body.rapporteur) createData.rapporteur = String(body.rapporteur);
+    if (body.rapporteurRole) createData.rapporteurRole = String(body.rapporteurRole);
+    createData.signaleParId = body.signaleParId ? String(body.signaleParId) : (user?.sub ?? undefined);
+
+    return this.prisma.discipline.create({ data: createData as never });
   }
 
   @Roles('ADMIN', 'SURVEILLANT', 'ENSEIGNANT')
@@ -1779,6 +1942,32 @@ export class AdminController {
   }
 
   // ----------------------------------------------------------------
+  // ----------------------------------------------------------------
+  // Rapports PDF
+  // ----------------------------------------------------------------
+
+  @Roles('ADMIN', 'CAISSIER', 'RH', 'SURVEILLANT')
+  @AuditRead('EXPORT_PDF')
+  @Get('rapports/:type/pdf')
+  async generateRapportPdf(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('type') type: string,
+    @Query() query: Record<string, string>,
+    @CurrentUser() user: JwtUser,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    const validTypes: RapportType[] = ['bulletins', 'absences-eleves', 'paiements', 'inscriptions', 'pointages', 'emplois-du-temps', 'communications', 'audit'];
+    if (!validTypes.includes(type as RapportType)) throw new BadRequestException(`Type de rapport invalide: ${type}`);
+    const { buffer, filename } = await this.rapportDocument.generate(tid, type as RapportType, query);
+    reply
+      .header('Content-Type', 'application/pdf')
+      .header('Content-Disposition', `attachment; filename="${filename}"`)
+      .header('Content-Length', String(buffer.length))
+      .send(buffer);
+  }
+
   // Routes génériques (doivent rester après les routes spécifiques)
   // ----------------------------------------------------------------
 
@@ -1917,5 +2106,58 @@ export class AdminController {
   ) {
     const tid = (tenantId?.trim() || user?.tenantId)!;
     return this.demandeReduction.rejeter(tid, id, user?.sub ?? '', body.commentaire ?? '');
+  }
+
+  // ── Absences enseignants ────────────────────────────────────────────────────
+  @Get('absences-enseignants')
+  async listAbsencesEnseignants(@Headers('x-tenant-id') tenantId: string | undefined, @CurrentUser() user?: JwtUser) {
+    const tid = (tenantId?.trim() || user?.tenantId)!;
+    return this.prisma.absenceEnseignant.findMany({
+      where: { tenantId: tid },
+      include: { enseignant: { select: { id: true, firstName: true, lastName: true, specialite: true, photoUrl: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  @Patch('absences-enseignants/:id/approuver')
+  async approuverAbsenceEnseignant(@Headers('x-tenant-id') tenantId: string | undefined, @CurrentUser() user?: JwtUser, @Param('id') id?: string) {
+    return this.prisma.absenceEnseignant.update({ where: { id }, data: { statut: 'APPROUVEE', justifiee: true } });
+  }
+
+  @Patch('absences-enseignants/:id/rejeter')
+  async rejeterAbsenceEnseignant(@Headers('x-tenant-id') tenantId: string | undefined, @CurrentUser() user?: JwtUser, @Param('id') id?: string) {
+    return this.prisma.absenceEnseignant.update({ where: { id }, data: { statut: 'REJETEE' } });
+  }
+
+  // ── Absences personnel (non-enseignant) ─────────────────────────────────────
+  @Get('absences-personnel-list')
+  async listAbsencesPersonnel(@Headers('x-tenant-id') tenantId: string | undefined, @CurrentUser() user?: JwtUser) {
+    const tid = (tenantId?.trim() || user?.tenantId)!;
+    const absences = await this.prisma.absencePersonnel.findMany({
+      where: { tenantId: tid },
+      include: { personnel: { include: { utilisateur: { select: { id: true, firstName: true, lastName: true, role: true, photoUrl: true, specialite: true } } } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    // Resolve userId directly when available, enrich response
+    const userIds = absences.map((a) => a.userId).filter((id): id is string => !!id);
+    const users = userIds.length > 0
+      ? await this.prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, firstName: true, lastName: true, role: true, photoUrl: true, specialite: true } })
+      : [];
+    const userMap = new Map(users.map((u) => [u.id, u]));
+    return absences.map((a) => {
+      const directUser = a.userId ? userMap.get(a.userId) : null;
+      const resolvedUser = directUser ?? a.personnel?.utilisateur ?? null;
+      return { ...a, utilisateur: resolvedUser };
+    });
+  }
+
+  @Patch('absences-personnel-list/:id/approuver')
+  async approuverAbsencePersonnel2(@Param('id') id: string, @CurrentUser() user?: JwtUser) {
+    return this.prisma.absencePersonnel.update({ where: { id }, data: { statut: 'APPROUVEE', validePar: user?.sub } });
+  }
+
+  @Patch('absences-personnel-list/:id/rejeter')
+  async rejeterAbsencePersonnel2(@Param('id') id: string, @Body() body: { motifRefus?: string }) {
+    return this.prisma.absencePersonnel.update({ where: { id }, data: { statut: 'REJETEE', motifRefus: body.motifRefus || null } });
   }
 }

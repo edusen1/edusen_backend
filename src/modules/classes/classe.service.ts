@@ -90,22 +90,37 @@ export class ClasseService {
         actif: true,
         OR: [
           { professeurResponsableId: enseignantId },
-          { matiereClasses: { some: { enseignantId } } },
           { cours: { some: { enseignantId } } },
+          { emploisDuTemps: { some: { enseignantId } } },
         ],
       },
       include: {
         ...CLASSE_INCLUDE,
         niveau: {
           include: {
-            cycle: { select: { id: true, code: true, libelle: true } },
+            cycle: { select: { id: true, code: true, libelle: true, typePeriode: true } },
           },
+        },
+        cours: {
+          where: { enseignantId },
+          select: { id: true, matiereId: true, matiere: { select: { id: true, code: true, libelle: true } } },
         },
       },
       orderBy: [{ niveau: { ordre: 'asc' } }, { nom: 'asc' }],
     });
 
-    return this.withActiveEnrollmentCounts(tenantId, classes).then((items) => items.map(this.toResponse));
+    const items = await this.withActiveEnrollmentCounts(tenantId, classes);
+    return items.map((item) => {
+      const base = this.toResponse(item);
+      const coursProf = (item as any).cours ?? [];
+      const matieresMap = new Map<string, { id: string; code: string; libelle: string }>();
+      for (const c of coursProf) {
+        if (c.matiere?.id && !matieresMap.has(c.matiere.id)) {
+          matieresMap.set(c.matiere.id, c.matiere);
+        }
+      }
+      return { ...base, matieresEnseignees: [...matieresMap.values()] };
+    });
   }
 
   async assertTeacherClasseAccess(tenantId: string, enseignantId: string, classeId: string): Promise<void> {
@@ -115,8 +130,8 @@ export class ClasseService {
         tenantId,
         OR: [
           { professeurResponsableId: enseignantId },
-          { matiereClasses: { some: { enseignantId } } },
           { cours: { some: { enseignantId } } },
+          { emploisDuTemps: { some: { enseignantId } } },
         ],
       },
       select: { id: true },
@@ -338,19 +353,12 @@ export class ClasseService {
     const noteScale = ['MATERNELLE', 'PRIMAIRE', 'COLLEGE', 'CRECHE'].includes(cycleCode) ? 10 : 20;
     const anneeScolaire = classe.anneeAcademique?.libelle ?? '';
 
-    const [cours, matiereClasses, notes, bulletins] = await Promise.all([
+    const [cours, notes, bulletins] = await Promise.all([
       this.prisma.cours.findMany({
         where: { tenantId, classeId, ...(classe.anneeAcademiqueId ? { anneeAcademiqueId: classe.anneeAcademiqueId } : {}) },
         include: {
           matiere: true,
-        },
-        orderBy: { matiere: { libelle: 'asc' } },
-      }),
-      this.prisma.matiereClasse.findMany({
-        where: { tenantId, classeId, ...(classe.anneeAcademiqueId ? { anneeAcademiqueId: classe.anneeAcademiqueId } : {}) },
-        include: {
-          matiere: true,
-          enseignant: { select: PROF_SELECT },
+          enseignant: { select: { id: true, firstName: true, lastName: true } },
         },
         orderBy: { matiere: { libelle: 'asc' } },
       }),
@@ -372,19 +380,8 @@ export class ClasseService {
         libelle: row.matiere.libelle,
         code: row.matiere.code,
         coefficient: row.coefficient ?? 1,
-        professeur: null,
+        professeur: row.enseignant ?? null,
       });
-    }
-    for (const row of matiereClasses) {
-      if (!subjectsById.has(row.matiereId)) {
-        subjectsById.set(row.matiereId, {
-          matiereId: row.matiereId,
-          libelle: row.matiere.libelle,
-          code: row.matiere.code,
-          coefficient: 1,
-          professeur: row.enseignant,
-        });
-      }
     }
     for (const note of notes) {
       if (!subjectsById.has(note.matiereId)) {
@@ -704,10 +701,7 @@ export class ClasseService {
 
       const isResponsable = classe.professeurResponsableId === enseignantId;
       const matiereIds = [
-        ...new Set([
-          ...classe.matiereClasses.map((matiereClasse) => matiereClasse.matiereId),
-          ...classe.cours.map((cours) => cours.matiereId),
-        ]),
+        ...new Set(classe.cours.map((cours) => cours.matiereId)),
       ];
       if (!isResponsable && !matiereIds.length) return [];
 
@@ -966,8 +960,8 @@ export class ClasseService {
         actif: true,
         OR: [
           { professeurResponsableId: enseignantId },
-          { matiereClasses: { some: { enseignantId } } },
           { cours: { some: { enseignantId } } },
+          { emploisDuTemps: { some: { enseignantId } } },
         ],
       },
       select: { id: true },
@@ -1050,8 +1044,8 @@ export class ClasseService {
         actif: true,
         OR: [
           { professeurResponsableId: enseignantId },
-          { matiereClasses: { some: { enseignantId } } },
           { cours: { some: { enseignantId } } },
+          { emploisDuTemps: { some: { enseignantId } } },
         ],
       },
       select: { id: true },
@@ -1088,14 +1082,8 @@ export class ClasseService {
   }
 
   async getTeacherAbsences(tenantId: string, enseignantId: string) {
-    const personnel = await this.prisma.personnel.findFirst({
-      where: { tenantId, utilisateurId: enseignantId },
-      select: { id: true },
-    });
-    if (!personnel) return [];
-
-    return this.prisma.absencePersonnel.findMany({
-      where: { tenantId, personnelId: personnel.id },
+    return this.prisma.absenceEnseignant.findMany({
+      where: { tenantId, enseignantId },
       orderBy: { dateDebut: 'desc' },
     });
   }
@@ -1103,25 +1091,8 @@ export class ClasseService {
   async createTeacherAbsence(
     tenantId: string,
     enseignantId: string,
-    dto: { dateDebut?: string; dateFin?: string; heureDebut?: string; heureFin?: string; motif?: string; typeAbsence?: string; justificatifUrl?: string },
+    dto: { dateDebut?: string; dateFin?: string; heureDebut?: string; heureFin?: string; motif?: string; typeAbsence?: string; documentJustificatifUrl?: string },
   ) {
-    let personnel = await this.prisma.personnel.findFirst({
-      where: { tenantId, utilisateurId: enseignantId },
-      select: { id: true },
-    });
-    // Auto-création du dossier personnel si absent (professeur sans fiche RH)
-    if (!personnel) {
-      const user = await this.prisma.user.findFirst({
-        where: { id: enseignantId, tenantId, role: 'ENSEIGNANT' },
-        select: { id: true },
-      });
-      if (!user) throw new NotFoundException('Utilisateur introuvable');
-      personnel = await this.prisma.personnel.create({
-        data: { tenantId, utilisateurId: enseignantId },
-        select: { id: true },
-      });
-    }
-
     if (!dto.dateDebut || !dto.dateFin) {
       throw new BadRequestException('Les dates de début et de fin sont obligatoires');
     }
@@ -1143,19 +1114,19 @@ export class ClasseService {
       throw new BadRequestException('L\'heure de fin doit être après l\'heure de début');
     }
 
-    return this.prisma.absencePersonnel.create({
+    return this.prisma.absenceEnseignant.create({
       data: {
         tenantId,
-        personnelId: personnel.id,
+        enseignantId,
         dateDebut,
         dateFin,
         heureDebut,
         heureFin,
-        motif: dto.motif?.trim() || null,
-        typeAbsence: (dto.typeAbsence || 'AUTRE') as any,
-        justificatifUrl: dto.justificatifUrl?.trim() || null,
+        typeAbsence: dto.typeAbsence || 'AUTRE',
+        motif: dto.motif?.trim() || 'Non précisé',
         statut: 'EN_ATTENTE',
-      } as any,
+        documentJustificatifUrl: dto.documentJustificatifUrl?.trim() || null,
+      },
     });
   }
 
@@ -1492,8 +1463,8 @@ export class ClasseService {
         ...(classeId ? { id: classeId } : {}),
         OR: [
           { professeurResponsableId: enseignantId },
-          { matiereClasses: { some: { enseignantId } } },
           { cours: { some: { enseignantId } } },
+          { emploisDuTemps: { some: { enseignantId } } },
         ],
       },
       select: {
@@ -1503,10 +1474,6 @@ export class ClasseService {
         anneeAcademiqueId: true,
         anneeAcademique: { select: { id: true, libelle: true } },
         niveau: { select: { cycle: { select: { code: true } } } },
-        matiereClasses: {
-          where: { enseignantId },
-          select: { matiereId: true },
-        },
         cours: {
           where: { enseignantId },
           select: { matiereId: true },
@@ -1799,7 +1766,7 @@ export class ClasseService {
             nom: classe.niveau.libelle,
             ordre: classe.niveau.ordre,
             cycle: classe.niveau.cycle
-              ? { id: classe.niveau.cycle.id, code: classe.niveau.cycle.code, nom: classe.niveau.cycle.libelle }
+              ? { id: classe.niveau.cycle.id, code: classe.niveau.cycle.code, nom: classe.niveau.cycle.libelle, typePeriode: classe.niveau.cycle.typePeriode ?? null }
               : null,
           }
         : null,
@@ -1824,6 +1791,7 @@ export class ClasseService {
         actif: s.actif,
       })),
       nbEleves: classe.nbElevesActifs ?? classe._count?.inscriptions ?? classe._count?.eleves ?? 0,
+      placesRestantes: classe.effectifMax ? Math.max(0, classe.effectifMax - (classe.nbElevesActifs ?? classe._count?.inscriptions ?? classe._count?.eleves ?? 0)) : null,
       actif: classe.actif,
       isUnifiedSection,
       createdAt: classe.createdAt,

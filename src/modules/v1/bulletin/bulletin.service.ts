@@ -7,6 +7,7 @@ import { Prisma, StatutBulletin } from '@prisma/client';
 import { PushNotificationService } from '@/modules/push-notification.service';
 import { BulletinDocumentService } from '@/modules/bulletin-document.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
+import { calculateBulletinAverages, BulletinGradeInput } from '@/common/utils/bulletin-calculation.util';
 
 export interface CreateBulletinDto {
   eleveId: string;
@@ -72,21 +73,42 @@ export class BulletinService {
     anneeScolaire: string,
     soumisPar: string,
   ): Promise<unknown[]> {
-    const inscriptions = await this.prisma.inscription.findMany({
-      where: { tenantId, classeId, statut: 'ACTIF' },
-    });
+    const [inscriptions, classe] = await Promise.all([
+      this.prisma.inscription.findMany({ where: { tenantId, classeId, statut: 'ACTIF' } }),
+      this.prisma.classe.findUnique({ where: { id: classeId }, select: { niveauId: true } }),
+    ]);
 
     const totalEleves = inscriptions.length;
+    const studentIds = inscriptions.map((i) => i.eleveId);
+
+    // Coefficients depuis MatiereNiveau (source de vérité)
+    const coefficients = await this.getMatiereNiveauCoefficients(tenantId, classeId, classe?.niveauId ?? null, anneeScolaire);
+
+    // Charger toutes les notes de la classe en une fois
+    const allNotes = await this.prisma.note.findMany({
+      where: { tenantId, eleveId: { in: studentIds }, trimestre, anneeScolaire },
+    });
+
+    const gradeInputs: BulletinGradeInput[] = allNotes.map((n) => ({
+      eleveId: n.eleveId,
+      matiereId: n.matiereId,
+      note: n.note as number,
+      noteSur: (n.noteSur as number) ?? 20,
+      typeEvaluation: n.typeEvaluation ?? 'DEVOIR',
+    }));
+
+    const averages = calculateBulletinAverages(studentIds, gradeInputs, coefficients);
+
+    // Moyenne classe
+    const avgValues = [...averages.values()].filter((v) => v > 0 || studentIds.length > 0);
+    const moyenneClasse = avgValues.length > 0
+      ? Math.round((avgValues.reduce((s, v) => s + v, 0) / avgValues.length) * 100) / 100
+      : null;
+
     const bulletins: unknown[] = [];
-    const coefficients = await this.getCourseCoefficients(tenantId, classeId, anneeScolaire);
 
     for (const inscription of inscriptions) {
-      const notes = await this.prisma.note.findMany({
-        where: { tenantId, eleveId: inscription.eleveId, trimestre, anneeScolaire },
-      });
-
-      const { moyenne } = this.calculerMoyenne(notes, coefficients);
-
+      const moyenne = averages.get(inscription.eleveId) ?? 0;
       const absences = await this.prisma.absenceEleve.count({
         where: { tenantId, eleveId: inscription.eleveId },
       });
@@ -101,6 +123,7 @@ export class BulletinService {
           where: { id: existing.id },
           data: {
             moyenne,
+            moyenneClasse,
             totalEleves,
             nombreAbsences: absences,
             statut: StatutBulletin.BROUILLON,
@@ -117,6 +140,7 @@ export class BulletinService {
             trimestre,
             anneeScolaire,
             moyenne,
+            moyenneClasse,
             totalEleves,
             nombreAbsences: absences,
             statut: StatutBulletin.BROUILLON,
@@ -365,23 +389,23 @@ export class BulletinService {
     await this.prisma.bulletin.delete({ where: { id } });
   }
 
-  private calculerMoyenne(
-    notes: { note: number; noteSur: number; matiereId: string }[],
-    coefficients: Map<string, number>,
-  ): { moyenne: number } {
-    if (notes.length === 0) return { moyenne: 0 };
-    let totalPoints = 0;
-    let totalCoeff = 0;
-    for (const n of notes) {
-      const coefficient = coefficients.get(n.matiereId) ?? 1;
-      const normalized = (n.note / n.noteSur) * 20;
-      totalPoints += normalized * coefficient;
-      totalCoeff += coefficient;
+  private async getMatiereNiveauCoefficients(
+    tenantId: string,
+    classeId: string,
+    niveauId: string | null,
+    anneeScolaire: string,
+  ): Promise<Map<string, number>> {
+    // Source de vérité : MatiereNiveau (config admin)
+    if (niveauId) {
+      const matiereNiveaux = await this.prisma.matiereNiveau.findMany({
+        where: { tenantId, niveauId },
+        select: { matiereId: true, coefficient: true },
+      });
+      if (matiereNiveaux.length > 0) {
+        return new Map(matiereNiveaux.map((mn) => [mn.matiereId, mn.coefficient ?? 1]));
+      }
     }
-    return { moyenne: totalCoeff > 0 ? Math.round((totalPoints / totalCoeff) * 100) / 100 : 0 };
-  }
-
-  private async getCourseCoefficients(tenantId: string, classeId: string, anneeScolaire: string): Promise<Map<string, number>> {
+    // Fallback : Cours.coefficient
     const cours = await this.prisma.cours.findMany({
       where: {
         tenantId,
@@ -393,7 +417,6 @@ export class BulletinService {
       },
       select: { matiereId: true, coefficient: true },
     });
-
     return new Map(cours.map((row) => [row.matiereId, row.coefficient ?? 1]));
   }
 
