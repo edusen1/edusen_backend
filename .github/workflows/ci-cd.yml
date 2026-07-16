@@ -106,6 +106,34 @@ jobs:
     environment: ${{ github.ref_name == 'main' && 'production' || 'preproduction' }}
 
     steps:
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Wait for image manifest
+        shell: bash
+        env:
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
+          TAG: ${{ github.ref_name == 'main' && 'latest' || 'preprod' }}
+        run: |
+          for attempt in {1..12}; do
+            if docker buildx imagetools inspect "${IMAGE}:${TAG}" >/dev/null 2>&1; then
+              echo "Docker image ${IMAGE}:${TAG} is available."
+              exit 0
+            fi
+
+            echo "Image manifest not available yet (attempt ${attempt}/12)."
+            sleep 10
+          done
+
+          echo "Docker image ${IMAGE}:${TAG} was not found after 120 seconds."
+          exit 1
+
       - name: Trigger deployment
         shell: bash
         env:

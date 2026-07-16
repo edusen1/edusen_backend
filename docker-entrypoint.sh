@@ -34,8 +34,8 @@ log_error() {
   printf '%b\n' "${RED}❌ $1${RESET}"
 }
 
-repair_teacher_payment_response_migration() {
-  migration_name="20260623_add_teacher_payment_response"
+repair_failed_migration() {
+  migration_name="$1"
 
   case "$migrate_log" in
     *P3009*"$migration_name"*) ;;
@@ -72,7 +72,8 @@ migrate_exit=$?
 echo "$migrate_log"
 
 if [ $migrate_exit -ne 0 ]; then
-  if repair_teacher_payment_response_migration; then
+  if repair_failed_migration "20260623_add_teacher_payment_response" ||
+     repair_failed_migration "20260630_add_inactive_inscription_status"; then
     log_step "📦 Relance des migrations Prisma après réparation"
     migrate_log=$(npx prisma migrate deploy 2>&1)
     migrate_exit=$?
