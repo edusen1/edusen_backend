@@ -1,57 +1,53 @@
-# CI/CD NouraSchool Backend
-# Pipeline : validate -> build/push Docker Hub -> deploy via Coolify webhook
-
 name: CI/CD
 
 on:
   push:
-    branches: [main]
+    branches: [main, preprod]
   pull_request:
-    branches: [main]
+    branches: [main, preprod]
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  IMAGE_NAME: medaaris-backend
+  IMAGE_NAME: edusen_backend
 
 jobs:
-
-  # ── 1. Validation ────────────────────────────────────────────────────────────
   validate:
-    name: Validate
+    name: Generate Prisma and build
     runs-on: ubuntu-latest
+    environment: ${{ github.base_ref == 'main' && 'production' || github.ref_name == 'main' && 'production' || 'preproduction' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node.js 20
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
 
       - name: Install dependencies
         run: npm ci
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npm run prisma:generate
 
-      - name: Build NestJS
+      - name: Build
         run: npm run build
         env:
           NODE_ENV: production
 
-  # ── 2. Build & push image Docker Hub ─────────────────────────────────────────
   docker:
-    name: Build Docker image
+    name: Build and publish Docker image
     needs: validate
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+    environment: ${{ github.ref_name == 'main' && 'production' || 'preproduction' }}
 
     steps:
       - name: Checkout
@@ -60,17 +56,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Docker metadata
-        if: github.event_name == 'push'
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha,prefix=sha-
-            type=raw,value=prod
-            type=raw,value=latest
-
       - name: Login to Docker Hub
         if: github.event_name == 'push'
         uses: docker/login-action@v3
@@ -78,7 +63,19 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build image (pull request — no push)
+      - name: Docker metadata
+        if: github.event_name == 'push'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=preprod,enable=${{ github.ref == 'refs/heads/preprod' }}
+            type=sha,prefix={{branch}}-
+
+      - name: Build image for pull request
         if: github.event_name == 'pull_request'
         uses: docker/build-push-action@v6
         with:
@@ -101,42 +98,30 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ── 3. Deploy via Coolify ─────────────────────────────────────────────────────
   deploy:
-    name: Deploy to Coolify
+    name: Trigger Coolify deployment
     needs: docker
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push'
+    environment: ${{ github.ref_name == 'main' && 'production' || 'preproduction' }}
 
     steps:
       - name: Trigger deployment
+        shell: bash
         env:
-          COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK || secrets.WEBHOOK_URL }}
-          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN || secrets.WEBHOOK_TOKEN }}
+          COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
         run: |
           if [ -z "$COOLIFY_WEBHOOK" ]; then
-            echo "COOLIFY_WEBHOOK is not configured. Add COOLIFY_WEBHOOK in GitHub Actions secrets."
+            echo "COOLIFY_WEBHOOK is not configured for this environment."
             exit 1
           fi
+
+          headers=(-H "Content-Type: application/json")
           if [ -n "$COOLIFY_TOKEN" ]; then
-            echo "Triggering Coolify deployment with bearer token..."
-            status=$(curl --silent --show-error --output /tmp/coolify-response.txt --write-out "%{http_code}" \
-              --request GET "$COOLIFY_WEBHOOK" \
-              --header "Authorization: Bearer $COOLIFY_TOKEN" \
-              --header "Content-Type: application/json")
-            if [ "$status" = "403" ]; then
-              echo "Coolify returned 403 with bearer token. Check that the API token has '*' permission and belongs to the same Coolify team as the resource."
-              status=$(curl --silent --show-error --output /tmp/coolify-response.txt --write-out "%{http_code}" \
-                --request GET "$COOLIFY_WEBHOOK" \
-                --header "Content-Type: application/json")
-            fi
-            cat /tmp/coolify-response.txt || true
-            if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
-              echo "Coolify deployment trigger failed with HTTP $status"
-              exit 1
-            fi
-          else
-            echo "Triggering Coolify deployment with webhook URL..."
-            curl --fail --request GET "$COOLIFY_WEBHOOK" \
-              --header "Content-Type: application/json"
+            headers+=(-H "Authorization: Bearer $COOLIFY_TOKEN")
           fi
+
+          curl --fail-with-body --silent --show-error \
+            --request GET "$COOLIFY_WEBHOOK" \
+            "${headers[@]}"
