@@ -74,7 +74,8 @@ echo "$migrate_log"
 if [ $migrate_exit -ne 0 ]; then
   if repair_failed_migration "20260623_add_teacher_payment_response" ||
      repair_failed_migration "20260630_add_inactive_inscription_status" ||
-     repair_failed_migration "20260710_add_communication_document"; then
+     repair_failed_migration "20260710_add_communication_document" ||
+     repair_failed_migration "20260711_audit_enrichment_demande"; then
     log_step "📦 Relance des migrations Prisma après réparation"
     migrate_log=$(npx prisma migrate deploy 2>&1)
     migrate_exit=$?

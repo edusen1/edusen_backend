@@ -23,20 +23,20 @@ END $$;
 
 -- Migrate existing type column: convert VARCHAR to enum
 -- First add new columns
-ALTER TABLE "calendrier_scolaires" ADD COLUMN IF NOT EXISTS "heureDebut" VARCHAR(5);
-ALTER TABLE "calendrier_scolaires" ADD COLUMN IF NOT EXISTS "heureFin" VARCHAR(5);
-ALTER TABLE "calendrier_scolaires" ADD COLUMN IF NOT EXISTS "statut" "StatutEvenement" NOT NULL DEFAULT 'PLANIFIE';
-ALTER TABLE "calendrier_scolaires" ADD COLUMN IF NOT EXISTS "visibilite" "VisibiliteEvenement" NOT NULL DEFAULT 'TOUS';
-ALTER TABLE "calendrier_scolaires" ADD COLUMN IF NOT EXISTS "classeId" UUID;
-ALTER TABLE "calendrier_scolaires" ADD COLUMN IF NOT EXISTS "niveauId" UUID;
-ALTER TABLE "calendrier_scolaires" ADD COLUMN IF NOT EXISTS "couleur" VARCHAR(7);
-ALTER TABLE "calendrier_scolaires" ADD COLUMN IF NOT EXISTS "important" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "CalendrierScolaire" ADD COLUMN IF NOT EXISTS "heureDebut" VARCHAR(5);
+ALTER TABLE "CalendrierScolaire" ADD COLUMN IF NOT EXISTS "heureFin" VARCHAR(5);
+ALTER TABLE "CalendrierScolaire" ADD COLUMN IF NOT EXISTS "statut" "StatutEvenement" NOT NULL DEFAULT 'PLANIFIE';
+ALTER TABLE "CalendrierScolaire" ADD COLUMN IF NOT EXISTS "visibilite" "VisibiliteEvenement" NOT NULL DEFAULT 'TOUS';
+ALTER TABLE "CalendrierScolaire" ADD COLUMN IF NOT EXISTS "classeId" UUID;
+ALTER TABLE "CalendrierScolaire" ADD COLUMN IF NOT EXISTS "niveauId" UUID;
+ALTER TABLE "CalendrierScolaire" ADD COLUMN IF NOT EXISTS "couleur" VARCHAR(7);
+ALTER TABLE "CalendrierScolaire" ADD COLUMN IF NOT EXISTS "important" BOOLEAN NOT NULL DEFAULT false;
 
 -- Convert type column from VARCHAR to enum
-ALTER TABLE "calendrier_scolaires" ADD COLUMN IF NOT EXISTS "type_new" "TypeEvenementCalendrier" NOT NULL DEFAULT 'AUTRE';
+ALTER TABLE "CalendrierScolaire" ADD COLUMN IF NOT EXISTS "type_new" "TypeEvenementCalendrier" NOT NULL DEFAULT 'AUTRE';
 
 -- Map old values to new enum
-UPDATE "calendrier_scolaires" SET "type_new" = CASE
+UPDATE "CalendrierScolaire" SET "type_new" = CASE
   WHEN type = 'rentree' OR type = 'reprise' THEN 'RENTREE'::"TypeEvenementCalendrier"
   WHEN type = 'vacances' THEN 'VACANCES'::"TypeEvenementCalendrier"
   WHEN type = 'conseil' THEN 'CONSEIL_CLASSE'::"TypeEvenementCalendrier"
@@ -46,8 +46,8 @@ UPDATE "calendrier_scolaires" SET "type_new" = CASE
   ELSE 'AUTRE'::"TypeEvenementCalendrier"
 END WHERE type IS NOT NULL;
 
-ALTER TABLE "calendrier_scolaires" DROP COLUMN IF EXISTS "type";
-ALTER TABLE "calendrier_scolaires" RENAME COLUMN "type_new" TO "type";
+ALTER TABLE "CalendrierScolaire" DROP COLUMN IF EXISTS "type";
+ALTER TABLE "CalendrierScolaire" RENAME COLUMN "type_new" TO "type";
 
 -- Add index
-CREATE INDEX IF NOT EXISTS "calendrier_scolaires_tenant_type_idx" ON "calendrier_scolaires" ("tenantId", "type");
+CREATE INDEX IF NOT EXISTS "calendrier_scolaires_tenant_type_idx" ON "CalendrierScolaire" ("tenantId", "type");
