@@ -326,11 +326,6 @@ export class AcademiqueConfigService {
     const existing = await this.prisma.cycle.findFirst({ where: { id, tenantId } });
     if (!existing) throw new NotFoundException('Cycle introuvable');
 
-    // Seedé = seule activation/désactivation autorisée
-    if (existing.seeded && (dto.nom || dto.typePeriode)) {
-      throw new BadRequestException('Ce cycle est prédéfini et ne peut pas être modifié. Seule l\'activation/désactivation est autorisée.');
-    }
-
     const nextNom = dto.nom?.trim();
     if (nextNom) {
       const nextCode = this.slugCode(nextNom);
@@ -344,7 +339,7 @@ export class AcademiqueConfigService {
       const section = await tx.cycle.update({
         where: { id },
         data: {
-          ...(nextNom ? { libelle: nextNom, code: this.slugCode(nextNom) } : {}),
+          ...(nextNom ? { libelle: nextNom, ...(!existing.seeded ? { code: this.slugCode(nextNom) } : {}) } : {}),
           ...(dto.actif !== undefined ? { actif: dto.actif } : {}),
           ...(dto.typePeriode ? { typePeriode: dto.typePeriode === 'SEMESTRE' ? 'SEMESTRE' : 'TRIMESTRE' } : {}),
         },
