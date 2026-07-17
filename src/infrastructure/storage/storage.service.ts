@@ -16,7 +16,6 @@ export class StorageService {
   private readonly logger = new Logger(StorageService.name);
   private readonly client: S3Client;
   private readonly bucket: string;
-  private readonly publicBaseUrl: string | null;
   private readonly presignedTtl: number;
   private readonly configured: boolean;
 
@@ -26,7 +25,6 @@ export class StorageService {
     const forcePathStyle = (process.env.S3_FORCE_PATH_STYLE ?? 'true') !== 'false';
 
     this.bucket = process.env.S3_BUCKET ?? 'noura-school-files';
-    this.publicBaseUrl = process.env.S3_PUBLIC_URL ?? process.env.S3_PUBLIC_BASE_URL ?? null;
     this.presignedTtl = Number(process.env.S3_PRESIGNED_TTL_SECONDS ?? 900);
 
     const accessKeyId = process.env.S3_ACCESS_KEY ?? process.env.AWS_ACCESS_KEY_ID ?? '';
@@ -116,7 +114,7 @@ export class StorageService {
     }
 
     this.logger.log(`[Storage] Uploaded key=${key} contentType=${contentType}`);
-    return this.publicBaseUrl ? `${this.publicBaseUrl.replace(/\/$/, '')}/${this.bucket}/${key}` : key;
+    return this.buildPublicAccessUrl(key);
   }
 
   async getPresignedUrl(key: string, ttlSeconds?: number): Promise<string> {
