@@ -540,6 +540,7 @@ model Cycle {
   libelle         String
   typePeriode     String   @default("TRIMESTRE") @db.VarChar(10) // TRIMESTRE | SEMESTRE
   moyenneMaximale Float    @default(20) // 20 pour collège/lycée, 10 pour primaire/préscolaire
+  ordre          Int      @default(0)
   seeded          Boolean  @default(false) // true = créé par seed, non modifiable
   actif           Boolean  @default(true)
   createdAt       DateTime @default(now())
@@ -551,6 +552,7 @@ model Cycle {
   calendriers       CalendrierScolaire[]
 
   @@unique([tenantId, code])
+  @@index([tenantId, ordre])
 }
 
 model Niveau {

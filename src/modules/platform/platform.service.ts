@@ -316,13 +316,13 @@ export class PlatformService {
 
   private async seedCyclesAndNiveaux(tenantId: string): Promise<void> {
     const CYCLES = [
-      { code: 'PRESCOLAIRE', libelle: 'Préscolaire', typePeriode: 'TRIMESTRE', moyenneMaximale: 10,
+      { code: 'PRESCOLAIRE', libelle: 'Préscolaire', ordre: 1, typePeriode: 'TRIMESTRE', moyenneMaximale: 10,
         niveaux: [
           { code: 'PS', libelle: 'Petite Section', ordre: 1 },
           { code: 'MS', libelle: 'Moyenne Section', ordre: 2 },
           { code: 'GS', libelle: 'Grande Section', ordre: 3 },
         ] },
-      { code: 'PRIMAIRE', libelle: 'Primaire', typePeriode: 'TRIMESTRE', moyenneMaximale: 10,
+      { code: 'PRIMAIRE', libelle: 'Primaire', ordre: 2, typePeriode: 'TRIMESTRE', moyenneMaximale: 10,
         niveaux: [
           { code: 'CI', libelle: 'CI', ordre: 1 },
           { code: 'CP', libelle: 'CP', ordre: 2 },
@@ -331,14 +331,14 @@ export class PlatformService {
           { code: 'CM1', libelle: 'CM1', ordre: 5 },
           { code: 'CM2', libelle: 'CM2', ordre: 6 },
         ] },
-      { code: 'COLLEGE', libelle: 'Collège', typePeriode: 'SEMESTRE', moyenneMaximale: 20,
+      { code: 'COLLEGE', libelle: 'Collège', ordre: 3, typePeriode: 'SEMESTRE', moyenneMaximale: 20,
         niveaux: [
           { code: '6EME', libelle: '6ème', ordre: 1 },
           { code: '5EME', libelle: '5ème', ordre: 2 },
           { code: '4EME', libelle: '4ème', ordre: 3 },
           { code: '3EME', libelle: '3ème', ordre: 4 },
         ] },
-      { code: 'LYCEE', libelle: 'Lycée', typePeriode: 'SEMESTRE', moyenneMaximale: 20,
+      { code: 'LYCEE', libelle: 'Lycée', ordre: 4, typePeriode: 'SEMESTRE', moyenneMaximale: 20,
         niveaux: [
           { code: 'SECONDE', libelle: 'Seconde', ordre: 1 },
           { code: 'PREMIERE', libelle: 'Première', ordre: 2 },
@@ -355,6 +355,7 @@ export class PlatformService {
           tenantId,
           code: cycleDef.code,
           libelle: cycleDef.libelle,
+          ordre: cycleDef.ordre,
           typePeriode: cycleDef.typePeriode,
           moyenneMaximale: cycleDef.moyenneMaximale,
           seeded: true,

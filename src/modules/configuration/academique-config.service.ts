@@ -95,6 +95,8 @@ type NiveauFraisInfo = {
   id: string;
   sectionId: string;
   moyennePassage: number;
+  cycleOrdre: number;
+  niveauOrdre: number;
 };
 
 type AnneeRow = {
@@ -127,7 +129,8 @@ export class AcademiqueConfigService {
     });
     const niveaux = await this.prisma.niveau.findMany({
       where: { tenantId },
-      include: { cycle: { select: { libelle: true } } },
+      include: { cycle: { select: { libelle: true, ordre: true } } },
+      orderBy: [{ cycle: { ordre: 'desc' } }, { ordre: 'desc' }],
     });
     const niveauByKey = new Map<string, NiveauFraisInfo>(
       niveaux.map((niveau) => [
@@ -136,6 +139,8 @@ export class AcademiqueConfigService {
           id: niveau.id,
           sectionId: niveau.cycleId,
           moyennePassage: niveau.moyennePassage ?? 10,
+          cycleOrdre: niveau.cycle.ordre,
+          niveauOrdre: niveau.ordre,
         },
       ]),
     );
@@ -163,10 +168,18 @@ export class AcademiqueConfigService {
         id: niveau.id,
         sectionId: niveau.cycleId,
         moyennePassage: niveau.moyennePassage ?? 10,
+        cycleOrdre: niveau.cycle.ordre,
+        niveauOrdre: niveau.ordre,
       }));
     }
 
-    return responses.sort((a, b) => a.section.localeCompare(b.section) || a.niveau.localeCompare(b.niveau));
+    return responses.sort((a, b) => {
+      const orderA = niveauByKey.get(this.fraisKey(a.section, a.niveau));
+      const orderB = niveauByKey.get(this.fraisKey(b.section, b.niveau));
+      return (orderB?.cycleOrdre ?? 0) - (orderA?.cycleOrdre ?? 0)
+        || (orderB?.niveauOrdre ?? 0) - (orderA?.niveauOrdre ?? 0)
+        || a.niveau.localeCompare(b.niveau, 'fr');
+    });
   }
 
   async saveFrais(tenantId: string, dto: SaveFraisDto): Promise<FraisNiveauResponse[]> {
@@ -230,13 +243,13 @@ export class AcademiqueConfigService {
 
   private async seedDefaultCycles(tenantId: string): Promise<void> {
     const CYCLES = [
-      { code: 'PRESCOLAIRE', libelle: 'Préscolaire', typePeriode: 'TRIMESTRE', moyenneMaximale: 10,
+      { code: 'PRESCOLAIRE', libelle: 'Préscolaire', ordre: 1, typePeriode: 'TRIMESTRE', moyenneMaximale: 10,
         niveaux: [
           { code: 'PS', libelle: 'Petite Section', ordre: 1 },
           { code: 'MS', libelle: 'Moyenne Section', ordre: 2 },
           { code: 'GS', libelle: 'Grande Section', ordre: 3 },
         ] },
-      { code: 'PRIMAIRE', libelle: 'Primaire', typePeriode: 'TRIMESTRE', moyenneMaximale: 10,
+      { code: 'PRIMAIRE', libelle: 'Primaire', ordre: 2, typePeriode: 'TRIMESTRE', moyenneMaximale: 10,
         niveaux: [
           { code: 'CI', libelle: 'CI', ordre: 1 },
           { code: 'CP', libelle: 'CP', ordre: 2 },
@@ -245,14 +258,14 @@ export class AcademiqueConfigService {
           { code: 'CM1', libelle: 'CM1', ordre: 5 },
           { code: 'CM2', libelle: 'CM2', ordre: 6 },
         ] },
-      { code: 'COLLEGE', libelle: 'Collège', typePeriode: 'SEMESTRE', moyenneMaximale: 20,
+      { code: 'COLLEGE', libelle: 'Collège', ordre: 3, typePeriode: 'SEMESTRE', moyenneMaximale: 20,
         niveaux: [
           { code: '6EME', libelle: '6ème', ordre: 1 },
           { code: '5EME', libelle: '5ème', ordre: 2 },
           { code: '4EME', libelle: '4ème', ordre: 3 },
           { code: '3EME', libelle: '3ème', ordre: 4 },
         ] },
-      { code: 'LYCEE', libelle: 'Lycée', typePeriode: 'SEMESTRE', moyenneMaximale: 20,
+      { code: 'LYCEE', libelle: 'Lycée', ordre: 4, typePeriode: 'SEMESTRE', moyenneMaximale: 20,
         niveaux: [
           { code: 'SECONDE', libelle: 'Seconde', ordre: 1 },
           { code: 'PREMIERE', libelle: 'Première', ordre: 2 },
@@ -265,7 +278,7 @@ export class AcademiqueConfigService {
       if (existing) {
         // Marquer comme seedé si déjà existant mais pas encore flaggé
         if (!existing.seeded) {
-          await this.prisma.cycle.update({ where: { id: existing.id }, data: { seeded: true, typePeriode: cycleDef.typePeriode, moyenneMaximale: cycleDef.moyenneMaximale } });
+          await this.prisma.cycle.update({ where: { id: existing.id }, data: { seeded: true, ordre: cycleDef.ordre, typePeriode: cycleDef.typePeriode, moyenneMaximale: cycleDef.moyenneMaximale } });
         }
         // S'assurer que les niveaux existent
         for (const niveauDef of cycleDef.niveaux) {
@@ -282,7 +295,7 @@ export class AcademiqueConfigService {
       }
 
       const cycle = await this.prisma.cycle.create({
-        data: { tenantId, code: cycleDef.code, libelle: cycleDef.libelle, typePeriode: cycleDef.typePeriode, moyenneMaximale: cycleDef.moyenneMaximale, seeded: true, actif: true },
+        data: { tenantId, code: cycleDef.code, libelle: cycleDef.libelle, ordre: cycleDef.ordre, typePeriode: cycleDef.typePeriode, moyenneMaximale: cycleDef.moyenneMaximale, seeded: true, actif: true },
       });
 
       for (const niveauDef of cycleDef.niveaux) {
