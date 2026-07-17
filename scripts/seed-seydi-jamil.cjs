@@ -31,39 +31,44 @@ async function generateUniqueCode(field) {
 }
 
 async function main() {
-  // Vérifier si le tenant existe déjà
-  const existing = await prisma.tenant.findFirst({ where: { slug: TENANT_SLUG } });
-  if (existing) {
-    console.log(`[seed-seydi-jamil] Tenant "${TENANT_NOM}" existe déjà (id: ${existing.id})`);
-    return;
+  let tenant = await prisma.tenant.findFirst({ where: { slug: TENANT_SLUG } });
+  if (!tenant) {
+    const [codeAccesEleve, codeAccesEnseignant, codeAccesCaissier, codeAccesAdmin, codeAccesSurveillant, codeAccesRh] =
+      await Promise.all([
+        generateUniqueCode('codeAccesEleve'),
+        generateUniqueCode('codeAccesEnseignant'),
+        generateUniqueCode('codeAccesCaissier'),
+        generateUniqueCode('codeAccesAdmin'),
+        generateUniqueCode('codeAccesSurveillant'),
+        generateUniqueCode('codeAccesRh'),
+      ]);
+
+    tenant = await prisma.tenant.create({
+      data: {
+        slug: TENANT_SLUG,
+        nom: TENANT_NOM,
+        plan: 'TRIAL',
+        actif: true,
+        codeAccesEleve,
+        codeAccesEnseignant,
+        codeAccesCaissier,
+        codeAccesAdmin,
+        codeAccesSurveillant,
+        codeAccesRh,
+      },
+    });
+    console.log(`[seed-seydi-jamil] Tenant créé: ${tenant.nom} (id: ${tenant.id})`);
+  } else {
+    console.log(`[seed-seydi-jamil] Tenant "${TENANT_NOM}" existe déjà (id: ${tenant.id})`);
   }
 
-  const [codeAccesEleve, codeAccesEnseignant, codeAccesCaissier, codeAccesAdmin, codeAccesSurveillant, codeAccesRh] =
-    await Promise.all([
-      generateUniqueCode('codeAccesEleve'),
-      generateUniqueCode('codeAccesEnseignant'),
-      generateUniqueCode('codeAccesCaissier'),
-      generateUniqueCode('codeAccesAdmin'),
-      generateUniqueCode('codeAccesSurveillant'),
-      generateUniqueCode('codeAccesRh'),
-    ]);
-
-  const tenant = await prisma.tenant.create({
-    data: {
-      slug: TENANT_SLUG,
-      nom: TENANT_NOM,
-      plan: 'TRIAL',
-      actif: true,
-      codeAccesEleve,
-      codeAccesEnseignant,
-      codeAccesCaissier,
-      codeAccesAdmin,
-      codeAccesSurveillant,
-      codeAccesRh,
-    },
+  const existingAdmin = await prisma.user.findFirst({
+    where: { tenantId: tenant.id, email: ADMIN_EMAIL },
   });
-
-  console.log(`[seed-seydi-jamil] Tenant créé: ${tenant.nom} (id: ${tenant.id})`);
+  if (existingAdmin) {
+    console.log(`[seed-seydi-jamil] Admin ${ADMIN_EMAIL} existe déjà`);
+    return;
+  }
 
   const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
   await prisma.user.create({
