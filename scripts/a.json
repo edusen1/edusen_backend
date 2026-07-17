@@ -1,0 +1,772 @@
+{
+  "_id": "91e3b6309b5246368362a2dd594d4b3e",
+  "resourceType": "Encounter",
+  "meta": {
+    "versionId": "3",
+    "lastUpdated": {
+      "$date": "2026-07-17T11:19:06.538Z"
+    },
+    "source": "#4d656469636174696f6e"
+  },
+  "text": {
+    "status": "generated",
+    "div": "<div xmlns=\"http://www.w3.org/1999/xhtml\"><p><b>CONSULTATION</b></p><p><b>Patient:</b> Victorine Sady Ndiaye</p><p><b>Centre:</b> HOPITAL BANNA DIAW</p></div>"
+  },
+  "extension": [
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/organism",
+      "extension": [
+        {
+          "url": "identifier",
+          "valueString": "41002"
+        },
+        {
+          "url": "name",
+          "valueString": "HOPITAL BANNA DIAW"
+        },
+        {
+          "url": "disable",
+          "valueBoolean": false
+        }
+      ]
+    },
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/related-service",
+      "extension": [
+        {
+          "url": "identifier",
+          "valueString": "41002"
+        },
+        {
+          "url": "name",
+          "valueString": "HOPITAL BANNA DIAW"
+        },
+        {
+          "url": "disable",
+          "valueBoolean": false
+        }
+      ]
+    },
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/documents",
+      "extension": [
+        {
+          "url": "document",
+          "extension": [
+            {
+              "url": "url",
+              "valueString": "https://api-gateway.tegalhub.com/api-document/v1/si-medical/Ordonnances/ORD178428714588941303.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=lS9W0KSXkbSrfF0lXkTw%2F20260717%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260717T111906Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Signature=52527fc914cf2eaff069013cf9a90fb7562bf6031b7b7aa198a7358f820595d6"
+            },
+            {
+              "url": "originalUrl",
+              "valueString": "https://api-document.tegalhub.com/si-medical/Ordonnances/ORD178428714588941303.pdf"
+            },
+            {
+              "url": "bucketName",
+              "valueString": "si-medical"
+            },
+            {
+              "url": "sizeBytes",
+              "valueInteger": 5742
+            },
+            {
+              "url": "fileType",
+              "valueString": "application/pdf"
+            },
+            {
+              "url": "fileName",
+              "valueString": "ORD178428714588941303.pdf"
+            },
+            {
+              "url": "creationDate",
+              "valueString": "17/07/2026 11:19:06"
+            },
+            {
+              "url": "documentType",
+              "valueString": "Ordonnance"
+            },
+            {
+              "url": "documentTypeCode",
+              "valueString": "PRESCRIPTION"
+            },
+            {
+              "url": "fileId",
+              "valueInteger": 35679
+            },
+            {
+              "url": "eyoneExternalId",
+              "valueString": "MS-OR-2f0a4f1d-33a6-4200-b7d6-254f2c4b926e-20260717111903523"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/editor",
+      "extension": [
+        {
+          "url": "organism.identifier",
+          "valueString": "41002"
+        },
+        {
+          "url": "organism.name",
+          "valueString": "HOPITAL BANNA DIAW"
+        },
+        {
+          "url": "userId",
+          "valueString": "41303"
+        },
+        {
+          "url": "userName",
+          "valueString": "drfatima.dia@eyone.net"
+        },
+        {
+          "url": "completeName",
+          "valueString": "Dr Fatima Dia"
+        },
+        {
+          "url": "completeNameAndUserName",
+          "valueString": "Dr Fatima Dia drfatima.dia@eyone.net"
+        },
+        {
+          "url": "identifier",
+          "valueString": "41303"
+        },
+        {
+          "url": "doctor",
+          "valueBoolean": true
+        },
+        {
+          "url": "userDetailsInfos.hasSuperviseurRight",
+          "valueBoolean": false
+        },
+        {
+          "url": "userDetailsInfos.doctor",
+          "valueBoolean": true
+        }
+      ]
+    },
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/doctor",
+      "extension": [
+        {
+          "url": "identifier",
+          "valueInteger": 41303
+        },
+        {
+          "url": "doctorId",
+          "valueInteger": 41303
+        },
+        {
+          "url": "doctorUsername",
+          "valueString": "drfatima.dia@eyone.net"
+        },
+        {
+          "url": "doctorCompleteName",
+          "valueString": "Dr Fatima Dia"
+        },
+        {
+          "url": "ordonanceByDoctor",
+          "valueBoolean": false
+        },
+        {
+          "url": "facturedByDoctor",
+          "valueBoolean": false
+        }
+      ]
+    },
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/medical-record-file",
+      "extension": [
+        {
+          "url": "identifier",
+          "valueInteger": 35458
+        },
+        {
+          "url": "smoke",
+          "valueBoolean": false
+        },
+        {
+          "url": "cop",
+          "valueBoolean": false
+        },
+        {
+          "url": "makeSport",
+          "valueBoolean": false
+        },
+        {
+          "url": "cholesterol",
+          "valueBoolean": false
+        },
+        {
+          "url": "stress",
+          "valueBoolean": false
+        },
+        {
+          "url": "heredity",
+          "valueBoolean": false
+        },
+        {
+          "url": "inactivity",
+          "valueBoolean": false
+        },
+        {
+          "url": "saos",
+          "valueBoolean": false
+        },
+        {
+          "url": "preeclampsie",
+          "valueBoolean": false
+        },
+        {
+          "url": "doMapa",
+          "valueBoolean": false
+        },
+        {
+          "url": "doEcg",
+          "valueBoolean": false
+        },
+        {
+          "url": "doBiologie",
+          "valueBoolean": false
+        },
+        {
+          "url": "doHolterEcg",
+          "valueBoolean": false
+        },
+        {
+          "url": "doECHOCARDIOGRAPHIE",
+          "valueBoolean": false
+        },
+        {
+          "url": "imc",
+          "valueDecimal": 0
+        },
+        {
+          "url": "hasGeneralExam",
+          "valueBoolean": false
+        },
+        {
+          "url": "hasCardioVascularyExam",
+          "valueBoolean": false
+        },
+        {
+          "url": "hasBreathingExam",
+          "valueBoolean": false
+        },
+        {
+          "url": "hasDigestifExam",
+          "valueBoolean": false
+        },
+        {
+          "url": "hasUrologyExam",
+          "valueBoolean": false
+        },
+        {
+          "url": "hasGynecologyExam",
+          "valueBoolean": false
+        },
+        {
+          "url": "hasSplenoGanglionaireExam",
+          "valueBoolean": false
+        },
+        {
+          "url": "hasLocomoteurExam",
+          "valueBoolean": false
+        },
+        {
+          "url": "hasNeurologicalExam",
+          "valueBoolean": false
+        },
+        {
+          "url": "hasBuccodentaireExam",
+          "valueBoolean": false
+        },
+        {
+          "url": "hasDermatoExam",
+          "valueBoolean": false
+        },
+        {
+          "url": "hasPilgrimFile",
+          "valueBoolean": false
+        },
+        {
+          "url": "hasGenitalExam",
+          "valueBoolean": false
+        },
+        {
+          "url": "referTo",
+          "valueBoolean": false
+        },
+        {
+          "url": "fit",
+          "valueBoolean": false
+        }
+      ]
+    },
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/medical-act-category",
+      "extension": [
+        {
+          "url": "code",
+          "valueString": "CONSULTATION"
+        },
+        {
+          "url": "label",
+          "valueString": "Consultation"
+        },
+        {
+          "url": "evacuation",
+          "valueBoolean": false
+        },
+        {
+          "url": "modeleItem",
+          "valueBoolean": false
+        },
+        {
+          "url": "medicalExam",
+          "valueBoolean": false
+        },
+        {
+          "url": "pharmacyAsPrestation",
+          "valueBoolean": false
+        },
+        {
+          "url": "hospitalization",
+          "valueBoolean": false
+        },
+        {
+          "url": "analysis",
+          "valueBoolean": false
+        },
+        {
+          "url": "radiology",
+          "valueBoolean": false
+        },
+        {
+          "url": "quote",
+          "valueBoolean": false
+        },
+        {
+          "url": "all",
+          "valueBoolean": false
+        },
+        {
+          "url": "editable",
+          "valueBoolean": false
+        },
+        {
+          "url": "room",
+          "valueBoolean": false
+        },
+        {
+          "url": "medoc",
+          "valueBoolean": false
+        },
+        {
+          "url": "modele",
+          "valueBoolean": false
+        },
+        {
+          "url": "visit",
+          "valueBoolean": false
+        },
+        {
+          "url": "ambulatory",
+          "valueBoolean": false
+        },
+        {
+          "url": "consultation",
+          "valueBoolean": true
+        }
+      ]
+    },
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/status-details",
+      "extension": [
+        {
+          "url": "code",
+          "valueString": "ON_GOING"
+        },
+        {
+          "url": "label",
+          "valueString": "En cours"
+        },
+        {
+          "url": "done",
+          "valueBoolean": false
+        },
+        {
+          "url": "onGoing",
+          "valueBoolean": true
+        },
+        {
+          "url": "cancelled",
+          "valueBoolean": false
+        },
+        {
+          "url": "created",
+          "valueBoolean": false
+        },
+        {
+          "url": "notPerformed",
+          "valueBoolean": false
+        },
+        {
+          "url": "toBeConfirmed",
+          "valueBoolean": false
+        },
+        {
+          "url": "notAccepted",
+          "valueBoolean": false
+        },
+        {
+          "url": "unavailable",
+          "valueBoolean": false
+        }
+      ]
+    },
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/prestation-payment-status",
+      "extension": [
+        {
+          "url": "code",
+          "valueString": "NOT_PAYED"
+        },
+        {
+          "url": "label",
+          "valueString": "Non Payé"
+        },
+        {
+          "url": "totallyPayed",
+          "valueBoolean": false
+        },
+        {
+          "url": "paying",
+          "valueBoolean": false
+        },
+        {
+          "url": "notPayed",
+          "valueBoolean": true
+        },
+        {
+          "url": "payedWithReject",
+          "valueBoolean": false
+        }
+      ]
+    },
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/denomination",
+      "valueString": "CONSULTATION"
+    },
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/start-date-as-str",
+      "valueString": "17/07/2026 11:14"
+    },
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/start-date",
+      "valueString": "17/07/2026 11:14"
+    },
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/pharmacy-sell-prestation",
+      "extension": [
+        {
+          "url": "identifier",
+          "valueInteger": 35458
+        },
+        {
+          "url": "disable",
+          "valueBoolean": false
+        },
+        {
+          "url": "nbrProducts",
+          "valueInteger": 0
+        },
+        {
+          "url": "commentary",
+          "valueString": "Pharmacie"
+        },
+        {
+          "url": "pharmacyBillingMode.code",
+          "valueString": "DETAIL"
+        },
+        {
+          "url": "pharmacyBillingMode.label",
+          "valueString": "Saisie des produits unitairement"
+        },
+        {
+          "url": "pharmacyBillingMode.scope",
+          "valueString": "Médicaments en particuliers"
+        },
+        {
+          "url": "pharmacyBillingMode.global",
+          "valueBoolean": false
+        },
+        {
+          "url": "pharmacyBillingMode.detail",
+          "valueBoolean": true
+        },
+        {
+          "url": "usedAsAPrestation",
+          "valueBoolean": false
+        },
+        {
+          "url": "manageStock",
+          "valueBoolean": false
+        },
+        {
+          "url": "documentGenerationRequired2",
+          "valueBoolean": false
+        }
+      ]
+    },
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/tooth-prestation",
+      "valueBoolean": false
+    },
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/first-medical-sell-prestation",
+      "valueBoolean": true
+    },
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/first-consultation",
+      "valueBoolean": true
+    },
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/tele-prestation",
+      "valueBoolean": false
+    },
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/create-by-queue",
+      "valueBoolean": false
+    },
+    {
+      "url": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/creation-date",
+      "valueString": "17/07/2026 11:14:11"
+    }
+  ],
+  "identifier": [
+    {
+      "use": "usual",
+      "system": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/identifier",
+      "value": "38809",
+      "type": {
+        "coding": [
+          {
+            "system": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/identifier",
+            "code": "ID"
+          }
+        ]
+      }
+    },
+    {
+      "use": "usual",
+      "system": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/identifier/eyoneInternalId",
+      "value": "CSMED202600063",
+      "type": {
+        "coding": [
+          {
+            "system": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/identifier/eyoneInternalId",
+            "code": "EYIN",
+            "display": "eyone Internal ID"
+          }
+        ],
+        "text": "eyone Internal ID"
+      }
+    },
+    {
+      "use": "usual",
+      "system": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/customId",
+      "value": "CSMED202600063",
+      "type": {
+        "coding": [
+          {
+            "system": "https://fhir.eyone.net/yonewi_fhir_r5/StructureDefinition/customId",
+            "code": "EYCU",
+            "display": "Custom ID"
+          }
+        ],
+        "text": "Custom ID"
+      }
+    }
+  ],
+  "status": "completed",
+  "encounterClass": [
+    {
+      "coding": [
+        {
+          "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+          "code": "AMB",
+          "display": "ambulatory"
+        }
+      ],
+      "text": "ambulatory"
+    }
+  ],
+  "serviceType": [
+    {
+      "concept": {
+        "coding": [
+          {
+            "system": "http://terminology.hl7.org/CodeSystem/service-type",
+            "code": "124",
+            "display": "General Practice"
+          },
+          {
+            "system": "https://fhir.eyone.net/yonewi_fhir/CodeSystem/service-type",
+            "code": "CONSULTATION_SPECIALIZED",
+            "display": "CONSULTATION"
+          }
+        ],
+        "text": "General Practice / Specialized Consultation"
+      }
+    }
+  ],
+  "subject": {
+    "reference": "Patient/21453",
+    "type": "Patient",
+    "display": "Victorine Sady Ndiaye",
+    "identifier": {
+      "system": "https://fhir.eyone.net/identifier/identifier-pix",
+      "value": "21453"
+    },
+    "extensions": [
+      {
+        "url": "https://fhir.eyone.net/identifier/identifier-pix",
+        "extension": [
+          {
+            "url": "identifier",
+            "valueString": "21453"
+          },
+          {
+            "url": "eyoneExternalId",
+            "valueString": "PATB-Patient-7287977b-3bee-44bd-a1af-40425c930ec4-20260717111351453"
+          },
+          {
+            "url": "eyoneInternalId",
+            "valueString": "PATB-Patient-7287977b-3bee-44bd-a1af-40425c930ec4-20260717111351453"
+          },
+          {
+            "url": "customId",
+            "valueString": "PATB-Patient-7287977b-3bee-44bd-a1af-40425c930ec4-20260717111351453"
+          },
+          {
+            "url": "patient-firstName",
+            "valueString": "Victorine Sady"
+          },
+          {
+            "url": "patient-lastName",
+            "valueString": "Ndiaye"
+          },
+          {
+            "url": "patient-fullName",
+            "valueString": "Victorine Sady Ndiaye"
+          },
+          {
+            "url": "passportMedical",
+            "valueString": "PM2946684800000SN2VicNd-fec57027-5ac7-48e8-a8d0-c2e35f47be5b20260717111007585"
+          },
+          {
+            "url": "uniqueHealthNumber",
+            "valueString": "SN2661SP078M"
+          }
+        ]
+      }
+    ]
+  },
+  "actualPeriod": {
+    "start": "17/07/2026 11:14",
+    "end": "17/07/2026 11:14"
+  },
+  "serviceProvider": {
+    "reference": "Organization/41002",
+    "display": "HOPITAL BANNA DIAW",
+    "identifier": {
+      "system": "https://fhir.eyone.net/identifier/organization",
+      "value": "41002"
+    }
+  },
+  "participant": [
+    {
+      "role": {
+        "coding": [
+          {
+            "system": "http://terminology.hl7.org/CodeSystem/v3-RoleCode",
+            "code": "ATND",
+            "display": "attender"
+          }
+        ],
+        "text": "attender"
+      },
+      "actor": {
+        "reference": "Practitioner/41303",
+        "display": "Dr Fatima Dia"
+      }
+    },
+    {
+      "role": {
+        "coding": [
+          {
+            "system": "http://terminology.hl7.org/CodeSystem/v3-RoleCode",
+            "code": "ENT",
+            "display": "enterer"
+          }
+        ],
+        "text": "enterer"
+      },
+      "actor": {
+        "reference": "Practitioner/41303",
+        "display": "Dr Fatima Dia"
+      }
+    }
+  ],
+  "location": [
+    {
+      "location": {
+        "reference": "Location/41002",
+        "display": "HOPITAL BANNA DIAW",
+        "identifier": {
+          "system": "https://fhir.eyone.net/identifier/organization",
+          "value": "41002"
+        }
+      },
+      "status": "active"
+    }
+  ],
+  "insurance": [],
+  "account": [],
+  "reason": [
+    {
+      "use": [
+        {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/encounter-reason-use",
+              "code": "CC",
+              "display": "Chief Complaint"
+            }
+          ],
+          "text": "Chief Complaint"
+        }
+      ],
+      "value": [
+        {
+          "concept": {
+            "text": "CONSULTATION"
+          }
+        }
+      ]
+    }
+  ],
+  "document": {
+    "$ref": "document_reference_fhir_preprod",
+    "$id": "45a6b6776de149d398edc5f32a252599"
+  },
+  "createdAt": {
+    "$date": "2026-07-17T11:14:14.783Z"
+  },
+  "updatedAt": {
+    "$date": "2026-07-17T11:19:06.804Z"
+  },
+  "_class": "net.eyone.yonewi.fhir.domain.models.registernational.fhir.EncounterFhir"
+}

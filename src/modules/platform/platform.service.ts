@@ -331,7 +331,7 @@ export class PlatformService {
           { code: 'CM1', libelle: 'CM1', ordre: 5 },
           { code: 'CM2', libelle: 'CM2', ordre: 6 },
         ] },
-      { code: 'COLLEGE', libelle: 'Collège', typePeriode: 'TRIMESTRE', moyenneMaximale: 20,
+      { code: 'COLLEGE', libelle: 'Collège', typePeriode: 'SEMESTRE', moyenneMaximale: 20,
         niveaux: [
           { code: '6EME', libelle: '6ème', ordre: 1 },
           { code: '5EME', libelle: '5ème', ordre: 2 },
