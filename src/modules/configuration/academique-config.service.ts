@@ -88,6 +88,7 @@ type NiveauRow = {
   cycle: {
     id: string;
     libelle: string;
+    ordre: number;
   };
 };
 
@@ -245,18 +246,18 @@ export class AcademiqueConfigService {
     const CYCLES = [
       { code: 'PRESCOLAIRE', libelle: 'Préscolaire', ordre: 1, typePeriode: 'TRIMESTRE', moyenneMaximale: 10,
         niveaux: [
-          { code: 'PS', libelle: 'Petite Section', ordre: 1 },
-          { code: 'MS', libelle: 'Moyenne Section', ordre: 2 },
-          { code: 'GS', libelle: 'Grande Section', ordre: 3 },
+          { code: 'PS', libelle: 'Petite Section', moyennePassage: 5, ordre: 1 },
+          { code: 'MS', libelle: 'Moyenne Section', moyennePassage: 5, ordre: 2 },
+          { code: 'GS', libelle: 'Grande Section', moyennePassage: 5, ordre: 3 },
         ] },
       { code: 'PRIMAIRE', libelle: 'Primaire', ordre: 2, typePeriode: 'TRIMESTRE', moyenneMaximale: 10,
         niveaux: [
-          { code: 'CI', libelle: 'CI', ordre: 1 },
-          { code: 'CP', libelle: 'CP', ordre: 2 },
-          { code: 'CE1', libelle: 'CE1', ordre: 3 },
-          { code: 'CE2', libelle: 'CE2', ordre: 4 },
-          { code: 'CM1', libelle: 'CM1', ordre: 5 },
-          { code: 'CM2', libelle: 'CM2', ordre: 6 },
+          { code: 'CI', libelle: 'CI', moyennePassage: 5, ordre: 1 },
+          { code: 'CP', libelle: 'CP', moyennePassage: 5, ordre: 2 },
+          { code: 'CE1', libelle: 'CE1', moyennePassage: 5, ordre: 3 },
+          { code: 'CE2', libelle: 'CE2', moyennePassage: 5, ordre: 4 },
+          { code: 'CM1', libelle: 'CM1', moyennePassage: 5, ordre: 5 },
+          { code: 'CM2', libelle: 'CM2', moyennePassage: 5, ordre: 6 },
         ] },
       { code: 'COLLEGE', libelle: 'Collège', ordre: 3, typePeriode: 'SEMESTRE', moyenneMaximale: 20,
         niveaux: [
@@ -285,7 +286,7 @@ export class AcademiqueConfigService {
           const existingNiveau = await this.prisma.niveau.findFirst({ where: { tenantId, code: niveauDef.code } });
           if (!existingNiveau) {
             await this.prisma.niveau.create({
-              data: { tenantId, cycleId: existing.id, code: niveauDef.code, libelle: niveauDef.libelle, ordre: niveauDef.ordre, seeded: true, actif: true },
+              data: { tenantId, cycleId: existing.id, code: niveauDef.code, libelle: niveauDef.libelle, ordre: niveauDef.ordre, moyennePassage: 'moyennePassage' in niveauDef ? niveauDef.moyennePassage : 10, seeded: true, actif: true },
             });
           } else if (!existingNiveau.seeded) {
             await this.prisma.niveau.update({ where: { id: existingNiveau.id }, data: { seeded: true } });
@@ -300,7 +301,7 @@ export class AcademiqueConfigService {
 
       for (const niveauDef of cycleDef.niveaux) {
         await this.prisma.niveau.create({
-          data: { tenantId, cycleId: cycle.id, code: niveauDef.code, libelle: niveauDef.libelle, ordre: niveauDef.ordre, seeded: true, actif: true },
+          data: { tenantId, cycleId: cycle.id, code: niveauDef.code, libelle: niveauDef.libelle, ordre: niveauDef.ordre, moyennePassage: 'moyennePassage' in niveauDef ? niveauDef.moyennePassage : 10, seeded: true, actif: true },
         });
       }
     }
@@ -377,8 +378,8 @@ export class AcademiqueConfigService {
 
     const rows = (await this.prisma.niveau.findMany({
       where: { tenantId, ...(sectionId ? { cycleId: sectionId } : {}) },
-      include: { cycle: { select: { id: true, libelle: true, typePeriode: true } } },
-      orderBy: [{ ordre: 'asc' }, { libelle: 'asc' }],
+      include: { cycle: { select: { id: true, libelle: true, ordre: true, typePeriode: true } } },
+      orderBy: [{ cycle: { ordre: 'desc' } }, { ordre: 'desc' }, { libelle: 'asc' }],
     })) as NiveauRow[];
     return rows.map((n: NiveauRow) => ({
       id: n.id,
