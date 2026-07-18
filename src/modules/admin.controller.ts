@@ -26,6 +26,7 @@ import type { JwtUser } from '@/common/types/auth.types';
 import { LegacyCrudService } from '@/modules/legacy-crud.service';
 import { PrismaService } from '@/config/prisma.service';
 import { AuthService } from '@/modules/auth/auth.service';
+import { StorageService } from '@/infrastructure/storage/storage.service';
 import type { MultipartFastifyRequest } from '@/common/types/multipart-request.types';
 import { EcoleConfigService } from '@/modules/configuration/ecole-config.service';
 import { UpdateEcoleConfigDto } from '@/modules/configuration/dto/update-ecole-config.dto';
@@ -75,6 +76,7 @@ export class AdminController {
     private readonly communications: CommunicationService,
     private readonly rapportDocument: RapportDocumentService,
     private readonly programmeService: ProgrammeService,
+    private readonly storage: StorageService,
   ) {}
 
   private resolveTenantId(tenantId: string | undefined, user?: JwtUser) {
@@ -2178,5 +2180,185 @@ export class AdminController {
   @Patch('absences-personnel-list/:id/rejeter')
   async rejeterAbsencePersonnel2(@Param('id') id: string, @Body() body: { motifRefus?: string }) {
     return this.prisma.absencePersonnel.update({ where: { id }, data: { statut: 'REJETEE', motifRefus: body.motifRefus || null } });
+  }
+
+  // ── Déclaration d'absence par l'admin (enseignants / personnel / élèves) ─────
+  //
+  // Une absence déclarée par l'admin est directement APPROUVEE (l'admin est
+  // l'autorité). Les justificatifs sont stockés sous forme d'URLs séparées par
+  // des virgules (1..N documents), conformément à la convention existante.
+
+  /** Concatène 1..N URLs de justificatifs en une chaîne séparée par des virgules. */
+  private joinJustificatifs(v: unknown): string | null {
+    const parts = Array.isArray(v)
+      ? v.map(String)
+      : typeof v === 'string'
+        ? v.split(',')
+        : [];
+    const cleaned = parts.map((s) => s.trim()).filter(Boolean);
+    return cleaned.length > 0 ? cleaned.join(',') : null;
+  }
+
+  /** Upload générique d'un justificatif d'absence (multipart) vers le stockage. */
+  private async storeJustificatif(
+    req: MultipartFastifyRequest,
+    tenantId: string,
+    folder: string,
+    userId: string | undefined,
+  ): Promise<{ justificatifUrl: string; key: string }> {
+    if (!req.isMultipart?.()) throw new BadRequestException('La requête doit être multipart/form-data');
+    const file = await req.file();
+    if (!file) throw new BadRequestException('Aucun fichier fourni');
+    const allowed = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+    if (!allowed.includes(file.mimetype)) {
+      throw new BadRequestException('Format non supporté. Utilisez PDF, JPEG, PNG ou WebP.');
+    }
+    const buffer = await file.toBuffer();
+    if (buffer.length > 10_000_000) throw new BadRequestException('Fichier trop volumineux (max 10 Mo)');
+    const annee = String(new Date().getFullYear());
+    const key = this.storage.buildDocumentKey(tenantId, folder, annee, userId ?? 'admin', file.filename || 'justificatif.pdf');
+    const stored = await this.storage.upload(key, buffer, file.mimetype);
+    const url = stored.startsWith('http') ? stored : this.storage.buildPublicAccessUrl(stored);
+    return { justificatifUrl: url, key };
+  }
+
+  // Enseignants -----------------------------------------------------------------
+  @Roles('ADMIN')
+  @Post('absences-enseignants/justificatif')
+  @HttpCode(HttpStatus.OK)
+  async uploadAbsenceEnseignantJustificatif(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Req() req: MultipartFastifyRequest,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = (tenantId?.trim() || user?.tenantId)!;
+    return this.storeJustificatif(req, tid, 'justificatifs/absences-enseignants', user?.sub);
+  }
+
+  @Roles('ADMIN')
+  @Post('absences-enseignants')
+  @HttpCode(HttpStatus.CREATED)
+  async createAbsenceEnseignant(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = (tenantId?.trim() || user?.tenantId)!;
+    const enseignantId = String(body.enseignantId ?? '').trim();
+    if (!enseignantId) throw new BadRequestException('enseignantId requis');
+    if (!body.dateDebut || !body.dateFin) throw new BadRequestException('Dates de début et de fin requises');
+    const enseignant = await this.prisma.user.findFirst({
+      where: { id: enseignantId, tenantId: tid, role: 'ENSEIGNANT' },
+      select: { id: true },
+    });
+    if (!enseignant) throw new NotFoundException('Enseignant introuvable');
+    const docs = this.joinJustificatifs(body.documentJustificatifUrl);
+    return this.prisma.absenceEnseignant.create({
+      data: {
+        tenantId: tid,
+        enseignantId,
+        dateDebut: new Date(String(body.dateDebut)),
+        dateFin: new Date(String(body.dateFin)),
+        heureDebut: body.heureDebut ? String(body.heureDebut) : null,
+        heureFin: body.heureFin ? String(body.heureFin) : null,
+        typeAbsence: body.typeAbsence ? String(body.typeAbsence) : 'AUTRE',
+        motif: String(body.motif ?? '').trim(),
+        statut: 'APPROUVEE',
+        justifiee: !!docs,
+        documentJustificatifUrl: docs,
+      },
+    });
+  }
+
+  // Personnel -------------------------------------------------------------------
+  private static readonly TYPE_ABSENCE_PERSONNEL = ['MALADIE', 'CONGE', 'SANS_SOLDE', 'AUTRE'];
+
+  /** Liste du personnel (non-enseignant) pour le sélecteur de déclaration. */
+  @Roles('ADMIN', 'RH')
+  @Get('absences-personnel-list/personnels')
+  async listPersonnelsForDeclaration(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = (tenantId?.trim() || user?.tenantId)!;
+    const rows = await this.prisma.personnel.findMany({
+      where: { tenantId: tid, utilisateur: { actif: true } },
+      select: {
+        id: true,
+        utilisateurId: true,
+        utilisateur: { select: { firstName: true, lastName: true, role: true } },
+      },
+    });
+    return rows
+      .map((p) => ({
+        personnelId: p.id,
+        userId: p.utilisateurId,
+        nom: `${p.utilisateur?.firstName ?? ''} ${p.utilisateur?.lastName ?? ''}`.trim() || 'Personnel',
+        role: p.utilisateur?.role ?? null,
+      }))
+      .sort((a, b) => a.nom.localeCompare(b.nom));
+  }
+
+  @Roles('ADMIN', 'RH')
+  @Post('absences-personnel-list/justificatif')
+  @HttpCode(HttpStatus.OK)
+  async uploadAbsencePersonnelJustificatif(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Req() req: MultipartFastifyRequest,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = (tenantId?.trim() || user?.tenantId)!;
+    return this.storeJustificatif(req, tid, 'justificatifs/absences-personnel', user?.sub);
+  }
+
+  @Roles('ADMIN', 'RH')
+  @Post('absences-personnel-list')
+  @HttpCode(HttpStatus.CREATED)
+  async createAbsencePersonnelDecl(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = (tenantId?.trim() || user?.tenantId)!;
+    const personnelId = String(body.personnelId ?? '').trim();
+    if (!personnelId) throw new BadRequestException('personnelId requis');
+    if (!body.dateDebut || !body.dateFin) throw new BadRequestException('Dates de début et de fin requises');
+    const personnel = await this.prisma.personnel.findFirst({
+      where: { id: personnelId, tenantId: tid },
+      select: { id: true, utilisateurId: true },
+    });
+    if (!personnel) throw new NotFoundException('Personnel introuvable');
+    const type = String(body.typeAbsence ?? 'AUTRE');
+    const typeAbsence = (AdminController.TYPE_ABSENCE_PERSONNEL.includes(type) ? type : 'AUTRE') as never;
+    const docs = this.joinJustificatifs(body.justificatifUrl ?? body.documentJustificatifUrl);
+    return this.prisma.absencePersonnel.create({
+      data: {
+        tenantId: tid,
+        personnelId: personnel.id,
+        userId: personnel.utilisateurId,
+        dateDebut: new Date(String(body.dateDebut)),
+        dateFin: new Date(String(body.dateFin)),
+        heureDebut: body.heureDebut ? String(body.heureDebut) : null,
+        heureFin: body.heureFin ? String(body.heureFin) : null,
+        typeAbsence,
+        motif: body.motif ? String(body.motif).trim() : null,
+        statut: 'APPROUVEE',
+        validePar: user?.sub ?? null,
+        justificatifUrl: docs,
+      },
+    });
+  }
+
+  // Élèves ----------------------------------------------------------------------
+  @Roles('ADMIN', 'SURVEILLANT')
+  @Post('absences-eleves/justificatif')
+  @HttpCode(HttpStatus.OK)
+  async uploadAbsenceEleveJustificatif(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Req() req: MultipartFastifyRequest,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = (tenantId?.trim() || user?.tenantId)!;
+    return this.storeJustificatif(req, tid, 'justificatifs/absences-eleves', user?.sub);
   }
 }
