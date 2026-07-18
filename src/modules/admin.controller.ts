@@ -1778,6 +1778,9 @@ export class AdminController {
     const where: Record<string, unknown> = { tenantId: tid, statut: { not: 'ANNULE' } };
     if (query.eleveId) where.eleveId = query.eleveId;
     if (query.classeId) where.classeId = query.classeId;
+    if (query.enseignantId) where.enseignantId = query.enseignantId;
+    if (query.personnelId) where.personnelId = query.personnelId;
+    if (query.sujetType) where.sujetType = query.sujetType;
     if (query.statut) where.statut = query.statut; // Override default filter if explicit
     if (query.type) where.type = query.type;
     if (query.rapporteurRole) where.rapporteurRole = query.rapporteurRole;
@@ -1798,8 +1801,12 @@ export class AdminController {
   ) {
     const tid = await this.resolveTenantId(tenantId, user);
     if (!tid) throw new BadRequestException('Tenant introuvable');
+    const sujetType = ['ELEVE', 'ENSEIGNANT', 'PERSONNEL'].includes(String(body.sujetType))
+      ? String(body.sujetType)
+      : 'ELEVE';
     const createData: Record<string, unknown> = {
       tenantId: tid,
+      sujetType,
       eleveNom: String(body.eleveNom ?? ''),
       motif: String(body.motif ?? ''),
       dateIncident: body.dateIncident ? new Date(String(body.dateIncident)) : new Date(),
@@ -1809,6 +1816,8 @@ export class AdminController {
     };
     if (body.eleveId) createData.eleveId = String(body.eleveId);
     if (body.classeId) createData.classeId = String(body.classeId);
+    if (body.enseignantId) createData.enseignantId = String(body.enseignantId);
+    if (body.personnelId) createData.personnelId = String(body.personnelId);
     if (body.eleveClasse) createData.eleveClasse = String(body.eleveClasse);
     if (body.rapporteur) createData.rapporteur = String(body.rapporteur);
     if (body.rapporteurRole) createData.rapporteurRole = String(body.rapporteurRole);

@@ -1648,8 +1648,11 @@ model Discipline {
   id              String           @id @default(uuid()) @db.Uuid
   tenantId        String           @db.Uuid
   tenant          Tenant           @relation(fields: [tenantId], references: [id])
+  sujetType       SujetIncidentType @default(ELEVE)
   eleveId         String?          @db.Uuid
   classeId        String?          @db.Uuid
+  enseignantId    String?          @db.Uuid
+  personnelId     String?          @db.Uuid
   eleveNom        String           @db.VarChar(200)
   eleveClasse     String?          @db.VarChar(100)
   type            TypeSanction     @default(AVERTISSEMENT)
@@ -1669,4 +1672,11 @@ model Discipline {
   @@index([tenantId, statut])
   @@index([tenantId, dateIncident])
   @@index([tenantId, signaleParId])
+  @@index([tenantId, sujetType])
+}
+
+enum SujetIncidentType {
+  ELEVE
+  ENSEIGNANT
+  PERSONNEL
 }
