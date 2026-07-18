@@ -60,7 +60,7 @@ export interface CalendrierScolaireResponse {
   heureFin?: string | null;
   type: string;
   statut: string;
-  visibilite: string;
+  visibilites: string[];
   classeId?: string | null;
   niveauId?: string | null;
   couleur?: string | null;
@@ -514,6 +514,24 @@ export class AcademiqueConfigService {
   // Calendrier scolaire
   // ----------------------------------------------------------------
 
+  private static readonly VISIBILITE_VALUES = [
+    'TOUS', 'ADMIN', 'ENSEIGNANTS', 'PARENTS', 'ELEVES', 'SURVEILLANTS', 'CAISSE', 'RH',
+  ];
+
+  /**
+   * Normalise la liste des acteurs ciblés par un événement.
+   * - filtre les valeurs inconnues ;
+   * - déduplique ;
+   * - si « TOUS » est présent (ou liste vide) → renvoie ['TOUS'].
+   */
+  private normalizeVisibilites(input?: string[] | null): string[] {
+    const cleaned = Array.from(
+      new Set((input ?? []).map((v) => String(v).toUpperCase().trim())),
+    ).filter((v) => AcademiqueConfigService.VISIBILITE_VALUES.includes(v));
+    if (cleaned.length === 0 || cleaned.includes('TOUS')) return ['TOUS'];
+    return cleaned;
+  }
+
   async getCalendrier(tenantId: string, sectionId?: string): Promise<CalendrierScolaireResponse[]> {
     await this.assertTenantExists(tenantId);
     const rows = await this.prisma.calendrierScolaire.findMany({
@@ -536,7 +554,7 @@ export class AcademiqueConfigService {
       heureFin?: string | null;
       type?: string;
       statut?: string;
-      visibilite?: string;
+      visibilites?: string[];
       classeId?: string | null;
       niveauId?: string | null;
       couleur?: string | null;
@@ -557,7 +575,7 @@ export class AcademiqueConfigService {
         heureFin: dto.heureFin || null,
         type: (dto.type as never) || 'AUTRE',
         statut: (dto.statut as never) || 'PLANIFIE',
-        visibilite: (dto.visibilite as never) || 'TOUS',
+        visibilites: this.normalizeVisibilites(dto.visibilites) as never,
         classeId: dto.classeId || null,
         niveauId: dto.niveauId || null,
         couleur: dto.couleur || null,
@@ -585,7 +603,7 @@ export class AcademiqueConfigService {
       heureFin: string | null;
       type: string;
       statut: string;
-      visibilite: string;
+      visibilites: string[];
       classeId: string | null;
       niveauId: string | null;
       couleur: string | null;
@@ -607,7 +625,7 @@ export class AcademiqueConfigService {
     if (dto.heureFin !== undefined) data.heureFin = dto.heureFin || null;
     if (dto.type !== undefined) data.type = dto.type || 'AUTRE';
     if (dto.statut !== undefined) data.statut = dto.statut || 'PLANIFIE';
-    if (dto.visibilite !== undefined) data.visibilite = dto.visibilite || 'TOUS';
+    if (dto.visibilites !== undefined) data.visibilites = this.normalizeVisibilites(dto.visibilites);
     if (dto.classeId !== undefined) data.classeId = dto.classeId || null;
     if (dto.niveauId !== undefined) data.niveauId = dto.niveauId || null;
     if (dto.couleur !== undefined) data.couleur = dto.couleur || null;
@@ -1033,7 +1051,7 @@ export class AcademiqueConfigService {
       heureFin: (row.heureFin as string) ?? null,
       type: (row.type as string) ?? 'AUTRE',
       statut: (row.statut as string) ?? 'PLANIFIE',
-      visibilite: (row.visibilite as string) ?? 'TOUS',
+      visibilites: this.normalizeVisibilites(row.visibilites as string[] | undefined),
       classeId: (row.classeId as string) ?? null,
       niveauId: (row.niveauId as string) ?? null,
       couleur: (row.couleur as string) ?? null,
@@ -1127,7 +1145,7 @@ export class AcademiqueConfigService {
               dateDebut: new Date(h.date),
               type: 'JOUR_FERIE',
               statut: 'CONFIRME',
-              visibilite: 'TOUS',
+              visibilites: ['TOUS'],
               important: true,
             },
           });

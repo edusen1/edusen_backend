@@ -1484,10 +1484,13 @@ enum StatutEvenement {
 
 enum VisibiliteEvenement {
   TOUS
-  ADMIN_ONLY
+  ADMIN
   ENSEIGNANTS
   PARENTS
   ELEVES
+  SURVEILLANTS
+  CAISSE
+  RH
 }
 
 model CalendrierScolaire {
@@ -1504,7 +1507,7 @@ model CalendrierScolaire {
   heureFin    String?                   @db.VarChar(5)
   type        TypeEvenementCalendrier   @default(AUTRE)
   statut      StatutEvenement           @default(PLANIFIE)
-  visibilite  VisibiliteEvenement       @default(TOUS)
+  visibilites VisibiliteEvenement[]     @default([TOUS])
   classeId    String?                   @db.Uuid
   niveauId    String?                   @db.Uuid
   couleur     String?                   @db.VarChar(7)

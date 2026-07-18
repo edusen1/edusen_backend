@@ -1077,7 +1077,23 @@ export class AdminController {
     return this.academiqueConfig.saveFrais(tid!, dto);
   }
 
-  @Roles('ADMIN')
+  /**
+   * Normalise la visibilité d'un événement calendrier en tableau d'acteurs.
+   * Accepte un tableau (`visibilites`), une valeur unique, ou l'ancien champ
+   * `visibilite` (rétro-compatibilité). Défaut : ['TOUS'].
+   */
+  private parseVisibilites(raw: unknown, legacy?: unknown): string[] {
+    const source: unknown[] = Array.isArray(raw)
+      ? raw
+      : raw != null && raw !== ''
+        ? [raw]
+        : legacy != null && legacy !== ''
+          ? [legacy]
+          : [];
+    const list = source.map((v) => String(v).toUpperCase().trim()).filter(Boolean);
+    return list.length > 0 ? list : ['TOUS'];
+  }
+
   @Roles('ADMIN')
   @Get('configuration/calendrier-scolaire')
   getCalendrierScolaire(
@@ -1107,7 +1123,7 @@ export class AdminController {
       heureFin: body.heureFin ? String(body.heureFin) : null,
       type: body.type ? String(body.type) : 'AUTRE',
       statut: body.statut ? String(body.statut) : 'PLANIFIE',
-      visibilite: body.visibilite ? String(body.visibilite) : 'TOUS',
+      visibilites: this.parseVisibilites(body.visibilites, body.visibilite),
       classeId: body.classeId ? String(body.classeId) : null,
       niveauId: body.niveauId ? String(body.niveauId) : null,
       couleur: body.couleur ? String(body.couleur) : null,
@@ -1134,7 +1150,10 @@ export class AdminController {
       heureFin: body.heureFin !== undefined ? (body.heureFin ? String(body.heureFin) : null) : undefined,
       type: body.type !== undefined ? String(body.type) : undefined,
       statut: body.statut !== undefined ? String(body.statut) : undefined,
-      visibilite: body.visibilite !== undefined ? String(body.visibilite) : undefined,
+      visibilites:
+        body.visibilites !== undefined || body.visibilite !== undefined
+          ? this.parseVisibilites(body.visibilites, body.visibilite)
+          : undefined,
       classeId: body.classeId !== undefined ? (body.classeId ? String(body.classeId) : null) : undefined,
       niveauId: body.niveauId !== undefined ? (body.niveauId ? String(body.niveauId) : null) : undefined,
       couleur: body.couleur !== undefined ? (body.couleur ? String(body.couleur) : null) : undefined,
