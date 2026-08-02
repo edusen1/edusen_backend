@@ -1,8 +1,8 @@
 {
-  "name": "nouraschool-backend-nestjs",
+  "name": "edusen-backend",
   "version": "1.0.0",
   "private": true,
-  "description": "Migration complete Noura School backend vers NestJS",
+  "description": "Edusen — backend NestJS multi-tenant pour la gestion scolaire",
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build && tsc-alias -p tsconfig.build.json",

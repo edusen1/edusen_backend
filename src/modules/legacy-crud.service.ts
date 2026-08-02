@@ -2826,7 +2826,7 @@ export class LegacyCrudService {
     const audience = explicitAudience ?? this.roleCredentialAudience(String(user.role ?? ''));
     const loginIdentifier = this.buildPreferredLoginIdentifier(user);
     const message = [
-      `NouraSchool - Accès ${audience}`,
+      `Edusen - Accès ${audience}`,
       `Identifiant: ${loginIdentifier}`,
       `Mot de passe provisoire: ${tempPassword}`,
       'Vous devrez modifier ce mot de passe lors de votre première connexion.',
@@ -3368,7 +3368,7 @@ export class LegacyCrudService {
       .map((word) => word[0])
       .join('');
 
-    return initials || compact.slice(0, 15) || 'nouraschool';
+    return initials || compact.slice(0, 15) || 'edusen';
   }
 
   private validateModelUuids(model: string, data: Payload): void {

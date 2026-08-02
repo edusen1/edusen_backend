@@ -99,7 +99,7 @@ export class SchoolCardDocumentService implements OnModuleDestroy {
     if (!user) throw new NotFoundException('Utilisateur introuvable');
 
     const issuedAt = new Date().toISOString();
-    const qrPayload = { type: 'NOURASCHOOL_ID_CARD', tenantId, userId: user.id, role: user.role, matricule: user.matricule ?? null, issuedAt };
+    const qrPayload = { type: 'EDUSEN_ID_CARD', tenantId, userId: user.id, role: user.role, matricule: user.matricule ?? null, issuedAt };
     const qrDataUrl = await QRCode.toDataURL(JSON.stringify(qrPayload), { width: 220, margin: 1, color: { dark: '#0f172a', light: '#ffffff' } });
 
     const name = `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() || 'Élève';

@@ -139,8 +139,8 @@ async function bootstrap(): Promise<void> {
   app.setGlobalPrefix('api');
 
   const config = new DocumentBuilder()
-    .setTitle('NouraSchool API')
-    .setDescription('Migration complète vers NestJS + Fastify')
+    .setTitle('Edusen API')
+    .setDescription('Backend multi-tenant pour la gestion scolaire')
     .setVersion('1.0.0')
     .addBearerAuth()
     .build();
@@ -155,7 +155,7 @@ async function bootstrap(): Promise<void> {
   const url = `http://0.0.0.0:${port}`;
   const line = `${color.cyan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${color.reset}`;
   logger.log(line, 'Bootstrap');
-  logger.log(`${color.green}🎓  NouraSchool Backend — démarrage réussi${color.reset}`, 'Bootstrap');
+  logger.log(`${color.green}🎓  Edusen Backend — démarrage réussi${color.reset}`, 'Bootstrap');
   logger.log(line, 'Bootstrap');
   logger.log(`${color.blue}🌍  Environnement${color.reset} : ${env}`, 'Bootstrap');
   logger.log(`${color.blue}🚀  API${color.reset}           : ${url}/api`, 'Bootstrap');

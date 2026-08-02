@@ -16,9 +16,9 @@ if (fs.existsSync(envPath)) {
 
 const prisma = new PrismaClient();
 
-const email = (process.env.PLATFORM_SUPER_ADMIN_EMAIL || 'superadmin@nouraschool.local').trim().toLowerCase();
-const password = process.env.PLATFORM_SUPER_ADMIN_PASSWORD || 'Noura@2026!';
-const nom = (process.env.PLATFORM_SUPER_ADMIN_NOM || 'NouraSchool').trim();
+const email = (process.env.PLATFORM_SUPER_ADMIN_EMAIL || 'superadmin@edusen.local').trim().toLowerCase();
+const password = process.env.PLATFORM_SUPER_ADMIN_PASSWORD || 'Edusen@2026!';
+const nom = (process.env.PLATFORM_SUPER_ADMIN_NOM || 'Edusen').trim();
 const prenom = (process.env.PLATFORM_SUPER_ADMIN_PRENOM || 'Super Admin').trim();
 const telephone = (process.env.PLATFORM_SUPER_ADMIN_TELEPHONE || '').trim() || null;
 const shouldResetPassword = process.env.PLATFORM_SUPER_ADMIN_RESET_PASSWORD === 'true';

@@ -405,7 +405,7 @@ export class DomainService {
       RH: "Ressources humaines",
     };
     const content = [
-      "NouraSchool - Demande de correction de profil",
+      "Edusen -Demande de correction de profil",
       `Utilisateur: ${fullName}`,
       `Rôle: ${roleLabels[user.role] ?? user.role}`,
       user.matricule ? `Matricule: ${user.matricule}` : null,
@@ -671,7 +671,7 @@ export class DomainService {
     });
 
     const message = [
-      'NouraSchool - Nouvelle note',
+      'Edusen -Nouvelle note',
       `Matière: ${note.matiere?.libelle ?? note.matiere?.code ?? '—'}`,
       `Note: ${note.note ?? '—'}/${note.noteSur ?? 20}`,
       `Période: ${note.trimestre ?? '—'}`,
@@ -737,7 +737,7 @@ export class DomainService {
     const motif = String(reclamation?.motif ?? '').trim();
     const motifResume = motif.length > 120 ? `${motif.slice(0, 117)}...` : motif;
     const message = [
-      'NouraSchool - Réclamation déposée',
+      'Edusen -Réclamation déposée',
       `Élève: ${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim(),
       `Matière: ${note.matiere?.libelle ?? note.matiere?.code ?? '—'}`,
       `Motif: ${motifResume || 'Réclamation liée à une note'}`,

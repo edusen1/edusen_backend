@@ -676,7 +676,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       tenantId,
       normalizedPhone,
       [
-        'NouraSchool - Code de verification',
+        'Edusen - Code de verification',
         `Code OTP: ${code}`,
         `Valable ${Math.max(1, Math.floor(ttlSeconds / 60))} minute(s).`,
       ].join('\n'),
@@ -1467,7 +1467,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       userAgent:
         process.env.WHATSAPP_USER_AGENT ??
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      deviceName: 'NouraSchool',
+      deviceName: 'Edusen',
       browserName: 'Chrome',
       authStrategy: new WWebRemoteAuth({
         clientId,

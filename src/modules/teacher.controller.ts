@@ -314,7 +314,7 @@ export class TeacherController {
     const teacher = user?.sub ? await this.domain.teacherProfil(user.sub) : null;
 
     const label = [
-      'NouraSchool - Nouvelle absence professeur',
+      'Edusen -Nouvelle absence professeur',
       `Type: ${String(body.typeAbsence ?? 'MALADIE')}`,
       `Du: ${String(body.dateDebut ?? '')}`,
       `Au: ${String(body.dateFin ?? '')}`,

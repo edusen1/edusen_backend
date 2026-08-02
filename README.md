@@ -1,6 +1,6 @@
-# NouraSchool Backend NestJS (Nouveau Projet)
+# Edusen Backend
 
-Nouveau projet independant pour la migration complete du backend vers NestJS.
+Backend NestJS multi-tenant pour la gestion scolaire.
 
 ## Ce qui est inclus
 - Architecture NestJS professionnelle (modules + common)
@@ -32,4 +32,4 @@ npm run start:dev
 - `npm run setup:seed` pour generer Prisma, synchroniser la base, puis lancer le seed
 
 ## Remarque
-Ce projet est isole de `nouraschool_backend` (Java/Quarkus), pour permettre une migration progressive sans risque.
+Ce projet remplace l'ancien backend Java/Quarkus.

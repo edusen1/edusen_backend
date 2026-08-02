@@ -316,7 +316,7 @@ export class UtilisateurService {
 
     const label = this.roleLabel(user.role);
     const message = [
-      `NouraSchool - Accès ${label}`,
+      `Edusen -Accès ${label}`,
       `Identifiant: ${loginIdentifier}`,
       `Mot de passe provisoire: ${tempPassword}`,
       'Vous devrez modifier ce mot de passe lors de votre première connexion.',

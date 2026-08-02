@@ -17,7 +17,7 @@ if (fs.existsSync(envPath)) {
 
 const prisma = new PrismaClient();
 
-const PASSWORD = process.env.SEED_PASSWORD || 'Noura@2026!';
+const PASSWORD = process.env.SEED_PASSWORD || 'Edusen@2026!';
 const SEED_PHONE_NUMBER = process.env.SEED_PHONE_NUMBER || '+22771272788';
 const TENANT_SLUG = 'ecole-noura-dakar';
 const TENANT_CODE_ELEVE       = 'NOURA2026E';

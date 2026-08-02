@@ -35,13 +35,13 @@ log_error() {
 }
 
 printf '\n%b\n' "${CYAN}╔══════════════════════════════════════════════════════╗${RESET}"
-printf '%b\n' "${CYAN}║        🎓  NouraSchool Backend — Démarrage           ║${RESET}"
+printf '%b\n' "${CYAN}║        🎓  Edusen Backend — Démarrage           ║${RESET}"
 printf '%b\n\n' "${CYAN}╚══════════════════════════════════════════════════════╝${RESET}"
 printf '%b\n' "${DIM}Environment=${NODE_ENV:-production} Port=${PORT:-3000}${RESET}"
 
 # ── 0. TEMPORAIRE : reset schema pour migration baseline (À SUPPRIMER après premier deploy réussi)
 log_warn "Reset du schema public (migration baseline one-shot)"
-npx prisma db execute --stdin <<'SQL' 2>&1 || log_warn "Reset schema ignoré (base peut-être déjà vide)"
+npx prisma db execute --schema prisma/schema.prisma --stdin <<'SQL' 2>&1 || log_warn "Reset schema ignoré (base peut-être déjà vide)"
 DROP SCHEMA public CASCADE;
 CREATE SCHEMA public;
 SQL

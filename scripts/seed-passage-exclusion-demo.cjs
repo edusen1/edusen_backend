@@ -16,7 +16,7 @@ if (fs.existsSync(envPath)) {
 
 const prisma = new PrismaClient();
 const TENANT_SLUG = process.env.SEED_TENANT_SLUG || 'ecole-noura-dakar';
-const PASSWORD = process.env.SEED_PASSWORD || 'Noura@2026!';
+const PASSWORD = process.env.SEED_PASSWORD || 'Edusen@2026!';
 
 async function generateTenantCode(field) {
   for (let index = 0; index < 50; index += 1) {

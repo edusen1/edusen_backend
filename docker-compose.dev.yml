@@ -12,7 +12,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: nouraschool
+      POSTGRES_DB: edusen
     volumes:
       - pgdata_dev:/var/lib/postgresql/data
 
