@@ -39,6 +39,13 @@ printf '%b\n' "${CYAN}║        🎓  NouraSchool Backend — Démarrage       
 printf '%b\n\n' "${CYAN}╚══════════════════════════════════════════════════════╝${RESET}"
 printf '%b\n' "${DIM}Environment=${NODE_ENV:-production} Port=${PORT:-3000}${RESET}"
 
+# ── 0. TEMPORAIRE : reset schema pour migration baseline (supprimer après premier deploy réussi)
+log_warn "🗑️  Reset du schema public (migration baseline one-shot)"
+npx prisma db execute --stdin <<'SQL'
+DROP SCHEMA public CASCADE;
+CREATE SCHEMA public;
+SQL
+
 # ── 1. Migrations Prisma ──────────────────────────────────────────────────────
 log_step "📦 Exécution des migrations Prisma"
 
