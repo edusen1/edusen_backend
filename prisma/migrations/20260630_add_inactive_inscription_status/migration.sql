@@ -1,4 +1,0 @@
-DO $$
-BEGIN
-  ALTER TYPE "StatutInscription" ADD VALUE IF NOT EXISTS 'INACTIF';
-END $$;

@@ -1,3 +1,0 @@
-ALTER TABLE "PaiementProfesseur"
-  ADD COLUMN IF NOT EXISTS "motifRejet" TEXT,
-  ADD COLUMN IF NOT EXISTS "reponduLe" TIMESTAMP(3);

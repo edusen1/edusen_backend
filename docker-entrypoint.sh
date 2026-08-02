@@ -34,29 +34,6 @@ log_error() {
   printf '%b\n' "${RED}❌ $1${RESET}"
 }
 
-repair_failed_migration() {
-  migration_name="$1"
-
-  case "$migrate_log" in
-    *P3009*"$migration_name"*) ;;
-    *) return 1 ;;
-  esac
-
-  log_warn "Migration Prisma $migration_name marquée en échec. Elle va être repassée en rolled back puis rejouée."
-
-  resolve_log=$(npx prisma migrate resolve --rolled-back "$migration_name" 2>&1)
-  resolve_exit=$?
-  echo "$resolve_log"
-
-  if [ $resolve_exit -ne 0 ]; then
-    log_error "Impossible de marquer $migration_name comme rolled back."
-    return 1
-  fi
-
-  log_ok "Migration Prisma $migration_name prête à être rejouée"
-  return 0
-}
-
 printf '\n%b\n' "${CYAN}╔══════════════════════════════════════════════════════╗${RESET}"
 printf '%b\n' "${CYAN}║        🎓  NouraSchool Backend — Démarrage           ║${RESET}"
 printf '%b\n\n' "${CYAN}╚══════════════════════════════════════════════════════╝${RESET}"
@@ -65,27 +42,14 @@ printf '%b\n' "${DIM}Environment=${NODE_ENV:-production} Port=${PORT:-3000}${RES
 # ── 1. Migrations Prisma ──────────────────────────────────────────────────────
 log_step "📦 Exécution des migrations Prisma"
 
-# Capturer la sortie sans set -e pour gérer les erreurs manuellement
 migrate_log=$(npx prisma migrate deploy 2>&1)
 migrate_exit=$?
 
 echo "$migrate_log"
 
 if [ $migrate_exit -ne 0 ]; then
-  if repair_failed_migration "20260623_add_teacher_payment_response" ||
-     repair_failed_migration "20260630_add_inactive_inscription_status" ||
-     repair_failed_migration "20260710_add_communication_document" ||
-     repair_failed_migration "20260711_audit_enrichment_demande"; then
-    log_step "📦 Relance des migrations Prisma après réparation"
-    migrate_log=$(npx prisma migrate deploy 2>&1)
-    migrate_exit=$?
-    echo "$migrate_log"
-  fi
-
-  if [ $migrate_exit -ne 0 ]; then
-    log_error "Migrations Prisma échouées. Arrêt du démarrage pour préserver l'intégrité du schéma."
-    exit 1
-  fi
+  log_error "Migrations Prisma échouées. Arrêt du démarrage pour préserver l'intégrité du schéma."
+  exit 1
 fi
 
 log_ok "Migrations Prisma à jour"
