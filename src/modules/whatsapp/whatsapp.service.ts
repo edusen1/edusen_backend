@@ -898,29 +898,31 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     }
 
     const localMessageId = randomUUID();
+    const idempotencyKey = randomUUID();
     try {
-      const binding = await this.resolveRelayioSession(tenantId, true);
-      if (!binding) {
-        throw new ServiceUnavailableException('Session Relayio indisponible');
+      const plainPhone = this.normalizeRelayioPlainPhone(phone);
+      if (!plainPhone) {
+        throw new BadRequestException(`Numéro de téléphone invalide: ${phone}`);
       }
 
-      const response = await this.relayioRequest<RelayioMessagePayload>(`/v1/sessions/${binding.sessionId}/messages/text`, {
+      const response = await this.relayioRequest<RelayioMessagePayload>(`/v1/messages/text`, {
         method: 'POST',
         body: {
-          chatId: normalizedPhone,
-          body: content,
+          to: plainPhone,
+          text: content,
         },
+        idempotencyKey,
       });
       const messageId = await this.saveRelayioMessageResult({
         localMessageId,
         tenantId,
-        phone: normalizedPhone,
+        phone: plainPhone,
         kind: 'text',
         message: content,
         response,
       });
 
-      this.logger.log(`Message WhatsApp Relayio accepté → ${normalizedPhone} (tenant=${tenantId}, message=${messageId})`);
+      this.logger.log(`Message WhatsApp Relayio accepté → ${plainPhone} (tenant=${tenantId}, message=${messageId})`);
       return { queued: true, messageId };
     } catch (error) {
       await this.saveRelayioFailureRecord(localMessageId, tenantId, normalizedPhone, 'text', content, null, error);
@@ -951,33 +953,37 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     }
 
     const localMessageId = randomUUID();
+    const idempotencyKey = randomUUID();
     const recordDocument = { filename, mimeType, dataBase64: '' };
     try {
-      const binding = await this.resolveRelayioSession(tenantId, true);
-      if (!binding) {
-        throw new ServiceUnavailableException('Session Relayio indisponible');
+      const plainPhone = this.normalizeRelayioPlainPhone(phone);
+      if (!plainPhone) {
+        throw new BadRequestException(`Numéro de téléphone invalide: ${phone}`);
       }
 
-      const media = await this.uploadRelayioDocument(binding.sessionId, filename, mimeType, data);
-      const response = await this.relayioRequest<RelayioMessagePayload>(`/v1/sessions/${binding.sessionId}/messages/media`, {
+      const media = await this.uploadRelayioMedia(filename, mimeType, data);
+      const response = await this.relayioRequest<RelayioMessagePayload>(`/v1/messages/file`, {
         method: 'POST',
         body: {
-          chatId: normalizedPhone,
+          to: plainPhone,
           mediaId: media.id,
+          filename,
           caption: caption || undefined,
+          mimeType,
         },
+        idempotencyKey,
       });
       const messageId = await this.saveRelayioMessageResult({
         localMessageId,
         tenantId,
-        phone: normalizedPhone,
+        phone: plainPhone,
         kind: 'document',
         message: caption,
         document: recordDocument,
         response,
       });
 
-      this.logger.log(`Document WhatsApp Relayio accepté → ${normalizedPhone} (tenant=${tenantId}, message=${messageId})`);
+      this.logger.log(`Document WhatsApp Relayio accepté → ${plainPhone} (tenant=${tenantId}, message=${messageId})`);
       return { queued: true, messageId };
     } catch (error) {
       await this.saveRelayioFailureRecord(localMessageId, tenantId, normalizedPhone, 'document', caption, recordDocument, error);
@@ -1010,15 +1016,14 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     }
   }
 
-  private async uploadRelayioDocument(
-    sessionId: string,
+  private async uploadRelayioMedia(
     filename: string,
     mimeType: string,
     data: Buffer,
   ): Promise<RelayioMediaUploadPayload> {
     const formData = new FormData();
     formData.append('file', new Blob([new Uint8Array(data)], { type: mimeType }), filename);
-    const media = await this.relayioRequest<RelayioMediaUploadPayload>(`/v1/sessions/${sessionId}/media`, {
+    const media = await this.relayioRequest<RelayioMediaUploadPayload>(`/v1/media`, {
       method: 'POST',
       body: formData,
     });
@@ -1193,10 +1198,14 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       method?: string;
       body?: unknown;
       allowNotFound?: boolean;
+      idempotencyKey?: string;
     } = {},
   ): Promise<T | null> {
     const headers = this.getRelayioAuthHeaders();
     const method = options.method ?? (options.body === undefined ? 'GET' : 'POST');
+    if (options.idempotencyKey) {
+      headers['Idempotency-Key'] = options.idempotencyKey;
+    }
     const controller = new AbortController();
     const timeoutMs = Math.max(1_000, Number(this.readConfig('RELAYIO_TIMEOUT_MS', 'WHATSAPP_RELAYIO_TIMEOUT_MS') ?? 15_000));
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
