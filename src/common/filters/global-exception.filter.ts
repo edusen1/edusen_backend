@@ -211,7 +211,20 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     ) {
       return 'INSCRIPTION_DEJA_EXISTANTE: cet élève est déjà inscrit pour cette année scolaire';
     }
-    if (code === 'P2002') return 'Donnée déjà existante';
+    if (code === 'P2002') {
+      const fieldLabels: Record<string, string> = {
+        email: 'email',
+        matricule: 'matricule',
+        telephone: 'téléphone',
+        username: 'nom d\'utilisateur',
+        numeroIdentificationNational: 'numéro d\'identification national',
+      };
+      const conflictField = target.find((f) => f in fieldLabels);
+      if (conflictField) {
+        return `Un enregistrement avec ce ${fieldLabels[conflictField]} existe déjà`;
+      }
+      return 'Donnée déjà existante';
+    }
     if (code === 'P2025') return 'Ressource introuvable';
     if (code === 'P2023') return 'Identifiant invalide';
     if (code === 'P2022') return 'Donnée indisponible';
