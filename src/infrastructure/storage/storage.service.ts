@@ -109,8 +109,11 @@ export class StorageService {
         }),
       );
     } catch (err) {
-      this.logger.error(`[Storage] Upload failed key=${key}: ${(err as Error).message}`);
-      throw new InternalServerErrorException('Echec de l upload du fichier');
+      const errMsg = (err as Error).message ?? 'unknown';
+      this.logger.error(`[Storage] Upload failed key=${key}: ${errMsg}`);
+      throw new InternalServerErrorException(
+        `Échec de l'upload du fichier : vérifiez la configuration S3 (${errMsg})`,
+      );
     }
 
     this.logger.log(`[Storage] Uploaded key=${key} contentType=${contentType}`);
