@@ -784,85 +784,85 @@ async function main() {
 
   // CI A
   const ciSlots = [
-    ['LUNDI','FR',teacherAdja,'08:00','10:00'], ['LUNDI','MATH',teacherAdja,'10:00','12:00'],
-    ['LUNDI','LECT',teacherOumy||teacherAdja,'15:00','16:00'], ['LUNDI','EPS',teacherAissatou,'16:00','17:00'],
-    ['MARDI','MATH',teacherAdja,'08:00','10:00'], ['MARDI','FR',teacherAdja,'10:00','12:00'],
-    ['MARDI','AR',teacherAbdoulayeN||teacherMoussa,'15:00','16:00'], ['MARDI','LECT',teacherOumy||teacherAdja,'16:00','17:00'],
-    ['MERCREDI','FR',teacherAdja,'08:00','10:00'], ['MERCREDI','MATH',teacherAdja,'10:00','12:00'],
-    ['JEUDI','MATH',teacherAdja,'08:00','10:00'], ['JEUDI','LECT',teacherOumy||teacherAdja,'10:00','12:00'],
-    ['JEUDI','FR',teacherAdja,'15:00','16:00'], ['JEUDI','AR',teacherAbdoulayeN||teacherMoussa,'16:00','17:00'],
-    ['VENDREDI','FR',teacherAdja,'08:00','10:00'], ['VENDREDI','EPS',teacherAissatou,'10:00','11:00'],
-    ['VENDREDI','EDCIV',teacherAbdoulayeN||teacherAdja,'15:00','16:00'], ['VENDREDI','LECT',teacherOumy||teacherAdja,'16:00','17:00'],
+    ['Lundi','FR',teacherAdja,'08:00','10:00'], ['Lundi','MATH',teacherAdja,'10:00','12:00'],
+    ['Lundi','LECT',teacherOumy||teacherAdja,'15:00','16:00'], ['Lundi','EPS',teacherAissatou,'16:00','17:00'],
+    ['Mardi','MATH',teacherAdja,'08:00','10:00'], ['Mardi','FR',teacherAdja,'10:00','12:00'],
+    ['Mardi','AR',teacherAbdoulayeN||teacherMoussa,'15:00','16:00'], ['Mardi','LECT',teacherOumy||teacherAdja,'16:00','17:00'],
+    ['Mercredi','FR',teacherAdja,'08:00','10:00'], ['Mercredi','MATH',teacherAdja,'10:00','12:00'],
+    ['Jeudi','MATH',teacherAdja,'08:00','10:00'], ['Jeudi','LECT',teacherOumy||teacherAdja,'10:00','12:00'],
+    ['Jeudi','FR',teacherAdja,'15:00','16:00'], ['Jeudi','AR',teacherAbdoulayeN||teacherMoussa,'16:00','17:00'],
+    ['Vendredi','FR',teacherAdja,'08:00','10:00'], ['Vendredi','EPS',teacherAissatou,'10:00','11:00'],
+    ['Vendredi','EDCIV',teacherAbdoulayeN||teacherAdja,'15:00','16:00'], ['Vendredi','LECT',teacherOumy||teacherAdja,'16:00','17:00'],
   ];
   for (const [j,m,e,hd,hf] of ciSlots) await mkEdt('CI A', m, e, j, hd, hf);
 
   // CE2 A
   const ce2Slots = [
-    ['LUNDI','FR',teacherModou,'08:00','10:00'], ['LUNDI','MATH',teacherModou,'10:00','12:00'],
-    ['LUNDI','LECT',teacherOumy||teacherModou,'15:00','16:00'], ['LUNDI','EPS',teacherAissatou,'16:00','17:00'],
-    ['MARDI','MATH',teacherModou,'08:00','10:00'], ['MARDI','FR',teacherModou,'10:00','12:00'],
-    ['MARDI','AR',teacherAbdoulayeN||teacherMoussa,'15:00','16:00'], ['MARDI','EDCIV',teacherModou,'16:00','17:00'],
-    ['MERCREDI','FR',teacherModou,'08:00','10:00'], ['MERCREDI','MATH',teacherModou,'10:00','12:00'],
-    ['JEUDI','MATH',teacherModou,'08:00','10:00'], ['JEUDI','LECT',teacherOumy||teacherModou,'10:00','12:00'],
-    ['JEUDI','FR',teacherModou,'15:00','16:00'], ['JEUDI','AR',teacherAbdoulayeN||teacherMoussa,'16:00','17:00'],
-    ['VENDREDI','FR',teacherModou,'08:00','10:00'], ['VENDREDI','EPS',teacherAissatou,'10:00','11:00'],
-    ['VENDREDI','LECT',teacherOumy||teacherModou,'15:00','16:00'],
+    ['Lundi','FR',teacherModou,'08:00','10:00'], ['Lundi','MATH',teacherModou,'10:00','12:00'],
+    ['Lundi','LECT',teacherOumy||teacherModou,'15:00','16:00'], ['Lundi','EPS',teacherAissatou,'16:00','17:00'],
+    ['Mardi','MATH',teacherModou,'08:00','10:00'], ['Mardi','FR',teacherModou,'10:00','12:00'],
+    ['Mardi','AR',teacherAbdoulayeN||teacherMoussa,'15:00','16:00'], ['Mardi','EDCIV',teacherModou,'16:00','17:00'],
+    ['Mercredi','FR',teacherModou,'08:00','10:00'], ['Mercredi','MATH',teacherModou,'10:00','12:00'],
+    ['Jeudi','MATH',teacherModou,'08:00','10:00'], ['Jeudi','LECT',teacherOumy||teacherModou,'10:00','12:00'],
+    ['Jeudi','FR',teacherModou,'15:00','16:00'], ['Jeudi','AR',teacherAbdoulayeN||teacherMoussa,'16:00','17:00'],
+    ['Vendredi','FR',teacherModou,'08:00','10:00'], ['Vendredi','EPS',teacherAissatou,'10:00','11:00'],
+    ['Vendredi','LECT',teacherOumy||teacherModou,'15:00','16:00'],
   ];
   for (const [j,m,e,hd,hf] of ce2Slots) await mkEdt('CE2 A', m, e, j, hd, hf);
 
   // 6eme A
   const s6Slots = [
-    ['LUNDI','FR',teacherAdja,'08:00','09:30'], ['LUNDI','MATH',teacherOusmane,'10:00','11:30'],
-    ['LUNDI','ANG',teacherMoussa,'14:00','15:30'], ['LUNDI','HG',teacherFatouD,'15:30','17:00'],
-    ['MARDI','MATH',teacherOusmane,'08:00','09:30'], ['MARDI','SVT',teacherIbrahimaS,'10:00','11:30'],
-    ['MARDI','FR',teacherAdja,'14:00','15:30'], ['MARDI','PC',teacherIbrahimaS,'15:30','17:00'],
-    ['MERCREDI','ANG',teacherMoussa,'08:00','09:30'], ['MERCREDI','HG',teacherFatouD,'10:00','11:30'],
-    ['JEUDI','FR',teacherAdja,'08:00','09:30'], ['JEUDI','MATH',teacherOusmane,'10:00','11:30'],
-    ['JEUDI','EPS',teacherAissatou,'14:00','15:30'], ['JEUDI','AR',teacherAbdoulayeN||teacherMoussa,'15:30','17:00'],
-    ['VENDREDI','SVT',teacherIbrahimaS,'08:00','09:30'], ['VENDREDI','EDCIV',teacherFatouD,'10:00','11:30'],
-    ['VENDREDI','FR',teacherAdja,'14:00','15:30'],
+    ['Lundi','FR',teacherAdja,'08:00','09:30'], ['Lundi','MATH',teacherOusmane,'10:00','11:30'],
+    ['Lundi','ANG',teacherMoussa,'14:00','15:30'], ['Lundi','HG',teacherFatouD,'15:30','17:00'],
+    ['Mardi','MATH',teacherOusmane,'08:00','09:30'], ['Mardi','SVT',teacherIbrahimaS,'10:00','11:30'],
+    ['Mardi','FR',teacherAdja,'14:00','15:30'], ['Mardi','PC',teacherIbrahimaS,'15:30','17:00'],
+    ['Mercredi','ANG',teacherMoussa,'08:00','09:30'], ['Mercredi','HG',teacherFatouD,'10:00','11:30'],
+    ['Jeudi','FR',teacherAdja,'08:00','09:30'], ['Jeudi','MATH',teacherOusmane,'10:00','11:30'],
+    ['Jeudi','EPS',teacherAissatou,'14:00','15:30'], ['Jeudi','AR',teacherAbdoulayeN||teacherMoussa,'15:30','17:00'],
+    ['Vendredi','SVT',teacherIbrahimaS,'08:00','09:30'], ['Vendredi','EDCIV',teacherFatouD,'10:00','11:30'],
+    ['Vendredi','FR',teacherAdja,'14:00','15:30'],
   ];
   for (const [j,m,e,hd,hf] of s6Slots) await mkEdt('6eme A', m, e, j, hd, hf);
 
   // 5eme A
   const c5Slots = [
-    ['LUNDI','FR',teacherAdja,'08:00','09:30'], ['LUNDI','MATH',teacherOusmane,'10:00','11:30'],
-    ['LUNDI','ANG',teacherMoussa,'14:00','15:30'], ['LUNDI','HG',teacherFatouD,'15:30','17:00'],
-    ['MARDI','MATH',teacherOusmane,'08:00','09:30'], ['MARDI','SVT',teacherIbrahimaS,'10:00','11:30'],
-    ['MARDI','FR',teacherAdja,'14:00','15:30'], ['MARDI','PC',teacherIbrahimaS,'15:30','17:00'],
-    ['MERCREDI','ANG',teacherMoussa,'08:00','09:30'], ['MERCREDI','HG',teacherFatouD,'10:00','11:30'],
-    ['JEUDI','FR',teacherAdja,'08:00','09:30'], ['JEUDI','MATH',teacherOusmane,'10:00','11:30'],
-    ['JEUDI','EPS',teacherAissatou,'14:00','15:30'], ['JEUDI','AR',teacherAbdoulayeN||teacherMoussa,'15:30','17:00'],
-    ['VENDREDI','SVT',teacherIbrahimaS,'08:00','09:30'], ['VENDREDI','MATH',teacherOusmane,'10:00','11:30'],
-    ['VENDREDI','FR',teacherAdja,'14:00','15:30'],
+    ['Lundi','FR',teacherAdja,'08:00','09:30'], ['Lundi','MATH',teacherOusmane,'10:00','11:30'],
+    ['Lundi','ANG',teacherMoussa,'14:00','15:30'], ['Lundi','HG',teacherFatouD,'15:30','17:00'],
+    ['Mardi','MATH',teacherOusmane,'08:00','09:30'], ['Mardi','SVT',teacherIbrahimaS,'10:00','11:30'],
+    ['Mardi','FR',teacherAdja,'14:00','15:30'], ['Mardi','PC',teacherIbrahimaS,'15:30','17:00'],
+    ['Mercredi','ANG',teacherMoussa,'08:00','09:30'], ['Mercredi','HG',teacherFatouD,'10:00','11:30'],
+    ['Jeudi','FR',teacherAdja,'08:00','09:30'], ['Jeudi','MATH',teacherOusmane,'10:00','11:30'],
+    ['Jeudi','EPS',teacherAissatou,'14:00','15:30'], ['Jeudi','AR',teacherAbdoulayeN||teacherMoussa,'15:30','17:00'],
+    ['Vendredi','SVT',teacherIbrahimaS,'08:00','09:30'], ['Vendredi','MATH',teacherOusmane,'10:00','11:30'],
+    ['Vendredi','FR',teacherAdja,'14:00','15:30'],
   ];
   for (const [j,m,e,hd,hf] of c5Slots) await mkEdt('5eme A', m, e, j, hd, hf);
 
   // 3eme A
   const c3Slots = [
-    ['LUNDI','FR',teacherAdja,'08:00','09:30'], ['LUNDI','MATH',teacherOusmane,'10:00','11:30'],
-    ['LUNDI','PC',teacherIbrahimaS,'14:00','15:30'], ['LUNDI','HG',teacherFatouD,'15:30','17:00'],
-    ['MARDI','MATH',teacherOusmane,'08:00','09:30'], ['MARDI','SVT',teacherIbrahimaS,'10:00','11:30'],
-    ['MARDI','FR',teacherAdja,'14:00','15:30'], ['MARDI','ANG',teacherMoussa,'15:30','17:00'],
-    ['MERCREDI','PC',teacherIbrahimaS,'08:00','09:30'], ['MERCREDI','HG',teacherFatouD,'10:00','11:30'],
-    ['JEUDI','FR',teacherAdja,'08:00','09:30'], ['JEUDI','MATH',teacherOusmane,'10:00','11:30'],
-    ['JEUDI','EPS',teacherAissatou,'14:00','15:30'], ['JEUDI','EDCIV',teacherFatouD,'15:30','17:00'],
-    ['VENDREDI','SVT',teacherIbrahimaS,'08:00','09:30'], ['VENDREDI','AR',teacherAbdoulayeN||teacherMoussa,'10:00','11:30'],
-    ['VENDREDI','MATH',teacherOusmane,'14:00','15:30'],
+    ['Lundi','FR',teacherAdja,'08:00','09:30'], ['Lundi','MATH',teacherOusmane,'10:00','11:30'],
+    ['Lundi','PC',teacherIbrahimaS,'14:00','15:30'], ['Lundi','HG',teacherFatouD,'15:30','17:00'],
+    ['Mardi','MATH',teacherOusmane,'08:00','09:30'], ['Mardi','SVT',teacherIbrahimaS,'10:00','11:30'],
+    ['Mardi','FR',teacherAdja,'14:00','15:30'], ['Mardi','ANG',teacherMoussa,'15:30','17:00'],
+    ['Mercredi','PC',teacherIbrahimaS,'08:00','09:30'], ['Mercredi','HG',teacherFatouD,'10:00','11:30'],
+    ['Jeudi','FR',teacherAdja,'08:00','09:30'], ['Jeudi','MATH',teacherOusmane,'10:00','11:30'],
+    ['Jeudi','EPS',teacherAissatou,'14:00','15:30'], ['Jeudi','EDCIV',teacherFatouD,'15:30','17:00'],
+    ['Vendredi','SVT',teacherIbrahimaS,'08:00','09:30'], ['Vendredi','AR',teacherAbdoulayeN||teacherMoussa,'10:00','11:30'],
+    ['Vendredi','MATH',teacherOusmane,'14:00','15:30'],
   ];
   for (const [j,m,e,hd,hf] of c3Slots) await mkEdt('3eme A', m, e, j, hd, hf);
 
   // Terminale A
   const tSlots = [
-    ['LUNDI','MATH',teacherMamadouD||teacherNdeye||teacherOusmane,'08:00','10:00'], ['LUNDI','PHILO',teacherCheikh,'10:00','12:00'],
-    ['LUNDI','PC',teacherIbrahimaS,'14:00','16:00'],
-    ['MARDI','FR',teacherAdja,'08:00','10:00'], ['MARDI','SVT',teacherIbrahimaS,'10:00','12:00'],
-    ['MARDI','ECO',teacherCheikh,'14:00','16:00'],
-    ['MERCREDI','MATH',teacherMamadouD||teacherNdeye||teacherOusmane,'08:00','10:00'], ['MERCREDI','ANG',teacherMoussa,'10:00','12:00'],
-    ['JEUDI','PC',teacherIbrahimaS,'08:00','10:00'], ['JEUDI','HG',teacherFatouD,'10:00','12:00'],
-    ['JEUDI','INFO',teacherAissatou,'14:00','16:00'],
-    ['VENDREDI','FR',teacherAdja,'08:00','10:00'], ['VENDREDI','PHILO',teacherCheikh,'10:00','12:00'],
-    ['VENDREDI','EPS',teacherAissatou,'14:00','16:00'],
+    ['Lundi','MATH',teacherMamadouD||teacherNdeye||teacherOusmane,'08:00','10:00'], ['Lundi','PHILO',teacherCheikh,'10:00','12:00'],
+    ['Lundi','PC',teacherIbrahimaS,'14:00','16:00'],
+    ['Mardi','FR',teacherAdja,'08:00','10:00'], ['Mardi','SVT',teacherIbrahimaS,'10:00','12:00'],
+    ['Mardi','ECO',teacherCheikh,'14:00','16:00'],
+    ['Mercredi','MATH',teacherMamadouD||teacherNdeye||teacherOusmane,'08:00','10:00'], ['Mercredi','ANG',teacherMoussa,'10:00','12:00'],
+    ['Jeudi','PC',teacherIbrahimaS,'08:00','10:00'], ['Jeudi','HG',teacherFatouD,'10:00','12:00'],
+    ['Jeudi','INFO',teacherAissatou,'14:00','16:00'],
+    ['Vendredi','FR',teacherAdja,'08:00','10:00'], ['Vendredi','PHILO',teacherCheikh,'10:00','12:00'],
+    ['Vendredi','EPS',teacherAissatou,'14:00','16:00'],
   ];
   for (const [j,m,e,hd,hf] of tSlots) await mkEdt('Terminale A', m, e, j, hd, hf);
 
