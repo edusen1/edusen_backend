@@ -124,8 +124,9 @@ async function main() {
     ]},
   ];
 
+  const FRAIS_DEFAULT = { insc: 50000, mens: 25000 };
   const FRAIS = {
-    'Prescolaire|Petite Section':  { insc: 50000, mens: 25000 },
+    'Prescolaire|Petite Section':  { insc: 45000, mens: 22000 },
     'Prescolaire|Moyenne Section': { insc: 50000, mens: 25000 },
     'Prescolaire|Grande Section':  { insc: 55000, mens: 28000 },
     'Primaire|CI':  { insc: 60000, mens: 30000 },
@@ -139,7 +140,7 @@ async function main() {
     'College|4eme': { insc: 85000, mens: 42000 },
     'College|3eme': { insc: 90000, mens: 45000 },
     'Lycee|Seconde':  { insc: 100000, mens: 50000 },
-    'Lycee|Premiere': { insc: 100000, mens: 50000 },
+    'Lycee|Premiere': { insc: 105000, mens: 52000 },
     'Lycee|Terminale':{ insc: 110000, mens: 55000 },
   };
 
@@ -161,7 +162,7 @@ async function main() {
       niveauMap[niv.code] = niveau;
 
       const fk = `${sec.nom}|${niv.nom}`;
-      const f = FRAIS[fk] || { insc: 0, mens: 0 };
+      const f = FRAIS[fk] || FRAIS_DEFAULT;
       await upsert('fraisNiveauConfig', { tenantId: T, section: sec.nom, niveau: niv.nom },
         { tenantId: T, section: sec.nom, niveau: niv.nom, inscription: f.insc, mensualite: f.mens, nbMois: 9, moisDebut: 10, moisFin: 6, actif: true },
         { inscription: f.insc, mensualite: f.mens },
@@ -202,13 +203,28 @@ async function main() {
     { batiment: 'Bloc A', nom: 'Salle 103', capacite: 30, type: 'Cours' },
     { batiment: 'Bloc A', nom: 'Salle 104', capacite: 30, type: 'Maternelle' },
     { batiment: 'Bloc A', nom: 'Salle 105', capacite: 30, type: 'Maternelle' },
+    { batiment: 'Bloc A', nom: 'Salle 106', capacite: 30, type: 'Maternelle' },
+    { batiment: 'Bloc A', nom: 'Salle 107', capacite: 35, type: 'Cours' },
+    { batiment: 'Bloc A', nom: 'Salle 108', capacite: 35, type: 'Cours' },
+    { batiment: 'Bloc A', nom: 'Salle 109', capacite: 35, type: 'Cours' },
+    { batiment: 'Bloc A', nom: 'Salle 110', capacite: 35, type: 'Cours' },
+    { batiment: 'Bloc A', nom: 'Salle 111', capacite: 35, type: 'Cours' },
+    { batiment: 'Bloc A', nom: 'Salle 112', capacite: 35, type: 'Cours' },
     { batiment: 'Bloc B', nom: 'Salle 201', capacite: 45, type: 'Cours' },
     { batiment: 'Bloc B', nom: 'Salle 202', capacite: 45, type: 'Cours' },
     { batiment: 'Bloc B', nom: 'Salle 203', capacite: 45, type: 'Cours' },
+    { batiment: 'Bloc B', nom: 'Salle 204', capacite: 45, type: 'Cours' },
+    { batiment: 'Bloc B', nom: 'Salle 205', capacite: 45, type: 'Cours' },
+    { batiment: 'Bloc B', nom: 'Salle 206', capacite: 45, type: 'Cours' },
+    { batiment: 'Bloc B', nom: 'Salle 207', capacite: 45, type: 'Cours' },
+    { batiment: 'Bloc B', nom: 'Salle 208', capacite: 45, type: 'Cours' },
     { batiment: 'Bloc B', nom: 'Labo Sciences', capacite: 30, type: 'Laboratoire' },
     { batiment: 'Bloc C', nom: 'Salle 301', capacite: 45, type: 'Cours' },
     { batiment: 'Bloc C', nom: 'Salle 302', capacite: 45, type: 'Cours' },
     { batiment: 'Bloc C', nom: 'Salle 303', capacite: 45, type: 'Cours' },
+    { batiment: 'Bloc C', nom: 'Salle 304', capacite: 45, type: 'Cours' },
+    { batiment: 'Bloc C', nom: 'Salle 305', capacite: 45, type: 'Cours' },
+    { batiment: 'Bloc C', nom: 'Salle 306', capacite: 45, type: 'Cours' },
     { batiment: 'Bloc C', nom: 'Salle Info', capacite: 25, type: 'Informatique' },
     { batiment: 'Gymnase', nom: 'Terrain Sport', capacite: 100, type: 'Sport' },
   ];
@@ -227,22 +243,42 @@ async function main() {
   console.log('🏫 Classes ...');
 
   const classeDefs = [
+    // Prescolaire A + B
     { nom: 'Petite Section A', niveau: 'PS', cycle: 'PRESCOLAIRE', salle: 'Salle 104', max: 30 },
-    { nom: 'Moyenne Section A', niveau: 'MS', cycle: 'PRESCOLAIRE', salle: 'Salle 105', max: 30 },
-    { nom: 'Grande Section A', niveau: 'GS', cycle: 'PRESCOLAIRE', salle: 'Salle 103', max: 30 },
+    { nom: 'Petite Section B', niveau: 'PS', cycle: 'PRESCOLAIRE', salle: 'Salle 105', max: 30 },
+    { nom: 'Moyenne Section A', niveau: 'MS', cycle: 'PRESCOLAIRE', salle: 'Salle 106', max: 30 },
+    { nom: 'Moyenne Section B', niveau: 'MS', cycle: 'PRESCOLAIRE', salle: 'Salle 104', max: 30 },
+    { nom: 'Grande Section A', niveau: 'GS', cycle: 'PRESCOLAIRE', salle: 'Salle 105', max: 30 },
+    { nom: 'Grande Section B', niveau: 'GS', cycle: 'PRESCOLAIRE', salle: 'Salle 106', max: 30 },
+    // Primaire A + B
     { nom: 'CI A', niveau: 'CI', cycle: 'PRIMAIRE', salle: 'Salle 101', max: 40 },
+    { nom: 'CI B', niveau: 'CI', cycle: 'PRIMAIRE', salle: 'Salle 107', max: 40 },
     { nom: 'CP A', niveau: 'CP', cycle: 'PRIMAIRE', salle: 'Salle 102', max: 35 },
+    { nom: 'CP B', niveau: 'CP', cycle: 'PRIMAIRE', salle: 'Salle 108', max: 35 },
     { nom: 'CE1 A', niveau: 'CE1', cycle: 'PRIMAIRE', salle: 'Salle 103', max: 35 },
-    { nom: 'CE2 A', niveau: 'CE2', cycle: 'PRIMAIRE', salle: 'Salle 101', max: 35 },
-    { nom: 'CM1 A', niveau: 'CM1', cycle: 'PRIMAIRE', salle: 'Salle 102', max: 35 },
-    { nom: 'CM2 A', niveau: 'CM2', cycle: 'PRIMAIRE', salle: 'Salle 103', max: 35 },
+    { nom: 'CE1 B', niveau: 'CE1', cycle: 'PRIMAIRE', salle: 'Salle 109', max: 35 },
+    { nom: 'CE2 A', niveau: 'CE2', cycle: 'PRIMAIRE', salle: 'Salle 110', max: 35 },
+    { nom: 'CE2 B', niveau: 'CE2', cycle: 'PRIMAIRE', salle: 'Salle 111', max: 35 },
+    { nom: 'CM1 A', niveau: 'CM1', cycle: 'PRIMAIRE', salle: 'Salle 112', max: 35 },
+    { nom: 'CM1 B', niveau: 'CM1', cycle: 'PRIMAIRE', salle: 'Salle 101', max: 35 },
+    { nom: 'CM2 A', niveau: 'CM2', cycle: 'PRIMAIRE', salle: 'Salle 102', max: 35 },
+    { nom: 'CM2 B', niveau: 'CM2', cycle: 'PRIMAIRE', salle: 'Salle 103', max: 35 },
+    // College A + B
     { nom: '6eme A', niveau: '6E', cycle: 'COLLEGE', salle: 'Salle 201', max: 45 },
-    { nom: '5eme A', niveau: '5E', cycle: 'COLLEGE', salle: 'Salle 202', max: 45 },
-    { nom: '4eme A', niveau: '4E', cycle: 'COLLEGE', salle: 'Salle 203', max: 45 },
-    { nom: '3eme A', niveau: '3E', cycle: 'COLLEGE', salle: 'Salle 201', max: 45 },
+    { nom: '6eme B', niveau: '6E', cycle: 'COLLEGE', salle: 'Salle 202', max: 45 },
+    { nom: '5eme A', niveau: '5E', cycle: 'COLLEGE', salle: 'Salle 203', max: 45 },
+    { nom: '5eme B', niveau: '5E', cycle: 'COLLEGE', salle: 'Salle 204', max: 45 },
+    { nom: '4eme A', niveau: '4E', cycle: 'COLLEGE', salle: 'Salle 205', max: 45 },
+    { nom: '4eme B', niveau: '4E', cycle: 'COLLEGE', salle: 'Salle 206', max: 45 },
+    { nom: '3eme A', niveau: '3E', cycle: 'COLLEGE', salle: 'Salle 207', max: 45 },
+    { nom: '3eme B', niveau: '3E', cycle: 'COLLEGE', salle: 'Salle 208', max: 45 },
+    // Lycee A + B
     { nom: 'Seconde A', niveau: '2NDE', cycle: 'LYCEE', salle: 'Salle 301', max: 45 },
-    { nom: 'Premiere A', niveau: '1ERE', cycle: 'LYCEE', salle: 'Salle 302', max: 45 },
-    { nom: 'Terminale A', niveau: 'TLE', cycle: 'LYCEE', salle: 'Salle 303', max: 45 },
+    { nom: 'Seconde B', niveau: '2NDE', cycle: 'LYCEE', salle: 'Salle 302', max: 45 },
+    { nom: 'Premiere A', niveau: '1ERE', cycle: 'LYCEE', salle: 'Salle 303', max: 45 },
+    { nom: 'Premiere B', niveau: '1ERE', cycle: 'LYCEE', salle: 'Salle 304', max: 45 },
+    { nom: 'Terminale A', niveau: 'TLE', cycle: 'LYCEE', salle: 'Salle 305', max: 45 },
+    { nom: 'Terminale B', niveau: 'TLE', cycle: 'LYCEE', salle: 'Salle 306', max: 45 },
   ];
 
   const classes = {};
@@ -352,13 +388,13 @@ async function main() {
   // 6. ECOLE CONFIG
   // ══════════════════════════════════════════════════════════════════════════
   await upsert('ecoleConfig', { tenantId: T },
-    { tenantId: T, nom: 'Ecole Noura Dakar', slogan: 'L\'excellence au service de l\'education',
+    { tenantId: T, nom: tenant.nom, slogan: 'L\'excellence au service de l\'education',
       adresse: 'Cite Keur Damel, Dakar', ville: 'Dakar', pays: 'SN',
-      telephone: '+221771234567', email: 'contact@noura.sn',
+      telephone: '+221771234567', email: tenant.emailContact || 'contact@edusen.sn',
       typeEtablissement: 'PRIVE', montantHoraireDefaut: 5000 },
-    { nom: 'Ecole Noura Dakar', slogan: 'L\'excellence au service de l\'education',
+    { nom: tenant.nom, slogan: 'L\'excellence au service de l\'education',
       adresse: 'Cite Keur Damel, Dakar', ville: 'Dakar', telephone: '+221771234567',
-      email: 'contact@noura.sn', montantHoraireDefaut: 5000 },
+      email: tenant.emailContact || 'contact@edusen.sn', montantHoraireDefaut: 5000 },
   );
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -444,8 +480,8 @@ async function main() {
 
   for (const [classeNom, classeRec] of Object.entries(classes)) {
     elevesByClasse[classeNom] = [];
-    // Generate 5 students per class
-    for (let i = 0; i < 5; i++) {
+    // Generate 8 students per class
+    for (let i = 0; i < 8; i++) {
       const isFemale = i % 2 === 1;
       const prenom = isFemale ? prenomsFem[(eleveCounter + i) % prenomsFem.length] : prenomsMasc[(eleveCounter + i) % prenomsMasc.length];
       const nom = noms[(eleveCounter + i * 3) % noms.length];
@@ -547,25 +583,24 @@ async function main() {
     return c;
   }
 
-  // Prescolaire — Mariama Niang
-  for (const cl of ['Petite Section A', 'Moyenne Section A', 'Grande Section A']) {
+  // Prescolaire — Mariama Niang (A + B)
+  for (const cl of ['Petite Section A', 'Petite Section B', 'Moyenne Section A', 'Moyenne Section B', 'Grande Section A', 'Grande Section B']) {
     await mkCours('EVEIL', teacherMariamaN, cl, 6, 2);
     await mkCours('MOTR', teacherMariamaN, cl, 3, 1);
     await mkCours('FR', teacherMariamaN, cl, 4, 2);
+    if (cl.includes('Moyenne') || cl.includes('Grande')) await mkCours('MATH', teacherMariamaN, cl, 3, 2);
+    if (cl.includes('Grande')) await mkCours('LECT', teacherMariamaN, cl, 3, 2);
   }
-  await mkCours('MATH', teacherMariamaN, 'Moyenne Section A', 3, 2);
-  await mkCours('MATH', teacherMariamaN, 'Grande Section A', 4, 3);
-  await mkCours('LECT', teacherMariamaN, 'Grande Section A', 3, 2);
 
-  // Primaire — Adja (CI, CP), Modou (CE1, CE2, CM1, CM2)
-  for (const cl of ['CI A', 'CP A']) {
+  // Primaire — Adja (CI, CP A+B), Modou (CE1-CM2 A+B)
+  for (const cl of ['CI A', 'CI B', 'CP A', 'CP B']) {
     await mkCours('FR', teacherAdja, cl, 6, 3);
     await mkCours('MATH', teacherAdja, cl, 5, 3);
     await mkCours('LECT', teacherAdja, cl, 4, 2);
     await mkCours('AR', teacherAdja, cl, 3, 1);
     await mkCours('EPS', teacherAdja, cl, 2, 1);
   }
-  for (const cl of ['CE1 A', 'CE2 A', 'CM1 A', 'CM2 A']) {
+  for (const cl of ['CE1 A', 'CE1 B', 'CE2 A', 'CE2 B', 'CM1 A', 'CM1 B', 'CM2 A', 'CM2 B']) {
     await mkCours('FR', teacherModou, cl, 6, 3);
     await mkCours('MATH', teacherModou, cl, 5, 3);
     await mkCours('LECT', teacherModou, cl, 4, 2);
@@ -574,8 +609,8 @@ async function main() {
     await mkCours('EDCIV', teacherModou, cl, 1, 1);
   }
 
-  // College — multiple profs
-  for (const cl of ['6eme A', '5eme A', '4eme A', '3eme A']) {
+  // College — multiple profs (A + B)
+  for (const cl of ['6eme A', '6eme B', '5eme A', '5eme B', '4eme A', '4eme B', '3eme A', '3eme B']) {
     await mkCours('FR', teacherAdja, cl, 5, 4);
     await mkCours('MATH', teacherOusmane, cl, 5, 4);
     await mkCours('ANG', teacherMoussa, cl, 3, 2);
@@ -587,8 +622,8 @@ async function main() {
     await mkCours('EDCIV', teacherFatouD, cl, 1, 1);
   }
 
-  // Lycee
-  for (const cl of ['Seconde A', 'Premiere A', 'Terminale A']) {
+  // Lycee (A + B)
+  for (const cl of ['Seconde A', 'Seconde B', 'Premiere A', 'Premiere B', 'Terminale A', 'Terminale B']) {
     await mkCours('FR', teacherAdja, cl, 4, 4);
     await mkCours('MATH', teacherNdeye || teacherOusmane, cl, 5, 5);
     await mkCours('ANG', teacherMoussa, cl, 3, 2);
@@ -711,29 +746,32 @@ async function main() {
     return prisma.note.create({ data });
   }
 
-  // Generate notes for ALL classes
-  const noteClasses = [
-    // Prescolaire (semestres, /10)
-    { classe: 'Petite Section A', mats: ['EVEIL', 'MOTR', 'FR'], periodes: ['SEMESTRE_1', 'SEMESTRE_2'], maxNote: 10 },
-    { classe: 'Moyenne Section A', mats: ['EVEIL', 'MOTR', 'FR', 'MATH'], periodes: ['SEMESTRE_1', 'SEMESTRE_2'], maxNote: 10 },
-    { classe: 'Grande Section A', mats: ['EVEIL', 'FR', 'MATH', 'LECT'], periodes: ['SEMESTRE_1', 'SEMESTRE_2'], maxNote: 10 },
-    // Primaire (semestres, /10)
-    { classe: 'CI A', mats: ['FR', 'MATH', 'LECT', 'AR'], periodes: ['SEMESTRE_1', 'SEMESTRE_2'], maxNote: 10 },
-    { classe: 'CP A', mats: ['FR', 'MATH', 'LECT', 'AR'], periodes: ['SEMESTRE_1', 'SEMESTRE_2'], maxNote: 10 },
-    { classe: 'CE1 A', mats: ['FR', 'MATH', 'LECT', 'AR'], periodes: ['SEMESTRE_1', 'SEMESTRE_2'], maxNote: 10 },
-    { classe: 'CE2 A', mats: ['FR', 'MATH', 'LECT', 'AR'], periodes: ['SEMESTRE_1', 'SEMESTRE_2'], maxNote: 10 },
-    { classe: 'CM1 A', mats: ['FR', 'MATH', 'LECT', 'AR'], periodes: ['SEMESTRE_1', 'SEMESTRE_2'], maxNote: 10 },
-    { classe: 'CM2 A', mats: ['FR', 'MATH', 'LECT', 'AR'], periodes: ['SEMESTRE_1', 'SEMESTRE_2'], maxNote: 10 },
-    // College (trimestres, /20)
-    { classe: '6eme A', mats: ['FR', 'MATH', 'ANG', 'HG', 'SVT', 'PC'], periodes: ['TRIMESTRE_1', 'TRIMESTRE_2', 'TRIMESTRE_3'], maxNote: 20 },
-    { classe: '5eme A', mats: ['FR', 'MATH', 'ANG', 'HG', 'SVT', 'PC'], periodes: ['TRIMESTRE_1', 'TRIMESTRE_2', 'TRIMESTRE_3'], maxNote: 20 },
-    { classe: '4eme A', mats: ['FR', 'MATH', 'ANG', 'HG', 'SVT', 'PC'], periodes: ['TRIMESTRE_1', 'TRIMESTRE_2', 'TRIMESTRE_3'], maxNote: 20 },
-    { classe: '3eme A', mats: ['FR', 'MATH', 'ANG', 'HG', 'SVT', 'PC'], periodes: ['TRIMESTRE_1', 'TRIMESTRE_2', 'TRIMESTRE_3'], maxNote: 20 },
-    // Lycee (trimestres, /20)
-    { classe: 'Seconde A', mats: ['FR', 'MATH', 'ANG', 'PC', 'SVT', 'PHILO', 'ECO'], periodes: ['TRIMESTRE_1', 'TRIMESTRE_2', 'TRIMESTRE_3'], maxNote: 20 },
-    { classe: 'Premiere A', mats: ['FR', 'MATH', 'ANG', 'PC', 'SVT', 'PHILO', 'ECO'], periodes: ['TRIMESTRE_1', 'TRIMESTRE_2', 'TRIMESTRE_3'], maxNote: 20 },
-    { classe: 'Terminale A', mats: ['FR', 'MATH', 'PC', 'SVT', 'PHILO', 'ANG', 'ECO'], periodes: ['TRIMESTRE_1', 'TRIMESTRE_2', 'TRIMESTRE_3'], maxNote: 20 },
-  ];
+  // Generate notes for ALL classes (A + B)
+  const noteClasses = [];
+  // Prescolaire
+  for (const s of ['A', 'B']) {
+    noteClasses.push({ classe: `Petite Section ${s}`, mats: ['EVEIL', 'MOTR', 'FR'], periodes: ['SEMESTRE_1', 'SEMESTRE_2'], maxNote: 10 });
+    noteClasses.push({ classe: `Moyenne Section ${s}`, mats: ['EVEIL', 'MOTR', 'FR', 'MATH'], periodes: ['SEMESTRE_1', 'SEMESTRE_2'], maxNote: 10 });
+    noteClasses.push({ classe: `Grande Section ${s}`, mats: ['EVEIL', 'FR', 'MATH', 'LECT'], periodes: ['SEMESTRE_1', 'SEMESTRE_2'], maxNote: 10 });
+  }
+  // Primaire
+  for (const n of ['CI', 'CP', 'CE1', 'CE2', 'CM1', 'CM2']) {
+    for (const s of ['A', 'B']) {
+      noteClasses.push({ classe: `${n} ${s}`, mats: ['FR', 'MATH', 'LECT', 'AR'], periodes: ['SEMESTRE_1', 'SEMESTRE_2'], maxNote: 10 });
+    }
+  }
+  // College
+  for (const n of ['6eme', '5eme', '4eme', '3eme']) {
+    for (const s of ['A', 'B']) {
+      noteClasses.push({ classe: `${n} ${s}`, mats: ['FR', 'MATH', 'ANG', 'HG', 'SVT', 'PC'], periodes: ['TRIMESTRE_1', 'TRIMESTRE_2', 'TRIMESTRE_3'], maxNote: 20 });
+    }
+  }
+  // Lycee
+  for (const n of ['Seconde', 'Premiere', 'Terminale']) {
+    for (const s of ['A', 'B']) {
+      noteClasses.push({ classe: `${n} ${s}`, mats: ['FR', 'MATH', 'ANG', 'PC', 'SVT', 'PHILO', 'ECO'], periodes: ['TRIMESTRE_1', 'TRIMESTRE_2', 'TRIMESTRE_3'], maxNote: 20 });
+    }
+  }
 
   for (const nc of noteClasses) {
     const eleves = elevesByClasse[nc.classe] || [];
