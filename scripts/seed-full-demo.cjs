@@ -93,6 +93,71 @@ async function main() {
   const T = tenant.id;
 
   // ══════════════════════════════════════════════════════════════════════════
+  // 0. NETTOYAGE COMPLET — supprimer toutes les donnees seed du tenant
+  // ══════════════════════════════════════════════════════════════════════════
+  console.log('🧹 Nettoyage complet des donnees existantes ...');
+
+  // Order matters: delete children before parents (FK constraints)
+  await prisma.auditLog.deleteMany({ where: { tenantId: T } });
+  await prisma.notificationLog.deleteMany({ where: { tenantId: T } });
+  await prisma.notification.deleteMany({ where: { tenantId: T } });
+  await prisma.pushToken.deleteMany({ where: { tenantId: T } });
+  await prisma.pointage.deleteMany({ where: { tenantId: T } });
+  await prisma.absencePersonnel.deleteMany({ where: { tenantId: T } });
+  await prisma.personnelNiveauAffectation.deleteMany({ where: { tenantId: T } });
+  await prisma.demandePassage.deleteMany({ where: { tenantId: T } });
+  await prisma.demandeReduction.deleteMany({ where: { tenantId: T } });
+  await prisma.demandeAudit.deleteMany({ where: { tenantId: T } });
+  await prisma.lienBulletinParent.deleteMany({ where: { tenantId: T } });
+  await prisma.lienPaiementParent.deleteMany({ where: { tenantId: T } });
+  await prisma.communication.deleteMany({ where: { tenantId: T } });
+  await prisma.annonce.deleteMany({ where: { tenantId: T } });
+  await prisma.convocation.deleteMany({ where: { tenantId: T } });
+  await prisma.discipline.deleteMany({ where: { tenantId: T } });
+  await prisma.reclamation.deleteMany({ where: { tenantId: T } });
+  await prisma.bulletin.deleteMany({ where: { tenantId: T } });
+  await prisma.note.deleteMany({ where: { tenantId: T } });
+  await prisma.absenceEleve.deleteMany({ where: { tenantId: T } });
+  await prisma.absenceEnseignant.deleteMany({ where: { tenantId: T } });
+  await prisma.cahierTexte.deleteMany({ where: { tenantId: T } });
+  await prisma.appel.deleteMany({ where: { tenantId: T } }); // AppelLigne cascade
+  await prisma.presenceCoursProfesseur.deleteMany({ where: { tenantId: T } });
+  await prisma.emploiDuTemps.deleteMany({ where: { tenantId: T } });
+  await prisma.paiement.deleteMany({ where: { tenantId: T } });
+  await prisma.paiementProfesseur.deleteMany({ where: { tenantId: T } });
+  await prisma.inscription.deleteMany({ where: { tenantId: T } });
+  await prisma.chapitreProgamme.deleteMany({ where: { programme: { tenantId: T } } });
+  await prisma.programmePedagogique.deleteMany({ where: { tenantId: T } });
+  await prisma.calendrierScolaire.deleteMany({ where: { tenantId: T } });
+  await prisma.surveillantCycle.deleteMany({ where: { tenantId: T } });
+  await prisma.classeStagiaire.deleteMany({ where: { tenantId: T } });
+  await prisma.eleveParent.deleteMany({ where: { eleve: { tenantId: T } } });
+  await prisma.eleveDocument.deleteMany({ where: { tenantId: T } });
+  await prisma.matiereClasse.deleteMany({ where: { tenantId: T } });
+  await prisma.cours.deleteMany({ where: { tenantId: T } });
+  await prisma.professeurMatiere.deleteMany({ where: { tenantId: T } });
+  await prisma.matiereNiveau.deleteMany({ where: { tenantId: T } });
+  await prisma.classe.deleteMany({ where: { tenantId: T } });
+  await prisma.fraisNiveauConfig.deleteMany({ where: { tenantId: T } });
+  await prisma.personnel.deleteMany({ where: { tenantId: T } });
+  // Delete seed users (all except the admin@seydijamil.sn or first admin)
+  const adminToKeep = await prisma.user.findFirst({ where: { tenantId: T, role: 'ADMIN' }, orderBy: { createdAt: 'asc' } });
+  if (adminToKeep) {
+    await prisma.refreshToken.deleteMany({ where: { user: { tenantId: T, id: { not: adminToKeep.id } } } });
+    await prisma.passwordResetToken.deleteMany({ where: { user: { tenantId: T, id: { not: adminToKeep.id } } } });
+    await prisma.user.deleteMany({ where: { tenantId: T, id: { not: adminToKeep.id } } });
+  }
+  await prisma.salle.deleteMany({ where: { tenantId: T } });
+  await prisma.batiment.deleteMany({ where: { tenantId: T } });
+  await prisma.niveau.deleteMany({ where: { tenantId: T } });
+  await prisma.cycle.deleteMany({ where: { tenantId: T } });
+  await prisma.matiere.deleteMany({ where: { tenantId: T } });
+  await prisma.anneeAcademique.deleteMany({ where: { tenantId: T } });
+  await prisma.ecoleConfig.deleteMany({ where: { tenantId: T } });
+  await prisma.ecolePaletteConfig.deleteMany({ where: { tenantId: T } });
+  console.log('  ✅ Nettoyage termine');
+
+  // ══════════════════════════════════════════════════════════════════════════
   // 1. STRUCTURE ACADEMIQUE : Cycles, Niveaux, FraisNiveauConfig
   // ══════════════════════════════════════════════════════════════════════════
   console.log('📚 Cycles, niveaux, frais ...');
@@ -111,15 +176,15 @@ async function main() {
       { code: 'CM1', nom: 'CM1', ordre: 14 },
       { code: 'CM2', nom: 'CM2', ordre: 15 },
     ]},
-    { code: 'COLLEGE', nom: 'College', typePeriode: 'SEMESTRE', moyenne: 20, ordre: 3, seeded: true, niveaux: [
-      { code: '6E', nom: '6eme', ordre: 20 },
-      { code: '5E', nom: '5eme', ordre: 21 },
-      { code: '4E', nom: '4eme', ordre: 22 },
-      { code: '3E', nom: '3eme', ordre: 23 },
+    { code: 'COLLEGE', nom: 'Collège', typePeriode: 'SEMESTRE', moyenne: 20, ordre: 3, seeded: true, niveaux: [
+      { code: '6E', nom: '6ème', ordre: 20 },
+      { code: '5E', nom: '5ème', ordre: 21 },
+      { code: '4E', nom: '4ème', ordre: 22 },
+      { code: '3E', nom: '3ème', ordre: 23 },
     ]},
-    { code: 'LYCEE', nom: 'Lycee', typePeriode: 'SEMESTRE', moyenne: 20, ordre: 4, seeded: true, niveaux: [
+    { code: 'LYCEE', nom: 'Lycée', typePeriode: 'SEMESTRE', moyenne: 20, ordre: 4, seeded: true, niveaux: [
       { code: '2NDE', nom: 'Seconde', ordre: 30 },
-      { code: '1ERE', nom: 'Premiere', ordre: 31 },
+      { code: '1ERE', nom: 'Première', ordre: 31 },
       { code: 'TLE', nom: 'Terminale', ordre: 32 },
     ]},
   ];
@@ -134,13 +199,13 @@ async function main() {
     'Primaire|CE2': { insc: 65000, mens: 32000 },
     'Primaire|CM1': { insc: 70000, mens: 35000 },
     'Primaire|CM2': { insc: 70000, mens: 35000 },
-    'College|6eme': { insc: 80000, mens: 40000 },
-    'College|5eme': { insc: 80000, mens: 40000 },
-    'College|4eme': { insc: 85000, mens: 42000 },
-    'College|3eme': { insc: 90000, mens: 45000 },
-    'Lycee|Seconde':  { insc: 100000, mens: 50000 },
-    'Lycee|Premiere': { insc: 105000, mens: 52000 },
-    'Lycee|Terminale':{ insc: 110000, mens: 55000 },
+    'Collège|6ème': { insc: 80000, mens: 40000 },
+    'Collège|5ème': { insc: 80000, mens: 40000 },
+    'Collège|4ème': { insc: 85000, mens: 42000 },
+    'Collège|3ème': { insc: 90000, mens: 45000 },
+    'Lycée|Seconde':  { insc: 100000, mens: 50000 },
+    'Lycée|Première': { insc: 105000, mens: 52000 },
+    'Lycée|Terminale':{ insc: 110000, mens: 55000 },
   };
 
   const cycleMap = {};   // code -> record
@@ -278,8 +343,8 @@ async function main() {
     // Lycee A + B (6)
     { nom: 'Seconde A', niveau: '2NDE', cycle: 'LYCEE', salle: 'Salle 301', max: 45 },
     { nom: 'Seconde B', niveau: '2NDE', cycle: 'LYCEE', salle: 'Salle 302', max: 45 },
-    { nom: 'Premiere A', niveau: '1ERE', cycle: 'LYCEE', salle: 'Salle 303', max: 45 },
-    { nom: 'Premiere B', niveau: '1ERE', cycle: 'LYCEE', salle: 'Salle 304', max: 45 },
+    { nom: 'Première A', niveau: '1ERE', cycle: 'LYCEE', salle: 'Salle 303', max: 45 },
+    { nom: 'Première B', niveau: '1ERE', cycle: 'LYCEE', salle: 'Salle 304', max: 45 },
     { nom: 'Terminale A', niveau: 'TLE', cycle: 'LYCEE', salle: 'Salle 305', max: 45 },
     { nom: 'Terminale B', niveau: 'TLE', cycle: 'LYCEE', salle: 'Salle 306', max: 45 },
   ];
@@ -482,15 +547,18 @@ async function main() {
   const noms = ['Diop', 'Ndiaye', 'Fall', 'Sow', 'Gueye', 'Sarr', 'Diallo', 'Kane', 'Thiam', 'Mbaye', 'Camara', 'Cisse', 'Diouf', 'Faye', 'Toure', 'Badji', 'Ndoye', 'Samb', 'Sy', 'Mendy'];
 
   const adminUser = await prisma.user.findFirst({ where: { tenantId: T, role: 'ADMIN' } });
-  let eleveCounter = 100;
   const elevesByClasse = {};
+  const classeEntries = Object.entries(classes);
 
-  for (const [classeNom, classeRec] of Object.entries(classes)) {
+  for (let ci = 0; ci < classeEntries.length; ci++) {
+    const [classeNom, classeRec] = classeEntries[ci];
     elevesByClasse[classeNom] = [];
     for (let i = 0; i < 8; i++) {
+      // Stable counter: classeIndex * 8 + studentIndex + 100
+      const eleveCounter = ci * 8 + i + 100;
       const isFemale = i % 2 === 1;
-      const prenom = isFemale ? prenomsFem[(eleveCounter + i) % prenomsFem.length] : prenomsMasc[(eleveCounter + i) % prenomsMasc.length];
-      const nom = noms[(eleveCounter + i * 3) % noms.length];
+      const prenom = isFemale ? prenomsFem[eleveCounter % prenomsFem.length] : prenomsMasc[eleveCounter % prenomsMasc.length];
+      const nom = noms[(eleveCounter * 3 + i) % noms.length];
       const suffix = `.${eleveCounter}`;
       const yearBirth = classeRec.nom.includes('Petite') ? 2021 : classeRec.nom.includes('Moyenne') ? 2020
         : classeRec.nom.includes('Grande') ? 2019 : classeRec.nom.includes('CI') ? 2018
@@ -524,7 +592,6 @@ async function main() {
       );
 
       elevesByClasse[classeNom].push(eleve);
-      eleveCounter++;
     }
   }
 
@@ -635,7 +702,7 @@ async function main() {
   }
 
   // Lycee
-  for (const cl of ['Seconde A', 'Seconde B', 'Premiere A', 'Premiere B', 'Terminale A', 'Terminale B']) {
+  for (const cl of ['Seconde A', 'Seconde B', 'Première A', 'Première B', 'Terminale A', 'Terminale B']) {
     await mkCours('FR', teacherAdja, cl, 4, 4);
     await mkCours('MATH', teacherMamadouD || teacherNdeye || teacherOusmane, cl, 5, 5);
     await mkCours('ANG', teacherMoussa, cl, 3, 2);
