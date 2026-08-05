@@ -941,22 +941,25 @@ async function main() {
     for (const eleve of eleves.slice(0, 4)) {
       const insc = await prisma.inscription.findFirst({ where: { tenantId: T, eleveId: eleve.id, anneeAcademiqueId: annee.id } });
       if (!insc) continue;
-      // Inscription payment + 2-3 mensualites
-      const nbMensualites = 2 + (paiCounter % 2); // 2 or 3
-      for (let mois = 0; mois <= nbMensualites; mois++) {
+      // Inscription payment + 2 mensualites
+      const paiDates = [
+        { type: 'INSCRIPTION', montant: 60000 + (paiCounter * 100), date: '2025-10-05', tri: null },
+        { type: 'SCOLARITE', montant: 30000, date: '2025-11-05', tri: 'Octobre' },
+        { type: 'SCOLARITE', montant: 30000, date: '2025-12-05', tri: 'Novembre' },
+      ];
+      for (const p of paiDates) {
         const ref = `PAY-${SCHOOL_YEAR}-${String(paiCounter).padStart(5, '0')}`;
         const existing = await prisma.paiement.findFirst({ where: { reference: ref } });
         if (!existing) {
-          const isInscription = mois === 0;
           await prisma.paiement.create({
             data: {
               tenantId: T, inscriptionId: insc.id, eleveId: eleve.id, reference: ref,
-              montant: isInscription ? 60000 + (paiCounter * 100) : 30000 + (mois * 5000),
-              typePaiement: isInscription ? 'INSCRIPTION' : 'SCOLARITE',
-              modePaiement: ['ESPECES', 'MOBILE_MONEY', 'VIREMENT', 'CHEQUE'][mois % 4],
+              montant: p.montant,
+              typePaiement: p.type,
+              modePaiement: ['ESPECES', 'MOBILE_MONEY', 'VIREMENT', 'CHEQUE'][paiCounter % 4],
               statut: 'VALIDE', anneeScolaire: SCHOOL_YEAR,
-              trimestre: isInscription ? null : `TRIMESTRE_${mois}`,
-              datePaiement: new Date(`2025-${String(10 + mois).padStart(2, '0')}-${String(5 + mois * 3).padStart(2, '0')}`),
+              trimestre: p.tri,
+              datePaiement: new Date(p.date),
               validePar: adminUser.id,
             },
           });
