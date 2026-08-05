@@ -547,6 +547,18 @@ async function main() {
   const noms = ['Diop', 'Ndiaye', 'Fall', 'Sow', 'Gueye', 'Sarr', 'Diallo', 'Kane', 'Thiam', 'Mbaye', 'Camara', 'Cisse', 'Diouf', 'Faye', 'Toure', 'Badji', 'Ndoye', 'Samb', 'Sy', 'Mendy'];
 
   const adminUser = await prisma.user.findFirst({ where: { tenantId: T, role: 'ADMIN' } });
+
+  // Build frais lookup: classeNom → { inscription, mensualite }
+  const fraisParClasse = {};
+  for (const cd of classeDefs) {
+    const sec = STRUCTURE.find(s => s.code === cd.cycle);
+    const niv = sec?.niveaux.find(n => n.code === cd.niveau);
+    if (sec && niv) {
+      const fk = `${sec.nom}|${niv.nom}`;
+      fraisParClasse[cd.nom] = FRAIS[fk] || FRAIS_DEFAULT;
+    }
+  }
+
   const elevesByClasse = {};
   const classeEntries = Object.entries(classes);
 
@@ -582,13 +594,17 @@ async function main() {
         lieuNaissance: ['Dakar', 'Thies', 'Saint-Louis', 'Kaolack', 'Ziguinchor'][i % 5],
       }, hash);
 
-      // Inscription
+      // Inscription avec frais
+      const fraisClasse = fraisParClasse[classeNom] || FRAIS_DEFAULT;
       await upsert('inscription',
         { numeroInscription: `INS-${SCHOOL_YEAR}-${String(eleveCounter).padStart(4, '0')}` },
         { tenantId: T, numeroInscription: `INS-${SCHOOL_YEAR}-${String(eleveCounter).padStart(4, '0')}`,
           eleveId: eleve.id, classeId: classeRec.id, anneeAcademiqueId: annee.id,
+          fraisInscription: fraisClasse.insc,
           statut: 'ACTIF', creePar: adminUser.id },
-        { eleveId: eleve.id, classeId: classeRec.id, anneeAcademiqueId: annee.id, statut: 'ACTIF', creePar: adminUser.id },
+        { eleveId: eleve.id, classeId: classeRec.id, anneeAcademiqueId: annee.id,
+          fraisInscription: fraisClasse.insc,
+          statut: 'ACTIF', creePar: adminUser.id },
       );
 
       elevesByClasse[classeNom].push(eleve);
