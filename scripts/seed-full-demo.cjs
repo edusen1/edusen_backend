@@ -1089,7 +1089,7 @@ async function main() {
           tenantId: T, titre: c.titre, contenu: c.contenu, canal: c.canal, statut: c.statut,
           cibleType: 'ROLES', roles: c.roles, inclureParents: c.roles.includes('PARENT'),
           inclureEleves: c.roles.includes('ELEVE'), nbDestinataires: 30 + i * 10,
-          envoyeLe: c.statut === 'ENVOYE' ? new Date(`2025-${String(10 + i).padStart(2, '0')}-${String(5 + i * 2).padStart(2, '0')}`) : null,
+          envoyeLe: c.statut === 'ENVOYE' ? new Date(['2025-10-05', '2025-10-15', '2025-11-05', '2025-11-20', '2025-12-01', '2026-01-10', '2026-02-05'][i] || '2026-01-15') : null,
           auteurId: adminUser.id,
         },
       });
