@@ -60,9 +60,7 @@ echo ""
 log_step "🌱 Scripts de seed complémentaires"
 node scripts/seed-platform-super-admin.cjs 2>&1 && log_ok "seed-platform-super-admin" || log_warn "seed-platform-super-admin ignoré"
 node scripts/seed-seydi-jamil.cjs          2>&1 && log_ok "seed-seydi-jamil"          || log_warn "seed-seydi-jamil ignoré"
-node scripts/patch-amadou-parcours.cjs 2>&1 && log_ok "patch-amadou-parcours" || log_warn "patch-amadou-parcours ignoré"
-node scripts/seed-amadou-notes.cjs     2>&1 && log_ok "seed-amadou-notes"     || log_warn "seed-amadou-notes ignoré"
-node scripts/seed-full-demo.cjs        2>&1 && log_ok "seed-full-demo"        || log_warn "seed-full-demo ignoré"
+node scripts/seed-full-demo.cjs            2>&1 && log_ok "seed-full-demo"            || log_warn "seed-full-demo ignoré"
 echo ""
 
 # ── 3. Démarrage ──────────────────────────────────────────────────────────────

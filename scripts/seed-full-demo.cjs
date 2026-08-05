@@ -28,7 +28,8 @@ const prisma = new PrismaClient();
 
 const PASSWORD = process.env.SEED_PASSWORD || 'Edusen@2026!';
 const SEED_PHONE = process.env.SEED_PHONE_NUMBER || '+22771272788';
-const TENANT_SLUG = 'ecole-noura-dakar';
+// Cherche le tenant par slug ou prend le premier tenant existant
+const TENANT_SLUG = process.env.SEED_TENANT_SLUG || null;
 const SCHOOL_YEAR = '2025-2026';
 const YEAR_START = new Date('2025-10-01');
 const YEAR_END = new Date('2026-07-31');
@@ -42,7 +43,8 @@ function slug(v) {
 }
 
 function email(p, n, suffix = '') {
-  return `${slug(p)}.${slug(n)}${suffix}@demo.noura.sn`;
+  const domain = process.env.SEED_EMAIL_DOMAIN || 'demo.edusen.sn';
+  return `${slug(p)}.${slug(n)}${suffix}@${domain}`;
 }
 
 async function upsert(model, where, create, update) {
@@ -79,8 +81,15 @@ async function main() {
   const hash = await bcrypt.hash(PASSWORD, 12);
 
   // ── Tenant ────────────────────────────────────────────────────────────────
-  const tenant = await prisma.tenant.findFirst({ where: { slug: TENANT_SLUG } });
-  if (!tenant) { console.error('Tenant introuvable — lance d\'abord seed.cjs'); process.exit(1); }
+  let tenant;
+  if (TENANT_SLUG) {
+    tenant = await prisma.tenant.findFirst({ where: { slug: TENANT_SLUG } });
+  } else {
+    // Prend le premier tenant existant (Seydi Jamil, Ecole Noura, etc.)
+    tenant = await prisma.tenant.findFirst({ where: { actif: true }, orderBy: { createdAt: 'asc' } });
+  }
+  if (!tenant) { console.error('Aucun tenant trouve en base — lance d\'abord seed-seydi-jamil.cjs ou seed.cjs'); process.exit(1); }
+  console.log(`Tenant cible : ${tenant.nom} (${tenant.slug})`);
   const T = tenant.id;
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -510,8 +519,8 @@ async function main() {
   console.log('📝 Cours, affectations profs ...');
 
   // Teacher assignments
-  const teacherAdja = teacherMap['adja.sarr@demo.noura.sn'];
-  const teacherOusmane = teacherMap['ousmane.diouf@demo.noura.sn'];
+  const teacherAdja = teacherMap[email('Adja', 'Sarr')];
+  const teacherOusmane = teacherMap[email('Ousmane', 'Diouf')];
   const teacherMoussa = teacherMap[email('Moussa', 'Diagne')];
   const teacherFatouD = teacherMap[email('Fatou', 'Diop')];
   const teacherIbrahimaS = teacherMap[email('Ibrahima', 'Seck')];
