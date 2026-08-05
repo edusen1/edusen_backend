@@ -67,7 +67,11 @@ async function upsertUser(tenantId, u, hash) {
     dateEmbauche: u.dateEmbauche || null, profession: u.profession || null,
     lieuTravail: u.lieuTravail || null, lienParente: u.lienParente || null,
   };
-  const existing = await prisma.user.findFirst({ where: { tenantId, email: e } });
+  // Try by email first, then by matricule (for re-runs after partial failures)
+  let existing = await prisma.user.findFirst({ where: { tenantId, email: e } });
+  if (!existing && u.matricule) {
+    existing = await prisma.user.findFirst({ where: { tenantId, matricule: u.matricule } });
+  }
   if (existing) return prisma.user.update({ where: { id: existing.id }, data });
   return prisma.user.create({ data });
 }
