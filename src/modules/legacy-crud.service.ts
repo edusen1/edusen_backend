@@ -959,7 +959,11 @@ export class LegacyCrudService {
       if (professeurMatiereIds !== null) {
         await this.replaceProfesseurMatieres(tenantId ?? String(created.tenantId ?? ''), created.id, professeurMatiereIds);
       }
-      return this.findOne(config, tenantId, created.id);
+      const result = await this.findOne(config, tenantId, created.id);
+      if (tempPassword && result && typeof result === 'object') {
+        (result as Record<string, unknown>).generatedPassword = tempPassword;
+      }
+      return result;
     }
 
     if (config.model === 'personnel') {
@@ -1175,14 +1179,21 @@ export class LegacyCrudService {
   async desactiverInscription(tenantId: string | undefined, id: string) {
     const inscription = await this.prisma.inscription.findFirst({
       where: { id, ...this.fixedWhere(V1_RESOURCES.inscriptions, tenantId) },
-      select: { id: true },
+      select: { id: true, eleveId: true },
     });
     if (!inscription) throw new NotFoundException('Inscription introuvable');
 
-    const updated = await this.prisma.inscription.update({
+    await this.prisma.inscription.update({
       where: { id },
       data: { statut: 'INACTIF' },
     });
+
+    // Also set user.actif = false so the status reflects in the eleve list
+    await this.prisma.user.update({
+      where: { id: inscription.eleveId },
+      data: { actif: false },
+    });
+
     return this.findOne(V1_RESOURCES.inscriptions, tenantId, inscription.id);
   }
 
@@ -4334,8 +4345,11 @@ export class LegacyCrudService {
   ): Promise<void> {
     const bulletins = await this.prisma.bulletin.findMany({
       where: { tenantId, classeId, trimestre, anneeScolaire, moyenne: { not: null } },
-      orderBy: { moyenne: 'desc' },
     });
+
+    // Sort in JavaScript to guarantee correct descending order (highest average = rank 1)
+    bulletins.sort((a, b) => (Number(b.moyenne) || 0) - (Number(a.moyenne) || 0));
+
     const moyenneClasse =
       bulletins.length > 0
         ? Math.round((bulletins.reduce((sum, bulletin) => sum + (bulletin.moyenne ?? 0), 0) / bulletins.length) * 100) / 100
@@ -4620,12 +4634,20 @@ export class LegacyCrudService {
     if (!demande) throw new NotFoundException('Demande introuvable');
     if (demande.statut !== 'EN_ATTENTE') throw new BadRequestException('Cette demande a déjà été traitée');
 
-    const anneeCourante = await this.findCurrentAnnee(tenantId);
-    if (!anneeCourante) throw new BadRequestException('Aucune année académique courante');
+    // Use the target class's academic year (not the current year) to avoid
+    // "already inscribed" errors when the student has an active inscription
+    // for the current year but the passage targets a class in a different year.
+    const classeDest = await this.prisma.classe.findFirst({
+      where: { id: demande.classeDestId, tenantId },
+      select: { anneeAcademiqueId: true },
+    });
+    const targetAnneeId = classeDest?.anneeAcademiqueId ?? demande.anneeAcademiqueId;
+    if (!targetAnneeId) throw new BadRequestException('Aucune année académique associée à la classe de destination');
+
     await this.assertSingleInscriptionPerYear(tenantId, {
       eleveId: demande.eleveId,
       classeId: demande.classeDestId,
-      anneeAcademiqueId: anneeCourante.id,
+      anneeAcademiqueId: targetAnneeId,
     });
 
     const [updated] = await this.prisma.$transaction([
@@ -4639,7 +4661,7 @@ export class LegacyCrudService {
           tenantId,
           eleveId: demande.eleveId,
           classeId: demande.classeDestId,
-          anneeAcademiqueId: anneeCourante.id,
+          anneeAcademiqueId: targetAnneeId,
           numeroInscription: this.generateInscriptionNumero(tenantId),
           statut: 'ACTIF',
           creePar: userId ?? demande.creePar,

@@ -423,8 +423,10 @@ export class BulletinService {
   private async updateRangs(tenantId: string, classeId: string, trimestre: string, anneeScolaire: string): Promise<void> {
     const bulletins = await this.prisma.bulletin.findMany({
       where: { tenantId, classeId, trimestre, anneeScolaire, moyenne: { not: null } },
-      orderBy: { moyenne: 'desc' },
     });
+
+    // Sort in JavaScript to guarantee correct descending order (highest average = rank 1)
+    bulletins.sort((a, b) => (Number(b.moyenne) || 0) - (Number(a.moyenne) || 0));
 
     const updates = bulletins.map((b, idx) =>
       this.prisma.bulletin.update({ where: { id: b.id }, data: { rang: idx + 1 } }),

@@ -1574,6 +1574,26 @@ export class AdminController {
   }
 
   @Roles('ADMIN')
+  @Patch('eleves/:id/reactiver')
+  async reactiverEleve(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') eleveId: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    const insc = await this.prisma.inscription.findFirst({
+      where: { tenantId: tid, eleveId, statut: { in: ['INACTIF', 'EXCLU'] } },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (!insc) throw new NotFoundException('Aucune inscription inactive trouvée pour cet élève');
+    await this.prisma.inscription.update({ where: { id: insc.id }, data: { statut: 'ACTIF' } });
+    await this.prisma.user.update({ where: { id: eleveId }, data: { actif: true } });
+    return { message: 'Inscription réactivée' };
+  }
+
+  @Roles('ADMIN')
   @Patch('eleves/:id/exclure')
   async exclureEleve(
     @Headers('x-tenant-id') tenantId: string | undefined,
