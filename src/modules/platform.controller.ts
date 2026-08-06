@@ -436,6 +436,11 @@ export class PlatformController {
     };
   }
 
+  @Get('monitoring/storage')
+  async monitoringStorage() {
+    return this.storage.getStorageStats();
+  }
+
   @Get('monitoring/alerts')
   async monitoringAlerts() {
     const alerts: { level: 'critical' | 'warning' | 'info'; category: string; message: string; recommendation: string }[] = [];

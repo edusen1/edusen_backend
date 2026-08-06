@@ -5,6 +5,7 @@ import {
   GetObjectCommandOutput,
   HeadBucketCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -157,6 +158,70 @@ export class StorageService {
       this.logger.warn(`[Storage] Get object failed key=${key}: ${error.message ?? 'unknown error'}`);
       throw new NotFoundException('Fichier introuvable');
     }
+  }
+
+  async getStorageStats(): Promise<{
+    totalObjects: number;
+    totalSizeBytes: number;
+    totalSizeMb: number;
+    totalSizeGb: number;
+    bucket: string;
+    configured: boolean;
+    byPrefix: { prefix: string; objects: number; sizeBytes: number; sizeMb: number }[];
+  }> {
+    if (!this.configured) {
+      return { totalObjects: 0, totalSizeBytes: 0, totalSizeMb: 0, totalSizeGb: 0, bucket: this.bucket, configured: false, byPrefix: [] };
+    }
+
+    let totalObjects = 0;
+    let totalSizeBytes = 0;
+    const prefixMap = new Map<string, { objects: number; sizeBytes: number }>();
+    let continuationToken: string | undefined;
+
+    try {
+      do {
+        const res = await this.client.send(new ListObjectsV2Command({
+          Bucket: this.bucket,
+          ContinuationToken: continuationToken,
+        }));
+
+        for (const obj of res.Contents ?? []) {
+          totalObjects++;
+          totalSizeBytes += obj.Size ?? 0;
+
+          // Group by first path segment (tenantId or folder)
+          const prefix = obj.Key?.split('/')[0] ?? 'other';
+          const entry = prefixMap.get(prefix) ?? { objects: 0, sizeBytes: 0 };
+          entry.objects++;
+          entry.sizeBytes += obj.Size ?? 0;
+          prefixMap.set(prefix, entry);
+        }
+
+        continuationToken = res.IsTruncated ? res.NextContinuationToken : undefined;
+      } while (continuationToken);
+    } catch (err) {
+      this.logger.error(`[Storage] getStorageStats failed: ${(err as Error).message}`);
+      return { totalObjects: 0, totalSizeBytes: 0, totalSizeMb: 0, totalSizeGb: 0, bucket: this.bucket, configured: true, byPrefix: [] };
+    }
+
+    const byPrefix = Array.from(prefixMap.entries())
+      .map(([prefix, v]) => ({
+        prefix,
+        objects: v.objects,
+        sizeBytes: v.sizeBytes,
+        sizeMb: Math.round((v.sizeBytes / 1024 / 1024) * 100) / 100,
+      }))
+      .sort((a, b) => b.sizeBytes - a.sizeBytes);
+
+    return {
+      totalObjects,
+      totalSizeBytes,
+      totalSizeMb: Math.round((totalSizeBytes / 1024 / 1024) * 100) / 100,
+      totalSizeGb: Math.round((totalSizeBytes / 1024 / 1024 / 1024) * 100) / 100,
+      bucket: this.bucket,
+      configured: true,
+      byPrefix,
+    };
   }
 
   async delete(key: string): Promise<void> {
