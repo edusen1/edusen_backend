@@ -53,7 +53,8 @@ async function upsert(model, where, create, update) {
 
 async function upsertUser(tenantId, u, hash) {
   const e = u.email || email(u.prenom, u.nom);
-  const un = u.username || slug(`${u.prenom}.${u.nom}`);
+  // Use email as username to guarantee uniqueness across tenants
+  const un = u.username || e;
   const data = {
     tenantId, email: e, username: un, firstName: u.prenom, lastName: u.nom,
     telephone: u.telephone || SEED_PHONE, adresse: u.adresse || 'Dakar, Senegal',
@@ -477,18 +478,18 @@ async function main() {
   const teacherByEmail = new Map(existingTeachers.map(t => [t.email, t]));
 
   const newTeachers = [
-    { prenom: 'Moussa', nom: 'Diagne', specialite: 'Anglais / Arabe', dateEmbauche: new Date('2022-09-01') },
-    { prenom: 'Fatou', nom: 'Diop', specialite: 'Histoire-Geographie', dateEmbauche: new Date('2023-09-01') },
-    { prenom: 'Ibrahima', nom: 'Seck', specialite: 'SVT / Physique-Chimie', dateEmbauche: new Date('2021-09-01') },
-    { prenom: 'Mariama', nom: 'Niang', specialite: 'Prescolaire', dateEmbauche: new Date('2024-10-01') },
-    { prenom: 'Cheikh', nom: 'Mbaye', specialite: 'Philosophie / Economie', dateEmbauche: new Date('2020-09-01') },
-    { prenom: 'Aissatou', nom: 'Gueye', specialite: 'Informatique / EPS', dateEmbauche: new Date('2023-01-15') },
-    { prenom: 'Modou', nom: 'Sarr', specialite: 'Francais / Lecture', dateEmbauche: new Date('2022-10-01') },
-    { prenom: 'Ndeye', nom: 'Thiam', specialite: 'Mathematiques College', dateEmbauche: new Date('2024-01-15') },
-    { prenom: 'Abdoulaye', nom: 'Ndiaye', specialite: 'Arabe / Education civique', dateEmbauche: new Date('2023-09-01') },
-    { prenom: 'Souleymane', nom: 'Ba', specialite: 'Eveil / Motricite', dateEmbauche: new Date('2024-09-01') },
-    { prenom: 'Oumy', nom: 'Sall', specialite: 'Lecture / Francais primaire', dateEmbauche: new Date('2022-09-01') },
-    { prenom: 'Mamadou', nom: 'Diaw', specialite: 'Mathematiques Lycee', dateEmbauche: new Date('2021-09-01') },
+    { prenom: 'Moussa', nom: 'Diagne', specialite: 'Anglais / Arabe', dateEmbauche: new Date('2022-09-01'), matricule: 'ENS-001' },
+    { prenom: 'Fatou', nom: 'Diop', specialite: 'Histoire-Geographie', dateEmbauche: new Date('2023-09-01'), matricule: 'ENS-002' },
+    { prenom: 'Ibrahima', nom: 'Seck', specialite: 'SVT / Physique-Chimie', dateEmbauche: new Date('2021-09-01'), matricule: 'ENS-003' },
+    { prenom: 'Mariama', nom: 'Niang', specialite: 'Prescolaire', dateEmbauche: new Date('2024-10-01'), matricule: 'ENS-004' },
+    { prenom: 'Cheikh', nom: 'Mbaye', specialite: 'Philosophie / Economie', dateEmbauche: new Date('2020-09-01'), matricule: 'ENS-005' },
+    { prenom: 'Aissatou', nom: 'Gueye', specialite: 'Informatique / EPS', dateEmbauche: new Date('2023-01-15'), matricule: 'ENS-006' },
+    { prenom: 'Modou', nom: 'Sarr', specialite: 'Francais / Lecture', dateEmbauche: new Date('2022-10-01'), matricule: 'ENS-007' },
+    { prenom: 'Ndeye', nom: 'Thiam', specialite: 'Mathematiques College', dateEmbauche: new Date('2024-01-15'), matricule: 'ENS-008' },
+    { prenom: 'Abdoulaye', nom: 'Ndiaye', specialite: 'Arabe / Education civique', dateEmbauche: new Date('2023-09-01'), matricule: 'ENS-009' },
+    { prenom: 'Souleymane', nom: 'Ba', specialite: 'Eveil / Motricite', dateEmbauche: new Date('2024-09-01'), matricule: 'ENS-010' },
+    { prenom: 'Oumy', nom: 'Sall', specialite: 'Lecture / Francais primaire', dateEmbauche: new Date('2022-09-01'), matricule: 'ENS-011' },
+    { prenom: 'Mamadou', nom: 'Diaw', specialite: 'Mathematiques Lycee', dateEmbauche: new Date('2021-09-01'), matricule: 'ENS-012' },
   ];
 
   for (const t of newTeachers) {
@@ -509,9 +510,16 @@ async function main() {
   // ══════════════════════════════════════════════════════════════════════════
   console.log('👥 Personnel ...');
 
-  const comptable = await upsertUser(T, { prenom: 'Abdoulaye', nom: 'Diallo', role: 'COMPTABLE', telephone: SEED_PHONE }, hash);
-  const securite1 = await upsertUser(T, { prenom: 'Moustapha', nom: 'Ndoye', role: 'SECURITE', telephone: SEED_PHONE }, hash);
-  const securite2 = await upsertUser(T, { prenom: 'Babacar', nom: 'Faye', role: 'SECURITE', telephone: SEED_PHONE }, hash);
+  // Staff users with unique matricules for login
+  await upsertUser(T, { prenom: 'Fatou', nom: 'Cisse', role: 'CAISSIER', telephone: SEED_PHONE, matricule: 'CAI-001' }, hash);
+  await upsertUser(T, { prenom: 'Ibrahima', nom: 'Kane', role: 'CAISSIER', telephone: SEED_PHONE, matricule: 'CAI-002' }, hash);
+  await upsertUser(T, { prenom: 'Rokhaya', nom: 'Diallo', role: 'SURVEILLANT', telephone: SEED_PHONE, matricule: 'SUR-001' }, hash);
+  await upsertUser(T, { prenom: 'Pape', nom: 'Gaye', role: 'SURVEILLANT', telephone: SEED_PHONE, matricule: 'SUR-002' }, hash);
+  await upsertUser(T, { prenom: 'Boubacar', nom: 'Sy', role: 'RH', telephone: SEED_PHONE, matricule: 'RH-001' }, hash);
+  await upsertUser(T, { prenom: 'Khadim', nom: 'Thiam', role: 'RH', telephone: SEED_PHONE, matricule: 'RH-002' }, hash);
+  const comptable = await upsertUser(T, { prenom: 'Abdoulaye', nom: 'Diallo', role: 'COMPTABLE', telephone: SEED_PHONE, matricule: 'CPT-001' }, hash);
+  const securite1 = await upsertUser(T, { prenom: 'Moustapha', nom: 'Ndoye', role: 'SECURITE', telephone: SEED_PHONE, matricule: 'SEC-001' }, hash);
+  const securite2 = await upsertUser(T, { prenom: 'Babacar', nom: 'Faye', role: 'SECURITE', telephone: SEED_PHONE, matricule: 'SEC-002' }, hash);
 
   const staffUsers = await prisma.user.findMany({
     where: { tenantId: T, role: { in: ['ADMIN', 'CAISSIER', 'SURVEILLANT', 'ENSEIGNANT', 'RH', 'COMPTABLE', 'SECURITE'] } },
