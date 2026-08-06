@@ -93,6 +93,17 @@ async function main() {
   console.log(`Tenant cible : ${tenant.nom} (${tenant.slug})`);
   const T = tenant.id;
 
+  // ── Cleanup duplicate tenants (slug variants) ──
+  const dupTenants = await prisma.tenant.findMany({ where: { nom: tenant.nom, id: { not: T } } });
+  for (const dup of dupTenants) {
+    console.log(`  🧹 Suppression tenant doublon : ${dup.slug} (${dup.id})`);
+    try {
+      await prisma.user.deleteMany({ where: { tenantId: dup.id } });
+      await prisma.ecoleConfig.deleteMany({ where: { tenantId: dup.id } });
+      await prisma.tenant.delete({ where: { id: dup.id } });
+    } catch (err) { console.log(`  ⚠️ Impossible de supprimer doublon ${dup.slug}: ${err.message}`); }
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
   // 0. NETTOYAGE COMPLET — supprimer toutes les donnees seed du tenant
   // ══════════════════════════════════════════════════════════════════════════

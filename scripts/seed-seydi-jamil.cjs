@@ -31,7 +31,8 @@ async function generateUniqueCode(field) {
 }
 
 async function main() {
-  let tenant = await prisma.tenant.findFirst({ where: { slug: TENANT_SLUG } });
+  // Search both slug variants (with and without hyphen)
+  let tenant = await prisma.tenant.findFirst({ where: { OR: [{ slug: TENANT_SLUG }, { slug: 'seydijamil' }] } });
   if (!tenant) {
     const [codeAccesEleve, codeAccesEnseignant, codeAccesCaissier, codeAccesAdmin, codeAccesSurveillant, codeAccesRh] =
       await Promise.all([
