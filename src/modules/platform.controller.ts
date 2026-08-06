@@ -8,9 +8,38 @@ import { RedisService } from '@/infrastructure/redis/redis.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
 import { PlatformService } from '@/modules/platform/platform.service';
 import { FeatureService } from '@/modules/feature/feature.service';
+import { TemplateRendererService } from '@/modules/document/template-renderer.service';
 import { CreateTenantDto } from '@/modules/platform/dto/create-tenant.dto';
 import { CreateUserDto } from '@/modules/platform/dto/create-user.dto';
 import * as os from 'os';
+
+const PREVIEW_DATA: Record<string, Record<string, unknown>> = {
+  BULLETIN: {
+    school: { name: 'Ecole Noura Dakar', address: 'Dakar, Senegal', phone: '+221 77 123 45 67', logoUrl: '' },
+    student: { name: 'Aminata Diallo', matricule: 'NOURA-2026-0042', classe: 'CM2 A', birthDate: '12/03/2015', birthPlace: 'Dakar' },
+    bulletin: { period: 'Trimestre 1', year: '2025-2026', average: '14.50', classAverage: '12.30', rank: '3eme', totalStudents: 28, absences: 2, tardies: 1, appreciation: 'Excellent travail. Continue ainsi.', reference: 'BUL-2026-0042-T1' },
+    rows: [
+      { label: 'Mathematiques', moyDevoirs: '15.00', composition: '14.00', moyenne: '14.50', coefficient: 4, total: '58.00', appreciation: 'Tres bien' },
+      { label: 'Francais', moyDevoirs: '13.50', composition: '15.00', moyenne: '14.25', coefficient: 4, total: '57.00', appreciation: 'Bon niveau' },
+      { label: 'Sciences', moyDevoirs: '16.00', composition: '14.50', moyenne: '15.25', coefficient: 2, total: '30.50', appreciation: 'Excellent' },
+      { label: 'Histoire-Geo', moyDevoirs: '12.00', composition: '13.00', moyenne: '12.50', coefficient: 2, total: '25.00', appreciation: 'Assez bien' },
+      { label: 'Anglais', moyDevoirs: '14.00', composition: '15.50', moyenne: '14.75', coefficient: 2, total: '29.50', appreciation: 'Tres bien' },
+      { label: 'Education physique', moyDevoirs: '16.00', composition: '17.00', moyenne: '16.50', coefficient: 1, total: '16.50', appreciation: 'Excellent' },
+    ],
+  },
+  CARTE_SCOLAIRE: {
+    school: { name: 'Ecole Noura Dakar', sub: 'Dakar, Senegal', logoUrl: '', annee: '2025-2026', validUntil: '31/07/2026' },
+    user: { name: 'Aminata Diallo', matricule: 'NOURA-2026-0042', classe: 'CM2 A', dateNaissance: '12/03/2015', lieuNaissance: 'Dakar', genre: 'F', photoUrl: '' },
+    parent: { nom: 'Fatou Diallo', telephone: '+221 77 987 65 43' },
+    card: { title: 'CARTE ELEVE', qrDataUrl: '' },
+  },
+  RECU_PAIEMENT: {
+    school: { name: 'Ecole Noura Dakar', address: 'Dakar, Senegal', phone: '+221 77 123 45 67', logoUrl: '', initials: 'EN' },
+    student: { name: 'Aminata Diallo', matricule: 'NOURA-2026-0042', classe: 'CM2 A' },
+    payer: { nom: 'Fatou Diallo', telephone: '+221 77 987 65 43' },
+    payment: { reference: 'PAY-2026-00128', date: '06/08/2026', period: 'Octobre', year: '2025-2026', montantBrut: '75 000', reduction: '5 000', reductionLabel: 'Fratrie -10%', montantNet: '70 000', montantPaye: '70 000', hasReduction: true, hasDebt: false, isPaid: true, dette: '0', typeLabel: 'Mensualite', modeLabel: 'Especes', encaisseParNom: 'Moussa Ndiaye', transactionId: '' },
+  },
+};
 
 @Roles('SUPER_ADMIN', 'GESTIONNAIRE')
 @Controller('platform')
@@ -23,6 +52,7 @@ export class PlatformController {
     private readonly redis: RedisService,
     private readonly storage: StorageService,
     private readonly featureService: FeatureService,
+    private readonly templateRenderer: TemplateRendererService,
   ) {}
 
   @Get('tenants')
@@ -273,6 +303,17 @@ export class PlatformController {
     const t = await this.prisma.documentTemplate.findUnique({ where: { id } });
     if (!t) throw new BadRequestException('Template introuvable');
     return t;
+  }
+
+  @Get('templates/:id/preview')
+  async previewTemplate(@Param('id') id: string) {
+    const t = await this.prisma.documentTemplate.findUnique({ where: { id } });
+    if (!t) throw new BadRequestException('Template introuvable');
+
+    const styles = (t.styles ?? {}) as Record<string, string>;
+    const sampleData = PREVIEW_DATA[t.typeDocument] ?? {};
+    const html = this.templateRenderer.render(t.templateHtml, sampleData, styles as never);
+    return { html, typeDocument: t.typeDocument, nom: t.nom };
   }
 
   @Roles('SUPER_ADMIN')
