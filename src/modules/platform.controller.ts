@@ -241,13 +241,20 @@ export class PlatformController {
     const now = new Date();
     const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const last7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const lastHour = new Date(now.getTime() - 60 * 60 * 1000);
 
-    const [connexions24h, connexions7d, totalAudit24h] = await Promise.all([
+    const [connexions24h, connexions7d, echouees24h, echouees1h, totalAudit24h] = await Promise.all([
       this.prisma.auditLog.count({
-        where: { action: { contains: 'CONNEXION' }, createdAt: { gte: last24h } },
+        where: { action: 'CONNEXION', createdAt: { gte: last24h } },
       }),
       this.prisma.auditLog.count({
-        where: { action: { contains: 'CONNEXION' }, createdAt: { gte: last7d } },
+        where: { action: 'CONNEXION', createdAt: { gte: last7d } },
+      }),
+      this.prisma.auditLog.count({
+        where: { action: 'CONNEXION_ECHOUEE', createdAt: { gte: last24h } },
+      }),
+      this.prisma.auditLog.count({
+        where: { action: 'CONNEXION_ECHOUEE', createdAt: { gte: lastHour } },
       }),
       this.prisma.auditLog.count({
         where: { createdAt: { gte: last24h } },
@@ -260,28 +267,35 @@ export class PlatformController {
       select: { ipAddress: true, action: true },
     });
 
-    const ipMap = new Map<string, { count: number; actions: Set<string> }>();
+    const ipMap = new Map<string, { count: number; actions: Set<string>; failures: number }>();
     for (const log of recentLogs) {
       const ip = log.ipAddress!;
       const entry = ipMap.get(ip);
       if (entry) {
         entry.count++;
         entry.actions.add(log.action);
+        if (log.action === 'CONNEXION_ECHOUEE') entry.failures++;
       } else {
-        ipMap.set(ip, { count: 1, actions: new Set([log.action]) });
+        ipMap.set(ip, { count: 1, actions: new Set([log.action]), failures: log.action === 'CONNEXION_ECHOUEE' ? 1 : 0 });
       }
     }
     const topIps = Array.from(ipMap.entries())
-      .map(([ip, v]) => ({ ip, count: v.count, actions: v.actions.size }))
+      .map(([ip, v]) => ({ ip, count: v.count, actions: v.actions.size, failures: v.failures }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 20);
+
+    // IPs suspectes : > 5 échecs en 24h
+    const suspiciousIps = Array.from(ipMap.entries())
+      .filter(([, v]) => v.failures >= 5)
+      .map(([ip, v]) => ({ ip, failures: v.failures, totalActions: v.count }))
+      .sort((a, b) => b.failures - a.failures);
 
     // Actions sensibles des 24h
     const sensitiveActions = await this.prisma.auditLog.groupBy({
       by: ['action'],
       where: {
         createdAt: { gte: last24h },
-        action: { in: ['SUPPRESSION', 'CONNEXION', 'DECONNEXION', 'APPROBATION', 'REJET', 'ACTIVATION'] },
+        action: { in: ['SUPPRESSION', 'CONNEXION', 'CONNEXION_ECHOUEE', 'DECONNEXION', 'APPROBATION', 'REJET', 'ACTIVATION'] },
       },
       _count: true,
     });
@@ -289,15 +303,117 @@ export class PlatformController {
     return {
       connexions24h,
       connexions7d,
+      echouees24h,
+      echouees1h,
       totalAudit24h,
       uniqueIps24h: ipMap.size,
       topIps,
+      suspiciousIps,
       sensitiveActions: sensitiveActions.map((a) => ({
         action: a.action,
         count: a._count,
       })),
       timestamp: new Date().toISOString(),
     };
+  }
+
+  @Get('monitoring/alerts')
+  async monitoringAlerts() {
+    const alerts: { level: 'critical' | 'warning' | 'info'; category: string; message: string; recommendation: string }[] = [];
+
+    // 1. Memory check
+    const mem = process.memoryUsage();
+    const rssMb = Math.round(mem.rss / 1024 / 1024);
+    const totalMem = Math.round(os.totalmem() / 1024 / 1024);
+    const freeMem = Math.round(os.freemem() / 1024 / 1024);
+    const memUsagePct = Math.round(((totalMem - freeMem) / totalMem) * 100);
+
+    if (memUsagePct > 90) {
+      alerts.push({ level: 'critical', category: 'MEMOIRE', message: `Memoire systeme a ${memUsagePct}% (${freeMem} Mo libres sur ${totalMem} Mo)`, recommendation: 'Augmentez la RAM du serveur (minimum recommande : 2 Go). Verifiez les fuites memoire avec --inspect.' });
+    } else if (memUsagePct > 80) {
+      alerts.push({ level: 'warning', category: 'MEMOIRE', message: `Memoire systeme a ${memUsagePct}%`, recommendation: 'Surveillez la tendance. Si ca monte, envisagez de passer de 1 Go a 2 Go de RAM.' });
+    }
+
+    if (rssMb > 512) {
+      alerts.push({ level: 'warning', category: 'MEMOIRE', message: `RSS du processus Node a ${rssMb} Mo`, recommendation: 'Le processus consomme beaucoup. Verifiez les requetes lourdes, les caches en memoire, et les connexions Prisma.' });
+    }
+
+    // 2. Redis check
+    let redisOk = false;
+    try { await this.redis.ping(); redisOk = true; } catch { /* */ }
+    if (!redisOk) {
+      alerts.push({ level: 'critical', category: 'REDIS', message: 'Redis est injoignable', recommendation: 'Verifiez que Redis est demarre (docker ps). Sans Redis : pas de rate limiting, pas de sessions, pas de cache OTP. Le limiteur est desactive silencieusement (skipOnError: true).' });
+    }
+
+    // 3. DB check
+    let dbOk = false;
+    let dbLatency = 0;
+    try {
+      const start = Date.now();
+      await this.prisma.$queryRaw`SELECT 1`;
+      dbLatency = Date.now() - start;
+      dbOk = true;
+    } catch { /* */ }
+    if (!dbOk) {
+      alerts.push({ level: 'critical', category: 'BASE_DE_DONNEES', message: 'La base de donnees ne repond pas', recommendation: 'Verifiez PostgreSQL (docker ps, pg_isready). Verifiez DATABASE_CONNECTION_LIMIT (actuellement 8 — augmentez a 20 si le serveur le permet).' });
+    } else if (dbLatency > 500) {
+      alerts.push({ level: 'warning', category: 'BASE_DE_DONNEES', message: `Latence DB elevee : ${dbLatency} ms`, recommendation: 'Verifiez la charge de la base. Ajoutez des index si certaines requetes sont lentes. Verifiez que le serveur DB est sur le meme reseau.' });
+    }
+
+    // 4. Failed logins check
+    const lastHour = new Date(Date.now() - 60 * 60 * 1000);
+    const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const [echouees1h, echouees24h] = await Promise.all([
+      this.prisma.auditLog.count({ where: { action: 'CONNEXION_ECHOUEE', createdAt: { gte: lastHour } } }),
+      this.prisma.auditLog.count({ where: { action: 'CONNEXION_ECHOUEE', createdAt: { gte: last24h } } }),
+    ]);
+
+    if (echouees1h > 20) {
+      alerts.push({ level: 'critical', category: 'SECURITE', message: `${echouees1h} echecs de connexion dans la derniere heure`, recommendation: 'Possible tentative de force brute. Verifiez les IPs suspectes dans l\'onglet Securite. Envisagez de bloquer les IPs via un pare-feu (ufw deny from IP).' });
+    } else if (echouees24h > 50) {
+      alerts.push({ level: 'warning', category: 'SECURITE', message: `${echouees24h} echecs de connexion en 24h`, recommendation: 'Volume inhabituel. Verifiez si des utilisateurs ont oublie leurs identifiants ou si c\'est une attaque distribuee.' });
+    }
+
+    // 5. Suspicious IPs (> 10 failures from same IP)
+    const failedLogs = await this.prisma.auditLog.findMany({
+      where: { action: 'CONNEXION_ECHOUEE', createdAt: { gte: last24h }, ipAddress: { not: null } },
+      select: { ipAddress: true },
+    });
+    const ipFailMap = new Map<string, number>();
+    for (const log of failedLogs) {
+      ipFailMap.set(log.ipAddress!, (ipFailMap.get(log.ipAddress!) ?? 0) + 1);
+    }
+    const bruteForceIps = Array.from(ipFailMap.entries()).filter(([, c]) => c >= 10);
+    if (bruteForceIps.length > 0) {
+      alerts.push({
+        level: 'critical',
+        category: 'SECURITE',
+        message: `${bruteForceIps.length} IP(s) avec 10+ echecs de connexion : ${bruteForceIps.map(([ip, c]) => `${ip} (${c}x)`).join(', ')}`,
+        recommendation: 'Bloquez ces IPs : sudo ufw deny from <IP>. Envisagez un fail2ban ou Cloudflare pour automatiser.',
+      });
+    }
+
+    // 6. CPU load
+    const load = os.loadaverage();
+    const cores = os.cpus().length;
+    if (load[0] > cores * 2) {
+      alerts.push({ level: 'critical', category: 'CPU', message: `Load average tres eleve : ${load[0].toFixed(1)} (${cores} cores)`, recommendation: 'Le serveur est surcharge. Augmentez les vCPU ou optimisez les requetes lourdes. Verifiez les taches cron et les generations de PDF.' });
+    } else if (load[0] > cores) {
+      alerts.push({ level: 'warning', category: 'CPU', message: `Load average eleve : ${load[0].toFixed(1)} (${cores} cores)`, recommendation: 'Le serveur approche de sa capacite. Surveillez la tendance.' });
+    }
+
+    // 7. Disk space (via os)
+    const uptimeOs = os.uptime();
+    if (uptimeOs < 300) {
+      alerts.push({ level: 'info', category: 'SYSTEME', message: `Le serveur a redemarre il y a ${Math.floor(uptimeOs / 60)} minutes`, recommendation: 'Verifiez les logs de demarrage pour identifier la cause du redemarrage (crash, OOM killer, mise a jour).' });
+    }
+
+    // 8. No alerts = healthy
+    if (alerts.length === 0) {
+      alerts.push({ level: 'info', category: 'SYSTEME', message: 'Tous les systemes sont operationnels', recommendation: 'Aucune action requise.' });
+    }
+
+    return { alerts, checkedAt: new Date().toISOString() };
   }
 
   @Roles('SUPER_ADMIN')

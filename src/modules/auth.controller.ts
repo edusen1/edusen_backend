@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Headers, HttpCode, HttpStatus, Patch, Post, Req } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, HttpCode, HttpStatus, Ip, Patch, Post, Req } from '@nestjs/common';
 import { PrismaService } from '@/config/prisma.service';
 import type { MultipartFastifyRequest } from '@/common/types/multipart-request.types';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -48,12 +48,38 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Connexion utilisateur par identifiants' })
-  login(@Body() dto: LoginDto) {
+  async login(@Body() dto: LoginDto, @Ip() ip: string, @Headers('user-agent') ua?: string) {
     const login = (dto.login ?? dto.telephone ?? '').trim();
     if (!login) {
       throw new BadRequestException('Identifiant requis');
     }
-    return this.authService.login({ login, password: dto.password });
+    try {
+      const result = await this.authService.login({ login, password: dto.password });
+      // Log successful login
+      this.prisma.auditLog.create({
+        data: {
+          action: 'CONNEXION',
+          resourceType: 'AUTH',
+          details: { login, success: true },
+          ipAddress: ip,
+          userAgent: ua ?? null,
+        },
+      }).catch(() => {});
+      return result;
+    } catch (err) {
+      // Log failed login attempt
+      const status = (err as { status?: number })?.status;
+      this.prisma.auditLog.create({
+        data: {
+          action: 'CONNEXION_ECHOUEE',
+          resourceType: 'AUTH',
+          details: { login, status: status ?? 401, reason: (err as { message?: string })?.message ?? 'unknown' },
+          ipAddress: ip,
+          userAgent: ua ?? null,
+        },
+      }).catch(() => {});
+      throw err;
+    }
   }
 
   @Public()
