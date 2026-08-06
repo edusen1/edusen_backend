@@ -1349,7 +1349,7 @@ export class AdminController {
 
     const scanResult = !inscription ? 'NON_INSCRIT'
       : !eleve.actif ? 'INACTIF'
-      : (dettes as { totalDettes?: number })?.totalDettes > 0 ? 'DETTES'
+      : ((dettes as { totalDettes?: number })?.totalDettes ?? 0) > 0 ? 'DETTES'
       : 'EN_REGLE';
 
     return {
