@@ -55,7 +55,7 @@ import type { FastifyReply } from 'fastify';
 type QueryParams = Record<string, string | string[] | undefined>;
 type Payload = Record<string, unknown>;
 
-@Roles('ADMIN', 'SURVEILLANT', 'CAISSIER', 'COMPTABLE', 'RH')
+@Roles('ADMIN', 'SURVEILLANT', 'CAISSIER', 'COMPTABLE', 'RH', 'SECURITE')
 @Controller('admin')
 export class AdminController {
   constructor(
@@ -1264,7 +1264,7 @@ export class AdminController {
       .then((tid) => this.crud.adminParentChildren(tid, id));
   }
 
-  @Roles('ADMIN', 'SURVEILLANT', 'ENSEIGNANT', 'CAISSIER', 'COMPTABLE')
+  @Roles('ADMIN', 'SURVEILLANT', 'ENSEIGNANT', 'CAISSIER', 'COMPTABLE', 'SECURITE')
   @Get('eleves')
   async listEleves(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -1305,6 +1305,7 @@ export class AdminController {
     return this.crud.adminEleveParcours(tenantId, id);
   }
 
+  @Roles('ADMIN', 'SURVEILLANT', 'ENSEIGNANT', 'CAISSIER', 'COMPTABLE', 'SECURITE')
   @Get('eleves/:id/dettes')
   eleveDettes(
     @Headers('x-tenant-id') tenantId: string | undefined,
