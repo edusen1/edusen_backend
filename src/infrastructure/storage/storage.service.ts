@@ -3,6 +3,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   GetObjectCommandOutput,
+  HeadBucketCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
@@ -47,6 +48,17 @@ export class StorageService {
 
   isConfigured(): boolean {
     return this.configured;
+  }
+
+  async healthCheck(): Promise<{ ok: boolean; latencyMs: number; bucket: string }> {
+    if (!this.configured) return { ok: false, latencyMs: 0, bucket: this.bucket };
+    const start = Date.now();
+    try {
+      await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }));
+      return { ok: true, latencyMs: Date.now() - start, bucket: this.bucket };
+    } catch {
+      return { ok: false, latencyMs: Date.now() - start, bucket: this.bucket };
+    }
   }
 
   async uploadPrivate(key: string, buffer: Buffer, contentType: string): Promise<void> {

@@ -1,9 +1,10 @@
-﻿import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req } from '@nestjs/common';
+﻿import { BadRequestException, Body, Controller, Delete, Get, Logger, Param, Patch, Post, Put, Query, Req } from '@nestjs/common';
 import type { MultipartFastifyRequest } from '@/common/types/multipart-request.types';
 import { Roles } from '@/common/decorators/roles.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { PrismaService } from '@/config/prisma.service';
 import { RedisService } from '@/infrastructure/redis/redis.service';
+import { StorageService } from '@/infrastructure/storage/storage.service';
 import { PlatformService } from '@/modules/platform/platform.service';
 import { CreateTenantDto } from '@/modules/platform/dto/create-tenant.dto';
 import { CreateUserDto } from '@/modules/platform/dto/create-user.dto';
@@ -12,10 +13,13 @@ import * as os from 'os';
 @Roles('SUPER_ADMIN', 'GESTIONNAIRE')
 @Controller('platform')
 export class PlatformController {
+  private readonly logger = new Logger(PlatformController.name);
+
   constructor(
     private readonly platformService: PlatformService,
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly storage: StorageService,
   ) {}
 
   @Get('tenants')
@@ -172,6 +176,25 @@ export class PlatformController {
       dbOk = true;
     } catch { /* db down */ }
 
+    // Minio/S3 ping
+    let minioResult = { ok: false, latencyMs: 0, bucket: '' };
+    try {
+      minioResult = await this.storage.healthCheck();
+    } catch { /* storage down */ }
+
+    // WhatsApp Relayio ping
+    let whatsappOk = false;
+    let whatsappLatency = 0;
+    const relayioUrl = process.env.RELAYIO_BASE_URL ?? process.env.WHATSAPP_RELAYIO_BASE_URL ?? 'https://relayio-backend.medaaris.com';
+    try {
+      const start = Date.now();
+      const resp = await fetch(`${relayioUrl}/health`, { signal: AbortSignal.timeout(5000) });
+      whatsappLatency = Date.now() - start;
+      whatsappOk = resp.ok;
+    } catch {
+      whatsappOk = false;
+    }
+
     return {
       memory: {
         rss: Math.round(mem.rss / 1024 / 1024),
@@ -192,6 +215,8 @@ export class PlatformController {
       },
       redis: { ok: redisOk, latencyMs: redisLatency },
       database: { ok: dbOk, latencyMs: dbLatency },
+      minio: { ok: minioResult.ok, latencyMs: minioResult.latencyMs, bucket: minioResult.bucket, configured: this.storage.isConfigured() },
+      whatsapp: { ok: whatsappOk, latencyMs: whatsappLatency, provider: 'relayio', url: relayioUrl },
       process: {
         pid: process.pid,
         nodeVersion: process.version,
@@ -393,7 +418,29 @@ export class PlatformController {
       });
     }
 
-    // 6. CPU load
+    // 6. Minio/S3 check
+    try {
+      const minioCheck = await this.storage.healthCheck();
+      if (!minioCheck.ok) {
+        alerts.push({ level: 'warning', category: 'STOCKAGE', message: 'Minio/S3 ne repond pas', recommendation: 'Verifiez le service Minio (docker ps). Les uploads de logos, cartes scolaires et fichiers ne fonctionneront pas.' });
+      }
+    } catch { /* */ }
+    if (!this.storage.isConfigured()) {
+      alerts.push({ level: 'warning', category: 'STOCKAGE', message: 'Stockage objet (Minio/S3) non configure', recommendation: 'Configurez S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY et S3_BUCKET pour activer le stockage de fichiers.' });
+    }
+
+    // 7. WhatsApp Relayio check
+    const relayUrl = process.env.RELAYIO_BASE_URL ?? process.env.WHATSAPP_RELAYIO_BASE_URL ?? 'https://relayio-backend.medaaris.com';
+    try {
+      const resp = await fetch(`${relayUrl}/health`, { signal: AbortSignal.timeout(5000) });
+      if (!resp.ok) {
+        alerts.push({ level: 'warning', category: 'WHATSAPP', message: 'Le service WhatsApp Relayio repond mais avec une erreur', recommendation: 'Verifiez les logs Relayio et la validite de la cle API.' });
+      }
+    } catch {
+      alerts.push({ level: 'warning', category: 'WHATSAPP', message: 'WhatsApp Relayio est injoignable', recommendation: `Verifiez que le service est accessible a ${relayUrl}. Sans WhatsApp : pas d'OTP, pas de notifications.` });
+    }
+
+    // 8. CPU load
     const load = os.loadavg();
     const cores = os.cpus().length;
     if (load[0] > cores * 2) {
