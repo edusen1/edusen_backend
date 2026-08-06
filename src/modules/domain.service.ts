@@ -845,15 +845,23 @@ export class DomainService {
     // agentId set = CAISSIER mode (ses propres transactions), undefined = COMPTABLE/ADMIN mode (tout)
     const agentFilter = agentId ? { validePar: agentId } : {};
     const baseWhere = { tenantId, ...agentFilter };
+    /**
+     * `validePar` n'est renseigné qu'à la validation : un paiement EN_ATTENTE ou
+     * REJETE a toujours `validePar = null`. Compter ces deux statuts avec
+     * `baseWhere` rendait les tuiles « En attente » et « Rejeté » structurellement
+     * vides pour un caissier, qui ne voyait donc jamais sa file à traiter.
+     * Ces files sont partagées : on les compte au niveau de l'établissement.
+     */
+    const fileWhere = { tenantId };
     const [todayCnt, todayAgg, monthCnt, monthAgg, enAttenteCnt, enAttenteAgg, rejeteCnt, totalCnt, debtRows] =
       await Promise.all([
         this.prisma.paiement.count({ where: { ...baseWhere, statut: 'VALIDE', datePaiement: { gte: periodeStart } } }),
         this.prisma.paiement.aggregate({ where: { ...baseWhere, statut: 'VALIDE', datePaiement: { gte: periodeStart } }, _sum: { montant: true } }),
         this.prisma.paiement.count({ where: { ...baseWhere, statut: 'VALIDE', datePaiement: { gte: startMonth } } }),
         this.prisma.paiement.aggregate({ where: { ...baseWhere, statut: 'VALIDE', datePaiement: { gte: startMonth } }, _sum: { montant: true } }),
-        this.prisma.paiement.count({ where: { ...baseWhere, statut: 'EN_ATTENTE' } }),
-        this.prisma.paiement.aggregate({ where: { ...baseWhere, statut: 'EN_ATTENTE' }, _sum: { montant: true } }),
-        this.prisma.paiement.count({ where: { ...baseWhere, statut: 'REJETE' } }),
+        this.prisma.paiement.count({ where: { ...fileWhere, statut: 'EN_ATTENTE' } }),
+        this.prisma.paiement.aggregate({ where: { ...fileWhere, statut: 'EN_ATTENTE' }, _sum: { montant: true } }),
+        this.prisma.paiement.count({ where: { ...fileWhere, statut: 'REJETE' } }),
         this.prisma.paiement.count({ where: baseWhere }),
         this.prisma.paiement.findMany({
           where: {

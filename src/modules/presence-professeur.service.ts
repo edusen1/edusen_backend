@@ -20,6 +20,19 @@ type PaiementProfesseurPayload = {
 
 const DAY_CODES = ['DIMANCHE', 'LUNDI', 'MARDI', 'MERCREDI', 'JEUDI', 'VENDREDI', 'SAMEDI'];
 
+/**
+ * `EmploiDuTemps.jourSemaine` est une chaîne libre (`VarChar(20)`), pas un enum :
+ * la base contient « Jeudi » alors que `DAY_CODES` produit « JEUDI ». Postgres
+ * compare les chaînes en respectant la casse, donc le filtre ne remontait
+ * jamais rien et le pointage des enseignants restait vide malgré 67 créneaux.
+ * On interroge donc sur toutes les casses rencontrées.
+ */
+function jourVariants(code: string): string[] {
+  const lower = code.toLowerCase();
+  const capitalized = lower.charAt(0).toUpperCase() + lower.slice(1);
+  return [...new Set([code, lower, capitalized])];
+}
+
 @Injectable()
 export class PresenceProfesseurService {
   constructor(
@@ -35,7 +48,7 @@ export class PresenceProfesseurService {
     const slots = await this.prisma.emploiDuTemps.findMany({
       where: {
         tenantId,
-        jourSemaine,
+        jourSemaine: { in: jourVariants(jourSemaine) },
         coursId: { not: null },
         ...(cycleIds ? { classe: { niveau: { cycleId: { in: cycleIds } } } } : {}),
         OR: [

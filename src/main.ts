@@ -79,6 +79,8 @@ async function bootstrap(): Promise<void> {
     'http://127.0.0.1:3001',
     'http://localhost:4300',
     'http://127.0.0.1:4300',
+    'https://edusen.assanediallo.com',
+    'https://plateforme_edusen.assanediallo.com',
     'https://medaaris.com',
     'https://sablettes.medaaris.com',
     'https://noukhbetelasr.medaaris.com',

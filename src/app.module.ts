@@ -48,6 +48,9 @@ import { DemandeReductionService } from '@/modules/v1/demande-reduction/demande-
 import { EleveDocumentService } from '@/modules/eleve-document.service';
 import { CommunicationService } from '@/modules/communication.service';
 import { RapportDocumentService } from '@/modules/rapport-document.service';
+import { FeatureService } from '@/modules/feature/feature.service';
+import { FeatureGuard } from '@/common/guards/feature.guard';
+import { TemplateRendererService } from '@/modules/document/template-renderer.service';
 
 @Module({
   imports: [
@@ -102,7 +105,10 @@ import { RapportDocumentService } from '@/modules/rapport-document.service';
     EleveDocumentService,
     CommunicationService,
     RapportDocumentService,
+    FeatureService,
+    TemplateRendererService,
     { provide: APP_GUARD, useClass: AppAuthGuard },
+    { provide: APP_GUARD, useClass: FeatureGuard },
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
     { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },

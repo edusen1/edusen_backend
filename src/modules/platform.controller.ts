@@ -6,6 +6,7 @@ import { PrismaService } from '@/config/prisma.service';
 import { RedisService } from '@/infrastructure/redis/redis.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
 import { PlatformService } from '@/modules/platform/platform.service';
+import { FeatureService } from '@/modules/feature/feature.service';
 import { CreateTenantDto } from '@/modules/platform/dto/create-tenant.dto';
 import { CreateUserDto } from '@/modules/platform/dto/create-user.dto';
 import * as os from 'os';
@@ -20,6 +21,7 @@ export class PlatformController {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly storage: StorageService,
+    private readonly featureService: FeatureService,
   ) {}
 
   @Get('tenants')
@@ -106,6 +108,49 @@ export class PlatformController {
     return this.platformService.auditLogs(Number(page ?? 0), Number(size ?? 20), { action, tenantId });
   }
 
+  // ── Platform Configuration ─────────────────────────────────────────
+
+  @Get('configuration')
+  async getConfiguration() {
+    const limits = await this.prisma.planLimit.findMany({ orderBy: [{ plan: 'asc' }, { limitKey: 'asc' }] });
+
+    const limitsMap: Record<string, Record<string, number>> = {};
+    for (const l of limits) {
+      if (!limitsMap[l.plan]) limitsMap[l.plan] = {};
+      limitsMap[l.plan][l.limitKey] = l.limitValue;
+    }
+
+    return {
+      plans: ['TRIAL', 'STARTER', 'STANDARD', 'PREMIUM'],
+      limits: limitsMap,
+      environment: {
+        nodeEnv: process.env.NODE_ENV ?? 'development',
+        redisConfigured: Boolean(process.env.REDIS_URL),
+        s3Configured: this.storage.isConfigured(),
+        s3Bucket: process.env.S3_BUCKET ?? 'noura-school-files',
+        s3Endpoint: process.env.S3_ENDPOINT ? process.env.S3_ENDPOINT.replace(/\/\/.*:.*@/, '//***@') : null,
+        whatsappProvider: process.env.RELAYIO_BASE_URL ? 'relayio' : null,
+        corsOrigins: process.env.ALLOWED_ORIGINS ?? '',
+        jwtIssuer: process.env.JWT_ISSUER ?? 'nouraschool',
+        jwtAccessTokenLifespan: process.env.JWT_ACCESS_TOKEN_LIFESPAN ?? '15m',
+      },
+    };
+  }
+
+  @Roles('SUPER_ADMIN')
+  @Put('configuration/limits/:plan/:key')
+  async setConfigLimit(
+    @Param('plan') plan: string,
+    @Param('key') key: string,
+    @Body() body: { value: number },
+  ) {
+    return this.prisma.planLimit.upsert({
+      where: { plan_limitKey: { plan, limitKey: key } },
+      create: { plan, limitKey: key, limitValue: body.value },
+      update: { limitValue: body.value },
+    });
+  }
+
   // ── Feature Flags ──────────────────────────────────────────────────
 
   @Get('features')
@@ -124,11 +169,13 @@ export class PlatformController {
     @Param('key') key: string,
     @Body() body: { actif: boolean },
   ) {
-    return this.prisma.planFeature.upsert({
+    const result = await this.prisma.planFeature.upsert({
       where: { plan_featureKey: { plan, featureKey: key } },
       create: { plan, featureKey: key, actif: body.actif },
       update: { actif: body.actif },
     });
+    await this.featureService.invalidatePlanCache(plan);
+    return result;
   }
 
   @Roles('SUPER_ADMIN')
@@ -179,11 +226,13 @@ export class PlatformController {
     @Param('key') key: string,
     @Body() body: { actif: boolean },
   ) {
-    return this.prisma.tenantFeatureOverride.upsert({
+    const result = await this.prisma.tenantFeatureOverride.upsert({
       where: { tenantId_featureKey: { tenantId: id, featureKey: key } },
       create: { tenantId: id, featureKey: key, actif: body.actif },
       update: { actif: body.actif },
     });
+    await this.featureService.invalidateCache(id);
+    return result;
   }
 
   @Roles('SUPER_ADMIN')
@@ -197,6 +246,60 @@ export class PlatformController {
         where: { tenantId_featureKey: { tenantId: id, featureKey: key } },
       });
     } catch { /* already deleted */ }
+    await this.featureService.invalidateCache(id);
+    return { ok: true };
+  }
+
+  // ── Document Templates ─────────────────────────────────────────────
+
+  @Get('templates')
+  async getTemplates(@Query('typeDocument') typeDocument?: string) {
+    const where: Record<string, unknown> = {};
+    if (typeDocument) where.typeDocument = typeDocument;
+    return this.prisma.documentTemplate.findMany({
+      where,
+      orderBy: [{ typeDocument: 'asc' }, { tenantId: 'asc' }, { nom: 'asc' }],
+      select: {
+        id: true, tenantId: true, typeDocument: true, nom: true, description: true,
+        isDefault: true, styles: true, thumbnailUrl: true, createdAt: true, updatedAt: true,
+        tenant: { select: { id: true, nom: true } },
+      },
+    });
+  }
+
+  @Get('templates/:id')
+  async getTemplate(@Param('id') id: string) {
+    const t = await this.prisma.documentTemplate.findUnique({ where: { id } });
+    if (!t) throw new BadRequestException('Template introuvable');
+    return t;
+  }
+
+  @Roles('SUPER_ADMIN')
+  @Post('templates')
+  async createTemplate(@Body() body: {
+    typeDocument: string; nom: string; description?: string;
+    templateHtml: string; styles?: Record<string, unknown>;
+    isDefault?: boolean; tenantId?: string;
+  }) {
+    return this.prisma.documentTemplate.create({ data: body });
+  }
+
+  @Roles('SUPER_ADMIN')
+  @Put('templates/:id')
+  async updateTemplate(
+    @Param('id') id: string,
+    @Body() body: {
+      nom?: string; description?: string; templateHtml?: string;
+      styles?: Record<string, unknown>; isDefault?: boolean;
+    },
+  ) {
+    return this.prisma.documentTemplate.update({ where: { id }, data: body });
+  }
+
+  @Roles('SUPER_ADMIN')
+  @Delete('templates/:id')
+  async deleteTemplate(@Param('id') id: string) {
+    await this.prisma.documentTemplate.delete({ where: { id } });
     return { ok: true };
   }
 

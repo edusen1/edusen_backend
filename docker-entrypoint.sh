@@ -59,8 +59,10 @@ echo ""
 # ── 2. Scripts de seed ────────────────────────────────────────────────────────
 # Seeds desactives — les donnees demo sont deja en base.
 # Pour re-seeder manuellement : node scripts/seed-full-demo.cjs
-log_step "🌱 Seeds (desactives — donnees existantes conservees)"
+log_step "🌱 Seeds"
 node scripts/seed-platform-super-admin.cjs 2>&1 && log_ok "seed-platform-super-admin" || log_warn "seed-platform-super-admin ignoré"
+node scripts/seed-plan-features.cjs 2>&1 && log_ok "seed-plan-features" || log_warn "seed-plan-features ignoré"
+node scripts/seed-document-templates.cjs 2>&1 && log_ok "seed-document-templates" || log_warn "seed-document-templates ignoré"
 echo ""
 
 # ── 3. Démarrage ──────────────────────────────────────────────────────────────

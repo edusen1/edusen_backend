@@ -544,7 +544,7 @@ export class ClasseService {
       session?: string | null;
       dateCours: string;
       heureDebut?: string | null;
-      absents?: string[];
+      absents?: (string | { eleveId: string; typeAbsence?: string })[];
       lignes?: { eleveId: string; statut: StatutPresence }[];
     },
   ) {
@@ -562,6 +562,26 @@ export class ClasseService {
     });
 
     const explicitLines = payload.lignes?.length ? new Map(payload.lignes.map((ligne) => [ligne.eleveId, ligne.statut])) : null;
+
+    /**
+     * `absents` est historiquement un tableau d'identifiants, mais le front y
+     * glisse aussi des objets `{ eleveId, typeAbsence: 'RETARD' }` pour les
+     * retardataires. Un simple `absents.includes(eleveId)` ne peut pas matcher
+     * un objet : les retards étaient silencieusement enregistrés « PRESENT ».
+     * On normalise donc les deux formes en une map eleveId → statut.
+     */
+    const absentStatuts = new Map<string, StatutPresence>();
+    for (const entree of payload.absents ?? []) {
+      if (typeof entree === 'string') {
+        absentStatuts.set(entree, 'ABSENT');
+        continue;
+      }
+      if (entree && typeof entree === 'object') {
+        const { eleveId, typeAbsence } = entree as { eleveId?: string; typeAbsence?: string };
+        if (!eleveId) continue;
+        absentStatuts.set(eleveId, typeAbsence === 'RETARD' ? 'RETARD' : 'ABSENT');
+      }
+    }
     const appel = await this.prisma.appel.create({
       data: {
         tenantId,
@@ -574,7 +594,7 @@ export class ClasseService {
         lignes: {
           create: inscriptions.map((i) => ({
             eleveId: i.eleveId,
-            statut: explicitLines?.get(i.eleveId) ?? (payload.absents?.includes(i.eleveId) ? 'ABSENT' : 'PRESENT'),
+            statut: explicitLines?.get(i.eleveId) ?? absentStatuts.get(i.eleveId) ?? 'PRESENT',
           })),
         },
       },

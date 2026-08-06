@@ -240,7 +240,11 @@ export class TeacherController {
   async createClasseAppel(
     @Headers('x-tenant-id') tenantId: string,
     @Param('id') id: string,
-    @Body() body: { coursId?: string; session?: string; dateCours: string; heureDebut?: string; absents?: string[] },
+    @Body() body: {
+      coursId?: string; session?: string; dateCours: string; heureDebut?: string;
+      absents?: (string | { eleveId: string; typeAbsence?: string })[];
+      lignes?: { eleveId: string; statut: 'PRESENT' | 'ABSENT' | 'RETARD' }[];
+    },
     @CurrentUser() user?: JwtUser,
   ) {
     await this.classeService.assertTeacherClasseAccess(tenantId, user?.sub ?? '', id);
@@ -250,6 +254,10 @@ export class TeacherController {
       dateCours: body.dateCours,
       heureDebut: body.heureDebut,
       absents: body.absents ?? [],
+      // `lignes` porte les statuts explicites (dont RETARD). Le contrôleur admin
+      // le transmettait déjà ; ne pas le faire ici privait l'enseignant du seul
+      // canal permettant d'enregistrer autre chose que présent/absent.
+      lignes: body.lignes ?? [],
     });
   }
 

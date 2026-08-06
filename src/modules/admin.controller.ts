@@ -49,6 +49,7 @@ import { EleveDocumentService } from '@/modules/eleve-document.service';
 import { CommunicationService } from '@/modules/communication.service';
 import { RapportDocumentService, RapportType } from '@/modules/rapport-document.service';
 import { ProgrammeService } from '@/modules/programme/programme.service';
+import { FeatureService } from '@/modules/feature/feature.service';
 import { StatutPresence, TypeDocument } from '@prisma/client';
 import type { FastifyReply } from 'fastify';
 
@@ -77,6 +78,7 @@ export class AdminController {
     private readonly rapportDocument: RapportDocumentService,
     private readonly programmeService: ProgrammeService,
     private readonly storage: StorageService,
+    private readonly featureService: FeatureService,
   ) {}
 
   private resolveTenantId(tenantId: string | undefined, user?: JwtUser) {
@@ -96,6 +98,132 @@ export class AdminController {
     if (!user?.role || !resourcesByRole[user.role]?.includes(resource)) {
       throw new ForbiddenException('Vous ne pouvez pas modifier cette ressource');
     }
+  }
+
+  // ----------------------------------------------------------------
+  // Features (resolved for current tenant)
+  // ----------------------------------------------------------------
+
+  @Roles('ADMIN')
+  @Get('features')
+  async getFeatures(@CurrentUser() user?: JwtUser) {
+    const tenantId = user?.tenantId;
+    if (!tenantId) throw new BadRequestException('Tenant introuvable');
+    const [features, limits] = await Promise.all([
+      this.featureService.getResolvedFeatures(tenantId),
+      this.featureService.getLimits(tenantId),
+    ]);
+    return { features, limits };
+  }
+
+  // ----------------------------------------------------------------
+  // Document Templates (for current tenant)
+  // ----------------------------------------------------------------
+
+  @Roles('ADMIN')
+  @Get('templates')
+  async getTemplates(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Query('typeDocument') typeDocument: string | undefined,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    const where: Record<string, unknown> = {
+      OR: [{ tenantId: null }, { tenantId: tid }],
+    };
+    if (typeDocument) where.typeDocument = typeDocument;
+    return this.prisma.documentTemplate.findMany({
+      where,
+      orderBy: [{ typeDocument: 'asc' }, { tenantId: 'asc' }, { nom: 'asc' }],
+      select: {
+        id: true, tenantId: true, typeDocument: true, nom: true, description: true,
+        isDefault: true, styles: true, thumbnailUrl: true, createdAt: true, updatedAt: true,
+      },
+    });
+  }
+
+  @Roles('ADMIN')
+  @Post('templates/:id/personnaliser')
+  async personnaliserTemplate(
+    @Param('id') id: string,
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: { nom?: string; styles?: Record<string, unknown> },
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+
+    const source = await this.prisma.documentTemplate.findUnique({ where: { id } });
+    if (!source) throw new NotFoundException('Template introuvable');
+
+    // Deactivate existing default for this type
+    await this.prisma.documentTemplate.updateMany({
+      where: { tenantId: tid, typeDocument: source.typeDocument, isDefault: true },
+      data: { isDefault: false },
+    });
+
+    return this.prisma.documentTemplate.create({
+      data: {
+        tenantId: tid,
+        typeDocument: source.typeDocument,
+        nom: body.nom ?? `${source.nom} (personnalise)`,
+        description: source.description,
+        templateHtml: source.templateHtml,
+        styles: body.styles ?? source.styles,
+        isDefault: true,
+      },
+    });
+  }
+
+  @Roles('ADMIN')
+  @Put('templates/:id')
+  async updateMyTemplate(
+    @Param('id') id: string,
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: { nom?: string; styles?: Record<string, unknown>; templateHtml?: string },
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    const template = await this.prisma.documentTemplate.findUnique({ where: { id } });
+    if (!template) throw new NotFoundException('Template introuvable');
+    if (template.tenantId !== tid) throw new ForbiddenException('Vous ne pouvez modifier que vos propres templates');
+    return this.prisma.documentTemplate.update({ where: { id }, data: body });
+  }
+
+  @Roles('ADMIN')
+  @Put('templates/:id/activer')
+  async activerTemplate(
+    @Param('id') id: string,
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    const template = await this.prisma.documentTemplate.findUnique({ where: { id } });
+    if (!template) throw new NotFoundException('Template introuvable');
+    if (template.tenantId !== null && template.tenantId !== tid) throw new ForbiddenException('Acces refuse');
+
+    // Deactivate all other templates of same type for this tenant
+    await this.prisma.documentTemplate.updateMany({
+      where: { tenantId: tid, typeDocument: template.typeDocument, isDefault: true },
+      data: { isDefault: false },
+    });
+
+    // If it's a system template, create a tenant copy marked as default
+    if (template.tenantId === null) {
+      return this.prisma.documentTemplate.create({
+        data: {
+          tenantId: tid,
+          typeDocument: template.typeDocument,
+          nom: template.nom,
+          description: template.description,
+          templateHtml: template.templateHtml,
+          styles: template.styles,
+          isDefault: true,
+        },
+      });
+    }
+
+    return this.prisma.documentTemplate.update({ where: { id }, data: { isDefault: true } });
   }
 
   // ----------------------------------------------------------------
