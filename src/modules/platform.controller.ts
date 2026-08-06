@@ -3,6 +3,7 @@ import type { MultipartFastifyRequest } from '@/common/types/multipart-request.t
 import { Roles } from '@/common/decorators/roles.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { PrismaService } from '@/config/prisma.service';
+import { Prisma } from '@prisma/client';
 import { RedisService } from '@/infrastructure/redis/redis.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
 import { PlatformService } from '@/modules/platform/platform.service';
@@ -281,7 +282,14 @@ export class PlatformController {
     templateHtml: string; styles?: Record<string, unknown>;
     isDefault?: boolean; tenantId?: string;
   }) {
-    return this.prisma.documentTemplate.create({ data: body });
+    const { styles, tenantId, ...rest } = body;
+    return this.prisma.documentTemplate.create({
+      data: {
+        ...rest,
+        ...(tenantId ? { tenant: { connect: { id: tenantId } } } : {}),
+        styles: styles ? (styles as Prisma.InputJsonValue) : Prisma.JsonNull,
+      },
+    });
   }
 
   @Roles('SUPER_ADMIN')
@@ -293,7 +301,14 @@ export class PlatformController {
       styles?: Record<string, unknown>; isDefault?: boolean;
     },
   ) {
-    return this.prisma.documentTemplate.update({ where: { id }, data: body });
+    const { styles, ...rest } = body;
+    return this.prisma.documentTemplate.update({
+      where: { id },
+      data: {
+        ...rest,
+        ...(styles !== undefined ? { styles: styles as Prisma.InputJsonValue } : {}),
+      },
+    });
   }
 
   @Roles('SUPER_ADMIN')

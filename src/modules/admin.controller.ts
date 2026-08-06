@@ -50,7 +50,7 @@ import { CommunicationService } from '@/modules/communication.service';
 import { RapportDocumentService, RapportType } from '@/modules/rapport-document.service';
 import { ProgrammeService } from '@/modules/programme/programme.service';
 import { FeatureService } from '@/modules/feature/feature.service';
-import { StatutPresence, TypeDocument } from '@prisma/client';
+import { Prisma, StatutPresence, TypeDocument } from '@prisma/client';
 import type { FastifyReply } from 'fastify';
 
 type QueryParams = Record<string, string | string[] | undefined>;
@@ -169,7 +169,7 @@ export class AdminController {
         nom: body.nom ?? `${source.nom} (personnalise)`,
         description: source.description,
         templateHtml: source.templateHtml,
-        styles: body.styles ?? source.styles,
+        styles: (body.styles ?? source.styles ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         isDefault: true,
       },
     });
@@ -187,7 +187,14 @@ export class AdminController {
     const template = await this.prisma.documentTemplate.findUnique({ where: { id } });
     if (!template) throw new NotFoundException('Template introuvable');
     if (template.tenantId !== tid) throw new ForbiddenException('Vous ne pouvez modifier que vos propres templates');
-    return this.prisma.documentTemplate.update({ where: { id }, data: body });
+    const { styles, ...rest } = body;
+    return this.prisma.documentTemplate.update({
+      where: { id },
+      data: {
+        ...rest,
+        ...(styles !== undefined ? { styles: styles as Prisma.InputJsonValue } : {}),
+      },
+    });
   }
 
   @Roles('ADMIN')
@@ -217,7 +224,7 @@ export class AdminController {
           nom: template.nom,
           description: template.description,
           templateHtml: template.templateHtml,
-          styles: template.styles,
+          styles: (template.styles ?? Prisma.JsonNull) as Prisma.InputJsonValue,
           isDefault: true,
         },
       });
