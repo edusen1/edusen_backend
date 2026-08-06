@@ -57,10 +57,10 @@ log_ok "Migrations Prisma à jour"
 echo ""
 
 # ── 2. Scripts de seed ────────────────────────────────────────────────────────
-log_step "🌱 Scripts de seed complémentaires"
+# Seeds desactives — les donnees demo sont deja en base.
+# Pour re-seeder manuellement : node scripts/seed-full-demo.cjs
+log_step "🌱 Seeds (desactives — donnees existantes conservees)"
 node scripts/seed-platform-super-admin.cjs 2>&1 && log_ok "seed-platform-super-admin" || log_warn "seed-platform-super-admin ignoré"
-node scripts/seed-seydi-jamil.cjs          2>&1 && log_ok "seed-seydi-jamil"          || log_warn "seed-seydi-jamil ignoré"
-node scripts/seed-full-demo.cjs            2>&1 && log_ok "seed-full-demo"            || log_warn "seed-full-demo ignoré"
 echo ""
 
 # ── 3. Démarrage ──────────────────────────────────────────────────────────────
