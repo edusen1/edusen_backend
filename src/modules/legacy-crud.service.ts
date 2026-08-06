@@ -4644,6 +4644,44 @@ export class LegacyCrudService {
     const targetAnneeId = classeDest?.anneeAcademiqueId ?? demande.anneeAcademiqueId;
     if (!targetAnneeId) throw new BadRequestException('Aucune année académique associée à la classe de destination');
 
+    // Un passage peut viser une classe de l'année suivante (nouvelle inscription)
+    // ou une classe de l'année en cours (simple changement de classe).
+    // Dans le second cas, créer une seconde inscription violerait la contrainte
+    // « une inscription par élève et par année » et remontait à l'utilisateur
+    // sous la forme trompeuse « Élève déjà inscrit cette année ».
+    const inscriptionExistante = await this.prisma.inscription.findFirst({
+      where: {
+        tenantId,
+        eleveId: demande.eleveId,
+        anneeAcademiqueId: targetAnneeId,
+        statut: { notIn: ['TRANSFERE', 'EXCLU', 'TERMINE'] },
+      },
+      select: { id: true, classeId: true },
+    });
+
+    if (inscriptionExistante) {
+      if (inscriptionExistante.classeId === demande.classeDestId) {
+        throw new BadRequestException(
+          'Cet élève est déjà inscrit dans la classe demandée pour cette année',
+        );
+      }
+
+      // Changement de classe au sein de la même année : on déplace l'inscription.
+      const [updated] = await this.prisma.$transaction([
+        this.prisma.demandePassage.update({
+          where: { id },
+          data: { statut: 'APPROUVEE', traitePar: userId ?? null },
+          include: this.demandePassageInclude(),
+        }),
+        this.prisma.inscription.update({
+          where: { id: inscriptionExistante.id },
+          data: { classeId: demande.classeDestId },
+        }),
+      ]);
+
+      return updated;
+    }
+
     await this.assertSingleInscriptionPerYear(tenantId, {
       eleveId: demande.eleveId,
       classeId: demande.classeDestId,
