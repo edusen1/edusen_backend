@@ -42,17 +42,39 @@ printf '%b\n' "${DIM}Environment=${NODE_ENV:-production} Port=${PORT:-3000}${RES
 # ── 1. Migrations Prisma ──────────────────────────────────────────────────────
 log_step "📦 Exécution des migrations Prisma"
 
+# Resolve any previously failed migrations before deploying
 migrate_log=$(npx prisma migrate deploy 2>&1)
 migrate_exit=$?
 
 echo "$migrate_log"
 
 if [ $migrate_exit -ne 0 ]; then
-  log_error "Migrations Prisma échouées. Arrêt du démarrage pour préserver l'intégrité du schéma."
-  exit 1
+  if echo "$migrate_log" | grep -q "P3009"; then
+    log_warn "Migration echouee detectee — tentative de resolution automatique"
+    failed_migration=$(echo "$migrate_log" | grep "migration started at" | sed 's/.*The `\(.*\)` migration started at.*/\1/')
+    if [ -n "$failed_migration" ]; then
+      log_step "Resolution de la migration: $failed_migration"
+      npx prisma migrate resolve --rolled-back "$failed_migration" 2>&1
+      log_step "Re-execution des migrations"
+      retry_log=$(npx prisma migrate deploy 2>&1)
+      retry_exit=$?
+      echo "$retry_log"
+      if [ $retry_exit -ne 0 ]; then
+        log_error "Migrations Prisma echouees apres resolution. Arret du demarrage."
+        exit 1
+      fi
+      log_ok "Migrations Prisma resolues et appliquees"
+    else
+      log_error "Impossible d'identifier la migration echouee. Arret du demarrage."
+      exit 1
+    fi
+  else
+    log_error "Migrations Prisma echouees. Arret du demarrage pour preserver l'integrite du schema."
+    exit 1
+  fi
+else
+  log_ok "Migrations Prisma a jour"
 fi
-
-log_ok "Migrations Prisma à jour"
 
 echo ""
 
@@ -60,7 +82,9 @@ echo ""
 # Seeds desactives — les donnees demo sont deja en base.
 # Pour re-seeder manuellement : node scripts/seed-full-demo.cjs
 log_step "🌱 Seeds"
-node scripts/seed-platform-super-admin.cjs 2>&1 && log_ok "seed-platform-super-admin" || log_warn "seed-platform-super-admin ignoré"
+node scripts/seed-platform-super-admin.cjs 2>&1 && log_ok "seed-platform-super-admin" || log_warn "seed-platform-super-admin ignore"
+node scripts/seed-plan-features.cjs 2>&1 && log_ok "seed-plan-features" || log_warn "seed-plan-features ignore"
+node scripts/seed-document-templates.cjs 2>&1 && log_ok "seed-document-templates" || log_warn "seed-document-templates ignore"
 echo ""
 
 # ── 3. Démarrage ──────────────────────────────────────────────────────────────
