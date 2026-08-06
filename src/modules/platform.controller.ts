@@ -150,7 +150,7 @@ export class PlatformController {
   async monitoringSystem() {
     const mem = process.memoryUsage();
     const cpus = os.cpus();
-    const loadAvg = os.loadaverage();
+    const loadAvg = os.loadavg();
 
     // Redis ping
     let redisOk = false;
@@ -182,7 +182,7 @@ export class PlatformController {
       cpu: {
         cores: cpus.length,
         model: cpus[0]?.model ?? '—',
-        loadAvg: loadAvg.map((l) => Math.round(l * 100) / 100),
+        loadAvg: loadAvg.map((l: number) => Math.round(l * 100) / 100),
       },
       os: {
         platform: os.platform(),
@@ -394,7 +394,7 @@ export class PlatformController {
     }
 
     // 6. CPU load
-    const load = os.loadaverage();
+    const load = os.loadavg();
     const cores = os.cpus().length;
     if (load[0] > cores * 2) {
       alerts.push({ level: 'critical', category: 'CPU', message: `Load average tres eleve : ${load[0].toFixed(1)} (${cores} cores)`, recommendation: 'Le serveur est surcharge. Augmentez les vCPU ou optimisez les requetes lourdes. Verifiez les taches cron et les generations de PDF.' });
