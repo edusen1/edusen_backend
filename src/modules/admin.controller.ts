@@ -1297,6 +1297,78 @@ export class AdminController {
     return this.crud.findAll(this.crud.adminConfig('eleves'), tid, query);
   }
 
+  // ── Scan QR code (SECURITE) — audited automatically via POST ──
+  @Roles('SECURITE', 'ADMIN', 'SURVEILLANT')
+  @Post('eleves/scan')
+  @HttpCode(HttpStatus.OK)
+  async scanEleve(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: { matricule?: string; userId?: string; query?: string },
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+
+    const search = body.matricule || body.userId || body.query;
+    if (!search) throw new BadRequestException('matricule, userId ou query requis');
+
+    // Search by matricule first, then by id, then generic
+    let eleve = await this.prisma.user.findFirst({
+      where: { tenantId: tid, role: 'ELEVE', matricule: { equals: search, mode: 'insensitive' } },
+      select: {
+        id: true, firstName: true, lastName: true, matricule: true, photoUrl: true,
+        classeId: true, actif: true,
+        eleveClasse: { select: { id: true, nom: true } },
+      },
+    });
+
+    if (!eleve) {
+      eleve = await this.prisma.user.findFirst({
+        where: { tenantId: tid, role: 'ELEVE', id: search },
+        select: {
+          id: true, firstName: true, lastName: true, matricule: true, photoUrl: true,
+          classeId: true, actif: true,
+          eleveClasse: { select: { id: true, nom: true } },
+        },
+      });
+    }
+
+    if (!eleve) {
+      return { found: false, eleve: null, dettes: null, scanResult: 'NOT_FOUND' };
+    }
+
+    // Get inscription status
+    const inscription = await this.prisma.inscription.findFirst({
+      where: { tenantId: tid, eleveId: eleve.id, statut: 'ACTIF' },
+      select: { statut: true, fraisInscription: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Get debts
+    const dettes = await this.crud.adminEleveDettes(tid, eleve.id);
+
+    const scanResult = !inscription ? 'NON_INSCRIT'
+      : !eleve.actif ? 'INACTIF'
+      : (dettes as { totalDettes?: number })?.totalDettes > 0 ? 'DETTES'
+      : 'EN_REGLE';
+
+    return {
+      found: true,
+      scanResult,
+      eleve: {
+        id: eleve.id,
+        firstName: eleve.firstName,
+        lastName: eleve.lastName,
+        matricule: eleve.matricule,
+        photoUrl: eleve.photoUrl,
+        classe: eleve.eleveClasse?.nom ?? null,
+        actif: eleve.actif,
+      },
+      inscription: inscription ? { statut: inscription.statut } : null,
+      dettes,
+    };
+  }
+
   @Get('eleves/:id/parcours')
   eleveParcours(
     @Headers('x-tenant-id') tenantId: string | undefined,

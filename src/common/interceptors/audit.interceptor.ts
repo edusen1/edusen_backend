@@ -73,6 +73,7 @@ const VERB_ACTIONS: Record<string, string> = {
   duplicata: 'DUPLICATA',
   repondre: 'REPONSE',
   dupliquer: 'DUPLICATION',
+  scan: 'SCAN_QR',
 };
 
 function parseUserAgent(ua: string): { deviceType: string | null; browserName: string | null; osName: string | null } {
