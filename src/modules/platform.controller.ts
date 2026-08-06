@@ -106,6 +106,100 @@ export class PlatformController {
     return this.platformService.auditLogs(Number(page ?? 0), Number(size ?? 20), { action, tenantId });
   }
 
+  // ── Feature Flags ──────────────────────────────────────────────────
+
+  @Get('features')
+  async getFeatures() {
+    const [planFeatures, limits] = await Promise.all([
+      this.prisma.planFeature.findMany({ orderBy: [{ plan: 'asc' }, { featureKey: 'asc' }] }),
+      this.prisma.planLimit.findMany({ orderBy: [{ plan: 'asc' }, { limitKey: 'asc' }] }),
+    ]);
+    return { planFeatures, limits };
+  }
+
+  @Roles('SUPER_ADMIN')
+  @Put('features/:plan/:key')
+  async togglePlanFeature(
+    @Param('plan') plan: string,
+    @Param('key') key: string,
+    @Body() body: { actif: boolean },
+  ) {
+    return this.prisma.planFeature.upsert({
+      where: { plan_featureKey: { plan, featureKey: key } },
+      create: { plan, featureKey: key, actif: body.actif },
+      update: { actif: body.actif },
+    });
+  }
+
+  @Roles('SUPER_ADMIN')
+  @Put('limits/:plan/:key')
+  async setPlanLimit(
+    @Param('plan') plan: string,
+    @Param('key') key: string,
+    @Body() body: { value: number },
+  ) {
+    return this.prisma.planLimit.upsert({
+      where: { plan_limitKey: { plan, limitKey: key } },
+      create: { plan, limitKey: key, limitValue: body.value },
+      update: { limitValue: body.value },
+    });
+  }
+
+  @Get('tenants/:id/features')
+  async getTenantFeatures(@Param('id') id: string) {
+    const [tenant, overrides, planFeatures] = await Promise.all([
+      this.prisma.tenant.findUnique({ where: { id }, select: { plan: true } }),
+      this.prisma.tenantFeatureOverride.findMany({ where: { tenantId: id } }),
+      this.prisma.planFeature.findMany(),
+    ]);
+    if (!tenant) throw new BadRequestException('Tenant introuvable');
+
+    const planMap = new Map(planFeatures.filter((f) => f.plan === tenant.plan).map((f) => [f.featureKey, f.actif]));
+    const overrideMap = new Map(overrides.map((o) => [o.featureKey, o.actif]));
+
+    // Resolve: override > plan > false
+    const allKeys = new Set([...planMap.keys(), ...overrideMap.keys()]);
+    const resolved: { featureKey: string; actif: boolean; source: 'override' | 'plan' | 'default' }[] = [];
+    for (const key of allKeys) {
+      if (overrideMap.has(key)) {
+        resolved.push({ featureKey: key, actif: overrideMap.get(key)!, source: 'override' });
+      } else if (planMap.has(key)) {
+        resolved.push({ featureKey: key, actif: planMap.get(key)!, source: 'plan' });
+      } else {
+        resolved.push({ featureKey: key, actif: false, source: 'default' });
+      }
+    }
+    return { plan: tenant.plan, overrides, resolved };
+  }
+
+  @Roles('SUPER_ADMIN')
+  @Put('tenants/:id/features/:key')
+  async setTenantFeatureOverride(
+    @Param('id') id: string,
+    @Param('key') key: string,
+    @Body() body: { actif: boolean },
+  ) {
+    return this.prisma.tenantFeatureOverride.upsert({
+      where: { tenantId_featureKey: { tenantId: id, featureKey: key } },
+      create: { tenantId: id, featureKey: key, actif: body.actif },
+      update: { actif: body.actif },
+    });
+  }
+
+  @Roles('SUPER_ADMIN')
+  @Delete('tenants/:id/features/:key')
+  async deleteTenantFeatureOverride(
+    @Param('id') id: string,
+    @Param('key') key: string,
+  ) {
+    try {
+      await this.prisma.tenantFeatureOverride.delete({
+        where: { tenantId_featureKey: { tenantId: id, featureKey: key } },
+      });
+    } catch { /* already deleted */ }
+    return { ok: true };
+  }
+
   // ── Demandes d'audit (superadmin gère) ──────────────────────────────
 
   @Get('demandes-audit')
