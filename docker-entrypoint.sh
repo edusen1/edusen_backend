@@ -83,6 +83,8 @@ echo ""
 # Pour re-seeder manuellement : node scripts/seed-full-demo.cjs
 log_step "🌱 Seeds"
 node scripts/seed-platform-super-admin.cjs 2>&1 && log_ok "seed-platform-super-admin" || log_warn "seed-platform-super-admin ignore"
+node scripts/seed-plan-features.cjs 2>&1 && log_ok "seed-plan-features" || log_warn "seed-plan-features ignore"
+node scripts/seed-document-templates.cjs 2>&1 && log_ok "seed-document-templates" || log_warn "seed-document-templates ignore"
 echo ""
 
 # ── 3. Démarrage ──────────────────────────────────────────────────────────────
