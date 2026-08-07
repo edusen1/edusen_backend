@@ -76,10 +76,19 @@ export class ClasseService {
     if (cycleId && !niveauId) {
       where.niveau = { cycleId };
     }
-    // Cloisonnement : appliqué en dernier pour qu'un filtre `cycleId` fourni par
-    // l'appelant ne puisse pas élargir le périmètre autorisé.
+    /**
+     * Cloisonnement, appliqué en dernier pour qu'un `cycleId` fourni par
+     * l'appelant ne puisse pas élargir le périmètre autorisé.
+     *
+     * Le résultat est l'**intersection** du cycle demandé et des cycles
+     * autorisés. Demander un cycle interdit renvoie donc une liste vide, et non
+     * les classes du cycle autorisé : substituer silencieusement d'autres
+     * données ferait croire que ces classes appartiennent au cycle demandé.
+     */
     if (cycleIdsAutorises) {
-      const cycleFiltre = cycleId && cycleIdsAutorises.includes(cycleId) ? [cycleId] : cycleIdsAutorises;
+      const cycleFiltre = cycleId
+        ? cycleIdsAutorises.filter((id) => id === cycleId)
+        : cycleIdsAutorises;
       where.niveau = { ...(where.niveau as object ?? {}), cycleId: { in: cycleFiltre } };
     }
 

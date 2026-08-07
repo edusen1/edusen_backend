@@ -48,6 +48,14 @@ export class CycleScopeService {
   /**
    * Fragment `where` Prisma pour une entité reliée au cycle via
    * `classe → niveau → cycleId`. Renvoie `{}` si aucun cloisonnement.
+   *
+   * ⚠️ **Réservé aux modèles ayant une vraie relation `classe`** — `Inscription`,
+   * `EmploiDuTemps`, `Appel`, `Bulletin`. `Discipline` et `Convocation` portent
+   * un `classeId` **sans relation** : sur ces deux modèles il faut passer par
+   * `visibleClasseIds()` et filtrer `classeId: { in: … }`.
+   *
+   * Le typage ne protège pas de cette confusion : l'erreur ne se manifeste qu'à
+   * l'exécution, par un 400 de validation Prisma.
    */
   async whereParClasse(tenantId: string, user?: JwtUser): Promise<Record<string, unknown>> {
     const cycleIds = await this.visibleCycleIds(tenantId, user);
@@ -100,6 +108,25 @@ export class CycleScopeService {
     const cycleIds = await this.visibleCycleIds(tenantId, user);
     if (cycleIds === null) return null;
     return this.niveauIdsDesCycles(cycleIds);
+  }
+
+  /**
+   * Classes visibles par l'utilisateur, ou `null` s'il n'est pas cloisonné.
+   *
+   * Nécessaire pour les modèles qui portent un `classeId` **sans relation
+   * Prisma** vers `Classe` — c'est le cas de `Discipline`. Écrire
+   * `where.classe = { niveau: { cycleId } }` sur ces modèles produit une erreur
+   * de validation Prisma à l'exécution, que le typage ne signale pas.
+   */
+  async visibleClasseIds(tenantId: string, user?: JwtUser): Promise<string[] | null> {
+    const cycleIds = await this.visibleCycleIds(tenantId, user);
+    if (cycleIds === null) return null;
+    if (cycleIds.length === 0) return [];
+    const classes = await this.prisma.classe.findMany({
+      where: { tenantId, niveau: { cycleId: { in: cycleIds } } },
+      select: { id: true },
+    });
+    return classes.map((c) => c.id);
   }
 
   /** Idem pour un programme, via son niveau. */

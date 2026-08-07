@@ -996,7 +996,7 @@ export class LegacyCrudService {
       ? await this.prisma.cours.findFirst({ where: { id, ...this.fixedWhere(config, tenantId) } })
       : null;
 
-    const data = await this.prepareData(config, tenantId, body, false);
+    const data = await this.prepareData(config, tenantId, body, false, undefined, id);
     delete data.__tempPasswordForNotification;
     delete data.__personnelNiveauId;
     const personnelUpdateSectionId = typeof data.__personnelSectionId === 'string' ? data.__personnelSectionId : null;
@@ -2607,6 +2607,14 @@ export class LegacyCrudService {
     body: Payload,
     create: boolean,
     userId?: string,
+    /**
+     * Identifiant de l'entité en cours de modification, pris dans l'URL.
+     * Indispensable pour les règles d'unicité : sans lui, une entité entre en
+     * conflit avec elle-même. On ne peut pas le lire dans `data.id`, car le
+     * frontend ne l'envoie pas dans le corps et il finirait dans le `update`
+     * Prisma, qui tenterait alors de réécrire la clé primaire.
+     */
+    entityId?: string,
   ): Promise<Payload> {
     const data: Payload = { ...body };
     if (create) delete data.id;
@@ -2791,7 +2799,7 @@ export class LegacyCrudService {
     }
 
     if (config.model === 'classe') {
-      await this.normalizeClasseData(tenantId ?? String(data.tenantId ?? ''), data);
+      await this.normalizeClasseData(tenantId ?? String(data.tenantId ?? ''), data, entityId);
     }
 
     if (config.model === 'cours') {
@@ -3418,7 +3426,7 @@ export class LegacyCrudService {
     this.validateUuidFields(data, fieldsByModel[model] ?? common);
   }
 
-  private async normalizeClasseData(tenantId: string, data: Payload): Promise<void> {
+  private async normalizeClasseData(tenantId: string, data: Payload, entityId?: string): Promise<void> {
     if (!data.niveauId && data.niveau) {
       const niveauInput = String(data.niveau).trim();
       if (this.isUuidLike(niveauInput)) {
@@ -3483,16 +3491,51 @@ export class LegacyCrudService {
       ]);
       const cycleCode = (niveauData?.cycle?.code ?? '').toUpperCase();
       const primaryCycles = ['PRESCOLAIRE', 'PRIMAIRE', 'MATERNELLE', 'CRECHE', 'ELEMENTAIRE'];
-      if (primaryCycles.includes(cycleCode) && profUser?.specialite) {
-        const isPrescolaire = ['PRESCOLAIRE', 'MATERNELLE', 'CRECHE'].includes(cycleCode);
-        const expectedType = isPrescolaire ? 'PRESCOLAIRE' : 'PRIMAIRE';
-        const profType = profUser.specialite.toUpperCase();
-        if (profType !== expectedType && profType !== '') {
-          throw new BadRequestException(`Cet enseignant est de type ${profType}. Une classe ${cycleCode.toLowerCase()} necessite un enseignant de type ${expectedType}.`);
+      if (primaryCycles.includes(cycleCode)) {
+        /**
+         * Contrôle du rattachement au cycle.
+         *
+         * `specialite` est un champ libre, renseigné de deux façons selon les
+         * établissements : soit le cycle (« PRIMAIRE »), soit la liste des
+         * matières (« Eveil, Motricite »). La règle d'origine n'acceptait que la
+         * première forme et rejetait donc des enseignants de préscolaire
+         * parfaitement légitimes — sur les données actuelles, **aucun** enseignant
+         * ne pouvait être affecté à une classe de préscolaire.
+         *
+         * On accepte désormais un enseignant qui donne déjà cours dans une classe
+         * du même cycle : c'est le seul rattachement fiable. L'intention de la
+         * règle est préservée — un enseignant de lycée reste refusé sur une classe
+         * de primaire s'il n'y intervient pas.
+         */
+        if (profUser?.specialite) {
+          const isPrescolaire = ['PRESCOLAIRE', 'MATERNELLE', 'CRECHE'].includes(cycleCode);
+          const expectedType = isPrescolaire ? 'PRESCOLAIRE' : 'PRIMAIRE';
+          const profType = profUser.specialite.toUpperCase();
+          if (profType !== expectedType && profType !== '') {
+            const enseigneDansCeCycle = await this.prisma.cours.findFirst({
+              where: { tenantId, enseignantId: profId, classe: { niveau: { cycle: { code: cycleCode } } } },
+              select: { id: true },
+            });
+            if (!enseigneDansCeCycle) {
+              throw new BadRequestException(
+                `${profUser.specialite} ne correspond pas au cycle ${cycleCode.toLowerCase()}, et cet enseignant n'y donne aucun cours.`,
+              );
+            }
+          }
         }
-        // Check one-teacher-per-class rule
+        // Un enseignant ne peut être responsable que d'une classe de primaire.
+        // Contrôlé quelle que soit la spécialité : la règle vaut aussi pour un
+        // enseignant dont la spécialité n'est pas renseignée.
+        // `entityId` vient de l'URL — en modification, la classe éditée doit
+        // être exclue, sinon elle entre en conflit avec elle-même.
+        const currentClasseId = entityId ?? String(data.id ?? '');
         const existingClass = await this.prisma.classe.findFirst({
-          where: { tenantId, professeurResponsableId: profId, actif: true },
+          where: {
+            tenantId,
+            professeurResponsableId: profId,
+            actif: true,
+            ...(currentClasseId ? { id: { not: currentClasseId } } : {}),
+          },
           include: { niveau: { select: { cycle: { select: { code: true } } } } },
         });
         if (existingClass && primaryCycles.includes((existingClass.niveau?.cycle?.code ?? '').toUpperCase())) {

@@ -289,6 +289,8 @@ model Tenant {
   demandesAudit       DemandeAudit[]
   programmes          ProgrammePedagogique[]
   featureOverrides    TenantFeatureOverride[]
+  ouvrages            Ouvrage[]
+  empruntsOuvrage     EmpruntOuvrage[]
   documentTemplates   DocumentTemplate[]
 }
 
@@ -334,6 +336,20 @@ model EcoleConfig {
   cachetUrl         String?
   cachetS3Key       String?
   montantHoraireDefaut Float?
+  /**
+   * Grille horaire par cycle, propre à chaque école.
+   * Forme : { "PRIMAIRE": { joursAvecApresMidi, joursMatinSeul, matinDebut,
+   * matinFin, apresMidiDebut, apresMidiFin, recreationDebut, recreationMinutes } }
+   * Stockée en JSON plutôt qu'en table dédiée : une école n'a qu'une poignée de
+   * cycles et la grille est lue d'un bloc à chaque affichage d'emploi du temps.
+   */
+  grilleHoraire     Json?
+  /**
+   * Tarifs de la bibliothèque : caution d'emprunt, pénalité de retard par jour,
+   * durée d'emprunt par défaut. Regroupés ici car ils relèvent du paramétrage de
+   * l'école et alimentent ensuite les écritures financières.
+   */
+  tarifsBibliotheque Json?
   // Apparence
   themeColor        String   @default("blue") @db.VarChar(20)
   sidebarMode       String   @default("light") @db.VarChar(10)
@@ -492,6 +508,7 @@ model User {
   classesResponsable Classe[]             @relation("ClasseProfResponsable")
   stagiaireIn        ClasseStagiaire[]    @relation("UserStagiaires")
   pushTokens          PushToken[]
+  empruntsOuvrage     EmpruntOuvrage[]   @relation("EmpruntsEmprunteur")
   demandesReductionEleve     DemandeReduction[] @relation("DemandeReductionEleve")
   demandesReductionDemandees DemandeReduction[] @relation("DemandeReductionDemandeur")
   demandesReductionTraitees  DemandeReduction[] @relation("DemandeReductionTraiteur")
@@ -1739,4 +1756,81 @@ model DocumentTemplate {
   tenant Tenant? @relation(fields: [tenantId], references: [id])
 
   @@map("document_templates")
+}
+
+// ==================== BIBLIOTHEQUE ====================
+
+enum TypeOuvrage {
+  MANUEL
+  ROMAN
+  DICTIONNAIRE
+  ENCYCLOPEDIE
+  REVUE
+  MEMOIRE
+  AUTRE
+}
+
+enum StatutEmprunt {
+  EN_COURS
+  RENDU
+  EN_RETARD
+  PERDU
+}
+
+model Ouvrage {
+  id            String      @id @default(uuid()) @db.Uuid
+  tenantId      String      @db.Uuid
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  titre         String      @db.VarChar(250)
+  auteur        String      @db.VarChar(200)
+  type          TypeOuvrage @default(MANUEL)
+  isbn          String?     @db.VarChar(30)
+  annee         Int?
+  editeur       String?     @db.VarChar(150)
+  /** Prix de remplacement, base de la sanction en cas de perte. */
+  valeur        Float?
+  nbExemplaires Int         @default(1)
+  /** Recalculé à chaque emprunt et retour. */
+  nbDisponibles Int         @default(1)
+  matiereId     String?     @db.Uuid
+  niveauId      String?     @db.Uuid
+  /** On n'efface jamais un ouvrage : on le retire du catalogue. */
+  actif         Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  emprunts EmpruntOuvrage[]
+
+  @@index([tenantId, actif])
+  @@index([tenantId, titre])
+}
+
+model EmpruntOuvrage {
+  id               String        @id @default(uuid()) @db.Uuid
+  tenantId         String        @db.Uuid
+  tenant           Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ouvrageId        String        @db.Uuid
+  ouvrage          Ouvrage       @relation(fields: [ouvrageId], references: [id])
+  emprunteurId     String        @db.Uuid
+  emprunteur       User          @relation("EmpruntsEmprunteur", fields: [emprunteurId], references: [id])
+  /** ELEVE ou ENSEIGNANT — figé à l'emprunt, le rôle pouvant évoluer ensuite. */
+  typeEmprunteur   String        @db.VarChar(20)
+  dateEmprunt      DateTime      @default(now())
+  /** Durée choisie à l'emprunt ; la date de retour en découle. */
+  dureeJours       Int
+  dateRetourPrevue DateTime
+  dateRetourReelle DateTime?
+  statut           StatutEmprunt @default(EN_COURS)
+  /** Amende de retard ou valeur de l'ouvrage perdu. */
+  montantAmende    Float?
+  /** Paiement correspondant, une fois l'amende réglée à la caisse. */
+  paiementId       String?       @db.Uuid
+  observations     String?
+  enregistreParId  String?       @db.Uuid
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@index([tenantId, statut])
+  @@index([tenantId, emprunteurId])
+  @@index([ouvrageId])
 }

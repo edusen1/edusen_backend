@@ -13,6 +13,8 @@ import { AuthController } from '@/modules/auth.controller';
 import { PlatformController } from '@/modules/platform.controller';
 import { V1Controller } from '@/modules/v1.controller';
 import { AdminController } from '@/modules/admin.controller';
+import { BibliothequeController } from '@/modules/bibliotheque/bibliotheque.controller';
+import { BibliothequeService } from '@/modules/bibliotheque/bibliotheque.service';
 import { ConfigurationController } from '@/modules/configuration.controller';
 import { TeacherController } from '@/modules/teacher.controller';
 import { StudentController } from '@/modules/student.controller';
@@ -68,6 +70,7 @@ import { TemplateRendererService } from '@/modules/document/template-renderer.se
     PlatformController,
     V1Controller,
     AdminController,
+    BibliothequeController,
     ConfigurationController,
     TeacherController,
     StudentController,
@@ -99,6 +102,7 @@ import { TemplateRendererService } from '@/modules/document/template-renderer.se
     SchoolCardDocumentService,
     PresenceProfesseurService,
     CycleScopeService,
+    BibliothequeService,
     PushNotificationService,
     MensualitesSchedulerService,
     FeriesSyncService,

@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
+import { CYCLES_TRAME_FIXE, GRILLE_PAR_DEFAUT, type GrilleHoraire } from '@/common/utils/grille-horaire.util';
 import { StorageService } from '@/infrastructure/storage/storage.service';
 import { AppCacheService } from '@/infrastructure/cache/app-cache.service';
 import { UpdateEcoleConfigDto } from './dto/update-ecole-config.dto';
@@ -68,6 +70,41 @@ export class EcoleConfigService {
     return this.cache.getOrSet(this.configCacheKey(tenantId), 300, () =>
       this.prisma.withReadRetry('ecole config', () => this.loadEcoleConfig(tenantId)),
     );
+  }
+
+  /**
+   * Grille horaire de l'école, par cycle.
+   *
+   * Renvoie toujours une grille exploitable : les cycles non paramétrés
+   * retombent sur `GRILLE_PAR_DEFAUT`. Sans cela, une école qui n'a jamais
+   * ouvert l'écran de configuration verrait un emploi du temps vide.
+   */
+  async getGrilleHoraire(tenantId: string): Promise<GrilleHoraire> {
+    const config = await this.prisma.ecoleConfig.findUnique({
+      where: { tenantId },
+      select: { grilleHoraire: true },
+    });
+    const enregistree = (config?.grilleHoraire ?? {}) as GrilleHoraire;
+    const complete: GrilleHoraire = {};
+    for (const cycle of CYCLES_TRAME_FIXE) {
+      complete[cycle] = { ...GRILLE_PAR_DEFAUT, ...(enregistree[cycle] ?? {}) };
+    }
+    return complete;
+  }
+
+  async updateGrilleHoraire(tenantId: string, grille: GrilleHoraire): Promise<GrilleHoraire> {
+    const existante = await this.getGrilleHoraire(tenantId);
+    const fusionnee: GrilleHoraire = { ...existante };
+    for (const [cycle, valeurs] of Object.entries(grille ?? {})) {
+      if (!CYCLES_TRAME_FIXE.includes(cycle)) continue;
+      fusionnee[cycle] = { ...existante[cycle], ...valeurs };
+    }
+    await this.prisma.ecoleConfig.update({
+      where: { tenantId },
+      data: { grilleHoraire: fusionnee as unknown as Prisma.InputJsonValue },
+    });
+    await this.invalidateTenantCache(tenantId);
+    return fusionnee;
   }
 
   private async loadEcoleConfig(tenantId: string): Promise<EcoleConfigResponse> {

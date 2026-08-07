@@ -1026,6 +1026,31 @@ export class AdminController {
     return this.ecoleConfig.updateEcoleConfig(tid!, dto);
   }
 
+  /**
+   * Grille horaire par cycle. Ouverte au surveillant en lecture : il construit
+   * l'emploi du temps de son cycle et a besoin de la trame, mais ne la définit pas.
+   */
+  @Roles('ADMIN', 'SURVEILLANT')
+  @Get('configuration/grille-horaire')
+  getGrilleHoraire(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = tenantId?.trim() || user?.tenantId;
+    return this.ecoleConfig.getGrilleHoraire(tid!);
+  }
+
+  @Roles('ADMIN')
+  @Put('configuration/grille-horaire')
+  updateGrilleHoraire(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = tenantId?.trim() || user?.tenantId;
+    return this.ecoleConfig.updateGrilleHoraire(tid!, body as never);
+  }
+
   @Roles('ADMIN')
   @Get('configuration/apparence')
   getApparence(
@@ -1509,8 +1534,23 @@ export class AdminController {
       });
       const eleveIds = [...new Set(inscriptions.map((i) => i.eleveId))];
       if (eleveIds.length === 0) return [];
+      // La recherche doit rester active dans la branche cloisonnée : sans ce
+      // relais, un surveillant qui tape un matricule recevrait toute sa liste.
+      const recherche = (query.search ?? '').trim();
+      const filtreRecherche = recherche
+        ? {
+            OR: [
+              { firstName: { contains: recherche, mode: 'insensitive' as const } },
+              { lastName: { contains: recherche, mode: 'insensitive' as const } },
+              { matricule: { contains: recherche, mode: 'insensitive' as const } },
+              { telephone: { contains: recherche, mode: 'insensitive' as const } },
+              { username: { contains: recherche, mode: 'insensitive' as const } },
+              { email: { contains: recherche, mode: 'insensitive' as const } },
+            ],
+          }
+        : {};
       return this.prisma.user.findMany({
-        where: { tenantId: tid, role: 'ELEVE', id: { in: eleveIds } },
+        where: { tenantId: tid, role: 'ELEVE', id: { in: eleveIds }, ...filtreRecherche },
         select: { id: true, firstName: true, lastName: true, matricule: true, photoUrl: true, classeId: true },
         take: size,
         orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
@@ -2183,9 +2223,13 @@ export class AdminController {
     // Cloisonnement : les incidents disciplinaires sont rattachés à une classe.
     // Ceux qui n'en ont pas (personnel, enseignant) restent hors périmètre du
     // surveillant, qui n'a autorité que sur les élèves de son cycle.
-    const cycleIdsDiscipline = await this.cycleScope.visibleCycleIds(tid, user);
-    if (cycleIdsDiscipline) {
-      where.classe = { niveau: { cycleId: { in: cycleIdsDiscipline } } };
+    //
+    // `Discipline.classeId` n'a **pas** de relation Prisma vers `Classe` : on
+    // filtre donc sur une liste d'identifiants, pas sur `classe: { niveau: … }`,
+    // qui échouait à l'exécution en 400 sans que le typage ne le signale.
+    const classeIdsDiscipline = await this.cycleScope.visibleClasseIds(tid, user);
+    if (classeIdsDiscipline) {
+      where.classeId = { in: classeIdsDiscipline };
     }
     if (query.type) where.type = query.type;
     if (query.rapporteurRole) where.rapporteurRole = query.rapporteurRole;

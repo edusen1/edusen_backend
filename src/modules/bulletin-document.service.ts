@@ -249,13 +249,24 @@ export class BulletinDocumentService implements OnModuleDestroy {
     const ca = compositionAverage ?? 0;
     const moyenne = this.round((da + ca) / 2);
 
+    /**
+     * Seuils alignés sur ceux de l'écran (`admin/bulletins`, `getMention`).
+     * Ils divergeaient : le PDF décalait toute l'échelle d'un cran et ajoutait
+     * « EXCELLENT ». Une moyenne de 14,5 était affichée « B » à l'écran et
+     * imprimée « TRÈS BIEN » sur le bulletin remis à la famille.
+     *
+     * Barème retenu : celui en usage au Sénégal — 16 très bien, 14 bien,
+     * 12 assez bien, 10 passable.
+     *
+     * `moyenne` est déjà ramenée sur 20 par `normalized()`, la comparaison vaut
+     * donc aussi pour les cycles notés sur 10.
+     */
     const mentionForNote = (v: number | null) => {
       if (v === null) return '';
-      if (v >= 16) return 'EXCELLENT';
-      if (v >= 14) return 'TRÈS BIEN';
-      if (v >= 12) return 'BIEN';
-      if (v >= 10) return 'ASSEZ BIEN';
-      if (v >= 8) return 'PASSABLE';
+      if (v >= 16) return 'TRÈS BIEN';
+      if (v >= 14) return 'BIEN';
+      if (v >= 12) return 'ASSEZ BIEN';
+      if (v >= 10) return 'PASSABLE';
       return 'INSUFFISANT';
     };
 
@@ -388,11 +399,18 @@ export class BulletinDocumentService implements OnModuleDestroy {
     return labels[value] ?? value.replace(/_/g, ' ');
   }
 
+  /**
+   * Phrase d'appréciation générale. Ses paliers suivent les mêmes seuils que les
+   * mentions par matière (16 / 14 / 12 / 10) : ils sautaient auparavant le palier
+   * 12, si bien qu'un élève à 12,5 — « assez bien » par matière — recevait la
+   * même phrase qu'un élève à 10.
+   */
   private appreciation(value: number | null): string {
     if (value === null) return 'Résultats en attente de saisie.';
-    if (value >= 16) return 'Excellent travail, continuez ainsi.';
-    if (value >= 14) return 'Très bon travail, continuez vos efforts.';
-    if (value >= 10) return 'Résultats satisfaisants, poursuivez vos efforts.';
+    if (value >= 16) return 'Très bon travail, continuez ainsi.';
+    if (value >= 14) return 'Bon travail, continuez vos efforts.';
+    if (value >= 12) return 'Résultats assez satisfaisants, poursuivez vos efforts.';
+    if (value >= 10) return 'Résultats passables, des progrès restent possibles.';
     return 'Des efforts supplémentaires sont attendus pour progresser.';
   }
 
