@@ -452,6 +452,7 @@ model User {
   classeId        String?   @db.Uuid
 
   cardToken       String?   @unique @db.VarChar(64)
+  signatureUrl    String?
 
   // ENSEIGNANT
   specialite            String?

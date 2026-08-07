@@ -1711,6 +1711,69 @@ export class AdminController {
   }
 
   // ----------------------------------------------------------------
+  // Signature (admin, caissier — pour bulletins et reçus)
+  // ----------------------------------------------------------------
+
+  @Roles('ADMIN', 'CAISSIER')
+  @Post('signature')
+  @HttpCode(HttpStatus.OK)
+  async uploadMySignature(
+    @Req() req: MultipartFastifyRequest,
+    @Body() body: { signatureUrl?: string },
+    @CurrentUser() user?: JwtUser,
+  ) {
+    if (!user?.sub) throw new BadRequestException('Utilisateur introuvable');
+    const tenantId = user.tenantId;
+    if (!tenantId) throw new BadRequestException('Tenant introuvable');
+
+    let buffer: Buffer;
+    let contentType: string;
+
+    if (req.isMultipart?.()) {
+      const file = await req.file();
+      if (!file) throw new BadRequestException('Aucun fichier fourni');
+      const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+      if (!allowed.includes(file.mimetype)) throw new BadRequestException('Format non supporte (JPEG, PNG, WebP)');
+      buffer = await file.toBuffer();
+      contentType = file.mimetype;
+    } else if (body?.signatureUrl) {
+      const match = body.signatureUrl.match(/^data:(image\/[a-zA-Z+]+);base64,(.+)$/);
+      if (!match) throw new BadRequestException('Format invalide — data URL base64 attendu');
+      contentType = match[1];
+      buffer = Buffer.from(match[2], 'base64');
+    } else {
+      throw new BadRequestException('Fichier ou signatureUrl requis');
+    }
+
+    if (buffer.length > 1_000_000) throw new BadRequestException('Signature trop volumineuse (max 1 Mo)');
+
+    const key = this.storage.buildKey('signatures', tenantId, `signature-${user.sub}.png`);
+    const url = await this.storage.upload(key, buffer, contentType);
+    const signatureUrl = this.storage.resolveUrl(url) ?? url;
+
+    await this.prisma.user.update({ where: { id: user.sub }, data: { signatureUrl } });
+
+    return { signatureUrl };
+  }
+
+  @Roles('ADMIN', 'CAISSIER')
+  @Get('signature')
+  async getMySignature(@CurrentUser() user?: JwtUser) {
+    if (!user?.sub) throw new BadRequestException('Utilisateur introuvable');
+    const u = await this.prisma.user.findUnique({ where: { id: user.sub }, select: { signatureUrl: true } });
+    return { signatureUrl: u?.signatureUrl ? this.storage.resolveUrl(u.signatureUrl) : null };
+  }
+
+  @Roles('ADMIN', 'CAISSIER')
+  @Delete('signature')
+  @HttpCode(HttpStatus.OK)
+  async deleteMySignature(@CurrentUser() user?: JwtUser) {
+    if (!user?.sub) throw new BadRequestException('Utilisateur introuvable');
+    await this.prisma.user.update({ where: { id: user.sub }, data: { signatureUrl: null } });
+    return { ok: true };
+  }
+
+  // ----------------------------------------------------------------
   // Upload photo utilisateur (élève, enseignant, parent…)
   // ----------------------------------------------------------------
 
