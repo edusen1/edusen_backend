@@ -237,14 +237,28 @@ export class ClasseService {
     });
     if (existing) throw new ConflictException('Une classe avec ce nom existe déjà pour cette année');
 
+    const isPrimary = this.isCyclePrimaire(cycle?.code);
+
     if (dto.professeurResponsableId) {
       const prof = await this.prisma.user.findFirst({
         where: { id: dto.professeurResponsableId, tenantId, role: 'ENSEIGNANT' },
+        select: { id: true, specialite: true },
       });
       if (!prof) throw new NotFoundException('Enseignant introuvable');
-    }
 
-    const isPrimary = this.isCyclePrimaire(cycle?.code);
+      // Valider la coherence type enseignant / cycle
+      if (isPrimary && prof.specialite) {
+        const cycleCode = (cycle?.code ?? '').toUpperCase();
+        const isPrescolaire = ['PRESCOLAIRE', 'MATERNELLE', 'CRECHE'].includes(cycleCode);
+        const expectedType = isPrescolaire ? 'PRESCOLAIRE' : 'PRIMAIRE';
+        const profType = prof.specialite.toUpperCase();
+        if (profType !== expectedType && profType !== '') {
+          throw new BadRequestException(
+            `Cet enseignant est de type ${profType}. Une classe ${cycleCode.toLowerCase()} necessite un enseignant de type ${expectedType}.`,
+          );
+        }
+      }
+    }
 
     // Prescolaire/Primaire: un prof ne peut avoir qu'une seule classe
     if (isPrimary && dto.professeurResponsableId) {
@@ -1281,16 +1295,29 @@ export class ClasseService {
       dto.niveauId !== undefined || dto.cycleId !== undefined,
     );
 
-    if (dto.professeurResponsableId) {
-      const prof = await this.prisma.user.findFirst({
-        where: { id: dto.professeurResponsableId, tenantId, role: 'ENSEIGNANT' },
-      });
-      if (!prof) throw new NotFoundException('Enseignant introuvable');
-    }
-
     const resolvedCycleCode = cycle?.code ?? existing.niveau?.cycle?.code ?? null;
     const isPrimary = this.isCyclePrimaire(resolvedCycleCode);
     const isNewProfAssignment = dto.professeurResponsableId && dto.professeurResponsableId !== existing.professeurResponsableId;
+
+    if (dto.professeurResponsableId) {
+      const prof = await this.prisma.user.findFirst({
+        where: { id: dto.professeurResponsableId, tenantId, role: 'ENSEIGNANT' },
+        select: { id: true, specialite: true },
+      });
+      if (!prof) throw new NotFoundException('Enseignant introuvable');
+
+      if (isPrimary && prof.specialite) {
+        const cycleCode = (resolvedCycleCode ?? '').toUpperCase();
+        const isPrescolaire = ['PRESCOLAIRE', 'MATERNELLE', 'CRECHE'].includes(cycleCode);
+        const expectedType = isPrescolaire ? 'PRESCOLAIRE' : 'PRIMAIRE';
+        const profType = prof.specialite.toUpperCase();
+        if (profType !== expectedType && profType !== '') {
+          throw new BadRequestException(
+            `Cet enseignant est de type ${profType}. Une classe ${cycleCode.toLowerCase()} necessite un enseignant de type ${expectedType}.`,
+          );
+        }
+      }
+    }
 
     // Prescolaire/Primaire: un prof ne peut avoir qu'une seule classe
     if (isPrimary && isNewProfAssignment) {
