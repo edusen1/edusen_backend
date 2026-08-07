@@ -244,10 +244,11 @@ export class ClasseService {
       if (!prof) throw new NotFoundException('Enseignant introuvable');
     }
 
-    // Prescolaire/Primaire: professeur obligatoire
     const isPrimary = this.isCyclePrimaire(cycle?.code);
-    if (isPrimary && !dto.professeurResponsableId) {
-      throw new BadRequestException('Un professeur responsable est obligatoire pour les classes du prescolaire et du primaire');
+
+    // Prescolaire/Primaire: un prof ne peut avoir qu'une seule classe
+    if (isPrimary && dto.professeurResponsableId) {
+      await this.assertPrimaryTeacherAvailable(tenantId, dto.professeurResponsableId, null);
     }
 
     const classe = await this.prisma.classe.create({
@@ -264,7 +265,7 @@ export class ClasseService {
       include: CLASSE_INCLUDE,
     });
 
-    // Prescolaire/Primaire: generer l'emploi du temps par defaut
+    // Prescolaire/Primaire: generer l'emploi du temps par defaut quand un prof est assigne
     if (isPrimary && dto.professeurResponsableId) {
       await this.generatePrimarySchedule(tenantId, classe.id, dto.professeurResponsableId, dto.salleId ?? null, annee.libelle);
     }
@@ -1292,6 +1293,15 @@ export class ClasseService {
       if (!prof) throw new NotFoundException('Enseignant introuvable');
     }
 
+    const resolvedCycleCode = cycle?.code ?? existing.niveau?.cycle?.code ?? null;
+    const isPrimary = this.isCyclePrimaire(resolvedCycleCode);
+    const isNewProfAssignment = dto.professeurResponsableId && dto.professeurResponsableId !== existing.professeurResponsableId;
+
+    // Prescolaire/Primaire: un prof ne peut avoir qu'une seule classe
+    if (isPrimary && isNewProfAssignment) {
+      await this.assertPrimaryTeacherAvailable(tenantId, dto.professeurResponsableId!, id);
+    }
+
     const updated = await this.prisma.classe.update({
       where: { id },
       data: {
@@ -1300,10 +1310,21 @@ export class ClasseService {
         ...(dto.professeurResponsableId !== undefined
           ? { professeurResponsableId: dto.professeurResponsableId }
           : {}),
+        ...(dto.salleId !== undefined ? { salleId: dto.salleId } : {}),
         ...(dto.effectifMax !== undefined ? { effectifMax: dto.effectifMax } : {}),
       },
       include: CLASSE_INCLUDE,
     });
+
+    // Prescolaire/Primaire: generer l'emploi du temps quand on assigne un prof
+    if (isPrimary && isNewProfAssignment) {
+      // Supprimer l'ancien emploi du temps auto-genere
+      await this.prisma.emploiDuTemps.deleteMany({ where: { tenantId, classeId: id } });
+      const annee = existing.anneeAcademiqueId
+        ? await this.prisma.anneeAcademique.findUnique({ where: { id: existing.anneeAcademiqueId }, select: { libelle: true } })
+        : null;
+      await this.generatePrimarySchedule(tenantId, id, dto.professeurResponsableId!, dto.salleId ?? updated.salleId ?? null, annee?.libelle ?? '');
+    }
 
     return this.toResponse(updated);
   }
@@ -1792,6 +1813,27 @@ export class ClasseService {
   // ----------------------------------------------------------------
   // Primary/Preschool helpers
   // ----------------------------------------------------------------
+
+  /**
+   * Verifie qu'un enseignant n'est pas deja prof responsable d'une autre classe
+   * prescolaire/primaire. Un prof du primaire ne peut avoir qu'une seule classe.
+   */
+  private async assertPrimaryTeacherAvailable(tenantId: string, profId: string, excludeClasseId: string | null): Promise<void> {
+    const existing = await this.prisma.classe.findFirst({
+      where: {
+        tenantId,
+        professeurResponsableId: profId,
+        actif: true,
+        ...(excludeClasseId ? { id: { not: excludeClasseId } } : {}),
+      },
+      include: { niveau: { select: { cycle: { select: { code: true } } } } },
+    });
+    if (existing && this.isCyclePrimaire(existing.niveau?.cycle?.code)) {
+      throw new BadRequestException(
+        `Cet enseignant est deja responsable de la classe ${existing.nom}. Au prescolaire/primaire, un enseignant ne peut avoir qu'une seule classe.`,
+      );
+    }
+  }
 
   private isCyclePrimaire(cycleCode?: string | null): boolean {
     if (!cycleCode) return false;
