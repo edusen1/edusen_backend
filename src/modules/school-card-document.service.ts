@@ -81,7 +81,7 @@ export class SchoolCardDocumentService implements OnModuleDestroy {
       this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { nom: true, logoUrl: true } }),
       this.prisma.user.findFirst({
         where: { id: userId, tenantId },
-        select: { id: true, firstName: true, lastName: true, email: true, role: true, matricule: true, dateNaissance: true, lieuNaissance: true, genre: true, photoUrl: true, numeroUrgence: true },
+        select: { id: true, firstName: true, lastName: true, email: true, role: true, matricule: true, dateNaissance: true, lieuNaissance: true, genre: true, photoUrl: true, numeroUrgence: true, cardToken: true },
       }),
       this.prisma.inscription.findFirst({
         where: { tenantId, eleveId: userId, statut: 'ACTIF' },

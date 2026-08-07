@@ -3,6 +3,7 @@ import { Prisma, StatutPresence } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import type { JwtUser } from '@/common/types/auth.types';
 import { PushNotificationService } from '@/modules/push-notification.service';
+import { CycleScopeService } from '@/modules/cycle-scope.service';
 
 type PresencePayload = {
   emploiDuTempsId?: string;
@@ -38,6 +39,7 @@ export class PresenceProfesseurService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly pushNotifications: PushNotificationService,
+    private readonly cycleScope: CycleScopeService,
   ) {}
 
   async coursDuJour(tenantId: string, dateIso: string, user?: JwtUser): Promise<unknown[]> {
@@ -491,13 +493,14 @@ export class PresenceProfesseurService {
     if (!classe) throw new BadRequestException('Cette classe n’est pas dans votre périmètre de surveillance');
   }
 
-  private async visibleCycleIds(tenantId: string, user?: JwtUser): Promise<string[] | null> {
-    if (!user || user.role !== 'SURVEILLANT') return null;
-    const rows = await this.prisma.surveillantCycle.findMany({
-      where: { tenantId, surveillantId: user.sub },
-      select: { cycleId: true },
-    });
-    return rows.length ? rows.map((row) => row.cycleId) : null;
+  /**
+   * Déléguée à `CycleScopeService` pour que la règle soit unique.
+   * L'implémentation locale renvoyait `null` — donc « aucun filtre » — quand le
+   * surveillant n'avait aucun cycle affecté, ce qui lui ouvrait tout
+   * l'établissement. Le service partagé renvoie désormais un tableau vide.
+   */
+  private visibleCycleIds(tenantId: string, user?: JwtUser): Promise<string[] | null> {
+    return this.cycleScope.visibleCycleIds(tenantId, user);
   }
 
   private parseDate(value: string): Date {

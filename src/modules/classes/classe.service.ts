@@ -49,7 +49,12 @@ export class ClasseService {
   // List
   // ----------------------------------------------------------------
 
-  async getClasses(tenantId: string, anneeId?: string, niveauId?: string, cycleId?: string) {
+  /**
+   * `cycleIdsAutorises` restreint le résultat aux cycles visibles par l'appelant.
+   * `undefined` ou `null` = aucune restriction ; un tableau vide = rien de visible
+   * (surveillant sans cycle affecté). Voir `CycleScopeService`.
+   */
+  async getClasses(tenantId: string, anneeId?: string, niveauId?: string, cycleId?: string, cycleIdsAutorises?: string[] | null) {
     await this.assertTenantExists(tenantId);
     await this.syncClassActivityForCurrentYear(tenantId);
 
@@ -70,6 +75,12 @@ export class ClasseService {
     if (niveauId) where.niveauId = niveauId;
     if (cycleId && !niveauId) {
       where.niveau = { cycleId };
+    }
+    // Cloisonnement : appliqué en dernier pour qu'un filtre `cycleId` fourni par
+    // l'appelant ne puisse pas élargir le périmètre autorisé.
+    if (cycleIdsAutorises) {
+      const cycleFiltre = cycleId && cycleIdsAutorises.includes(cycleId) ? [cycleId] : cycleIdsAutorises;
+      where.niveau = { ...(where.niveau as object ?? {}), cycleId: { in: cycleFiltre } };
     }
 
     const classes = await this.prisma.classe.findMany({
