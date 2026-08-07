@@ -3468,6 +3468,39 @@ export class LegacyCrudService {
       data.effectifMax = Number(data.nombreMaxEleves);
     }
 
+    // Map enseignantPrincipalId to professeurResponsableId
+    if (data.enseignantPrincipalId && !data.professeurResponsableId) {
+      data.professeurResponsableId = data.enseignantPrincipalId;
+    }
+
+    // Validate teacher type for prescolaire/primaire classes
+    const profId = String(data.professeurResponsableId ?? '');
+    const niveauIdForValidation = String(data.niveauId ?? '');
+    if (profId && niveauIdForValidation) {
+      const [profUser, niveauData] = await Promise.all([
+        this.prisma.user.findUnique({ where: { id: profId }, select: { specialite: true } }),
+        this.prisma.niveau.findFirst({ where: { id: niveauIdForValidation }, include: { cycle: { select: { code: true } } } }),
+      ]);
+      const cycleCode = (niveauData?.cycle?.code ?? '').toUpperCase();
+      const primaryCycles = ['PRESCOLAIRE', 'PRIMAIRE', 'MATERNELLE', 'CRECHE', 'ELEMENTAIRE'];
+      if (primaryCycles.includes(cycleCode) && profUser?.specialite) {
+        const isPrescolaire = ['PRESCOLAIRE', 'MATERNELLE', 'CRECHE'].includes(cycleCode);
+        const expectedType = isPrescolaire ? 'PRESCOLAIRE' : 'PRIMAIRE';
+        const profType = profUser.specialite.toUpperCase();
+        if (profType !== expectedType && profType !== '') {
+          throw new BadRequestException(`Cet enseignant est de type ${profType}. Une classe ${cycleCode.toLowerCase()} necessite un enseignant de type ${expectedType}.`);
+        }
+        // Check one-teacher-per-class rule
+        const existingClass = await this.prisma.classe.findFirst({
+          where: { tenantId, professeurResponsableId: profId, actif: true },
+          include: { niveau: { select: { cycle: { select: { code: true } } } } },
+        });
+        if (existingClass && primaryCycles.includes((existingClass.niveau?.cycle?.code ?? '').toUpperCase())) {
+          throw new BadRequestException(`Cet enseignant est deja responsable de la classe ${existingClass.nom}. Au prescolaire/primaire, un enseignant ne peut avoir qu'une seule classe.`);
+        }
+      }
+    }
+
     delete data.niveau;
     delete data.anneeScolaire;
     delete data.salleClasse;
