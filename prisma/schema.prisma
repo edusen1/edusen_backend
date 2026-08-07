@@ -451,6 +451,8 @@ model User {
   photoUrl        String?
   classeId        String?   @db.Uuid
 
+  cardToken       String?   @unique @db.VarChar(64)
+
   // ENSEIGNANT
   specialite            String?
   dateEmbauche          DateTime? @db.Date

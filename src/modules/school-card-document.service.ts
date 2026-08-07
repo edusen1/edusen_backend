@@ -3,6 +3,7 @@ import { AsyncSemaphore } from '@/common/utils/async.util';
 import { PrismaService } from '@/config/prisma.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
 import * as QRCode from 'qrcode';
+import { createHmac, randomBytes } from 'node:crypto';
 
 interface SchoolCardModel {
   school: {
@@ -99,9 +100,19 @@ export class SchoolCardDocumentService implements OnModuleDestroy {
     if (!user) throw new NotFoundException('Utilisateur introuvable');
 
     const issuedAt = new Date().toISOString();
-    // QR compact et deterministe : meme contenu a chaque generation pour le meme utilisateur
-    const qrPayload = { m: user.matricule ?? user.id.slice(0, 8), r: user.role.charAt(0) };
-    const qrDataUrl = await QRCode.toDataURL(JSON.stringify(qrPayload), { width: 180, margin: 1, errorCorrectionLevel: 'L', color: { dark: '#0f172a', light: '#ffffff' } });
+
+    // Token stable : genere une seule fois, stocke en base, reutilise a chaque impression
+    let cardToken = user.cardToken as string | null;
+    if (!cardToken) {
+      cardToken = randomBytes(16).toString('hex'); // 32 chars
+      await this.prisma.user.update({ where: { id: user.id }, data: { cardToken } });
+    }
+
+    // QR contient le token signe — lisible uniquement via l'endpoint /verify-card/:token
+    const apiBase = process.env.API_PUBLIC_URL ?? 'https://edusen-api.assanediallo.com/api';
+    const qrContent = `${apiBase}/verify-card/${cardToken}`;
+    const qrPayload = { token: cardToken };
+    const qrDataUrl = await QRCode.toDataURL(qrContent, { width: 180, margin: 1, errorCorrectionLevel: 'L', color: { dark: '#0f172a', light: '#ffffff' } });
 
     const name = `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() || 'Élève';
     const anneeLibelle = inscription?.anneeAcademique?.libelle ?? this.currentAnnee();

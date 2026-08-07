@@ -43,6 +43,7 @@ import { EmploiDuTempsService } from '@/modules/v1/emploi-du-temps/emploi-du-tem
 import { BulletinService, PublishBulletinsDto } from '@/modules/v1/bulletin/bulletin.service';
 import { DomainService } from '@/modules/domain.service';
 import { PresenceProfesseurService } from '@/modules/presence-professeur.service';
+import { CycleScopeService } from '@/modules/cycle-scope.service';
 import { DemandeReductionService } from '@/modules/v1/demande-reduction/demande-reduction.service';
 import { SchoolCardDocumentService } from '@/modules/school-card-document.service';
 import { EleveDocumentService } from '@/modules/eleve-document.service';
@@ -79,10 +80,20 @@ export class AdminController {
     private readonly programmeService: ProgrammeService,
     private readonly storage: StorageService,
     private readonly featureService: FeatureService,
+    private readonly cycleScope: CycleScopeService,
   ) {}
 
   private resolveTenantId(tenantId: string | undefined, user?: JwtUser) {
     return this.crud.resolveTenantId(tenantId, user);
+  }
+
+  /**
+   * Refuse l'écriture sur un programme hors du cycle de l'appelant.
+   * Filtrer les listes ne protège pas : sans ce contrôle, un surveillant peut
+   * modifier ou supprimer le programme d'un autre cycle en connaissant son id.
+   */
+  private async assertProgrammeAutorise(tenantId: string, programmeId: string, user?: JwtUser): Promise<void> {
+    this.cycleScope.assertVisible(await this.cycleScope.programmeEstVisible(tenantId, programmeId, user));
   }
 
   /** Restricts dynamic CRUD routes without blocking each role's own workflow. */
@@ -98,6 +109,57 @@ export class AdminController {
     if (!user?.role || !resourcesByRole[user.role]?.includes(resource)) {
       throw new ForbiddenException('Vous ne pouvez pas modifier cette ressource');
     }
+  }
+
+  // ----------------------------------------------------------------
+  // Card verification (QR scan)
+  // ----------------------------------------------------------------
+
+  @Roles('ADMIN', 'SURVEILLANT', 'CAISSIER', 'SECURITE')
+  @Get('verify-card/:token')
+  async verifyCard(
+    @Param('token') token: string,
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+
+    const cardUser = await this.prisma.user.findFirst({
+      where: { cardToken: token, tenantId: tid },
+      select: {
+        id: true, firstName: true, lastName: true, matricule: true,
+        role: true, genre: true, photoUrl: true, actif: true,
+        dateNaissance: true, lieuNaissance: true, telephone: true,
+        numeroUrgence: true, classeId: true,
+      },
+    });
+
+    if (!cardUser) throw new NotFoundException('Carte invalide ou inconnue');
+
+    let classe: string | null = null;
+    if (cardUser.classeId) {
+      const c = await this.prisma.classe.findUnique({ where: { id: cardUser.classeId }, select: { nom: true } });
+      classe = c?.nom ?? null;
+    }
+
+    return {
+      valid: true,
+      actif: cardUser.actif,
+      user: {
+        id: cardUser.id,
+        nom: `${cardUser.firstName ?? ''} ${cardUser.lastName ?? ''}`.trim(),
+        matricule: cardUser.matricule,
+        role: cardUser.role,
+        genre: cardUser.genre,
+        photoUrl: this.storage.resolveUrl(cardUser.photoUrl),
+        classe,
+        dateNaissance: cardUser.dateNaissance,
+        lieuNaissance: cardUser.lieuNaissance,
+        telephone: cardUser.telephone,
+        numeroUrgence: cardUser.numeroUrgence,
+      },
+    };
   }
 
   // ----------------------------------------------------------------
@@ -246,7 +308,9 @@ export class AdminController {
     @Query('cycleId') cycleId?: string,
     @CurrentUser() user?: JwtUser,
   ) {
-    return this.resolveTenantId(tenantId, user).then((tid) => this.classeService.getClasses(tid!, anneeId, niveauId, cycleId));
+    return this.resolveTenantId(tenantId, user).then(async (tid) =>
+      this.classeService.getClasses(tid!, anneeId, niveauId, cycleId, await this.cycleScope.visibleCycleIds(tid!, user)),
+    );
   }
 
   @Roles('ADMIN')
@@ -1410,8 +1474,14 @@ export class AdminController {
     if (!tid) throw new BadRequestException('Tenant introuvable');
     const classeId = query.classeId;
     const size = Math.min(Number(query.size ?? 200), 500);
+    // Cloisonnement : un surveillant ne voit que les élèves de ses cycles.
+    const cycleIds = await this.cycleScope.visibleCycleIds(tid, user);
 
     if (classeId) {
+      // Une classe hors périmètre ne doit rien révéler, même si son identifiant
+      // est connu : on renvoie une liste vide plutôt qu'une erreur, pour ne pas
+      // confirmer l'existence de la classe.
+      if (cycleIds && !(await this.cycleScope.classeEstVisible(tid, classeId, user))) return [];
       // Cherche via inscriptions actives pour fiabilité (User.classeId peut être null)
       const inscriptions = await this.prisma.inscription.findMany({
         where: { tenantId: tid, classeId, statut: 'ACTIF' },
@@ -1428,7 +1498,25 @@ export class AdminController {
       return eleves;
     }
 
-    // Sans filtre classeId : retour générique paginé
+    // Sans filtre classeId : retour générique paginé.
+    // Pour un rôle cloisonné, on ne peut pas déléguer au CRUD générique — il
+    // ignore la notion de cycle. On restreint donc aux élèves ayant une
+    // inscription active dans une classe des cycles autorisés.
+    if (cycleIds) {
+      const inscriptions = await this.prisma.inscription.findMany({
+        where: { tenantId: tid, statut: 'ACTIF', classe: { niveau: { cycleId: { in: cycleIds } } } },
+        select: { eleveId: true },
+      });
+      const eleveIds = [...new Set(inscriptions.map((i) => i.eleveId))];
+      if (eleveIds.length === 0) return [];
+      return this.prisma.user.findMany({
+        where: { tenantId: tid, role: 'ELEVE', id: { in: eleveIds } },
+        select: { id: true, firstName: true, lastName: true, matricule: true, photoUrl: true, classeId: true },
+        take: size,
+        orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      });
+    }
+
     return this.crud.findAll(this.crud.adminConfig('eleves'), tid, query);
   }
 
@@ -1821,7 +1909,10 @@ export class AdminController {
   getProgrammes(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser,
     @Query('niveauId') niveauId?: string, @Query('matiereId') matiereId?: string,
     @Query('anneeAcademiqueId') anneeAcademiqueId?: string, @Query('statut') statut?: string) {
-    return this.programmeService.findAll((tid?.trim() || u?.tenantId)!, { niveauId, matiereId, anneeAcademiqueId, statut });
+    const tenant = (tid?.trim() || u?.tenantId)!;
+    return this.cycleScope.visibleNiveauIds(tenant, u).then((niveauIdsAutorises) =>
+      this.programmeService.findAll(tenant, { niveauId, matiereId, anneeAcademiqueId, statut, niveauIdsAutorises }),
+    );
   }
 
   @Roles('ADMIN', 'SURVEILLANT', 'ENSEIGNANT')
@@ -1840,44 +1931,60 @@ export class AdminController {
 
   @Roles('ADMIN', 'SURVEILLANT')
   @Post('programmes')
-  createProgramme(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Body() body: Payload) {
-    return this.programmeService.create((tid?.trim() || u?.tenantId)!, body as never);
+  async createProgramme(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Body() body: Payload) {
+    const tenant = (tid?.trim() || u?.tenantId)!;
+    // On contrôle le niveau demandé : sans ça, un surveillant peut créer un
+    // programme sur un cycle qui n'est pas le sien.
+    this.cycleScope.assertVisible(await this.cycleScope.niveauEstVisible(tenant, String(body.niveauId ?? ''), u));
+    return this.programmeService.create(tenant, body as never);
   }
 
   @Roles('ADMIN', 'SURVEILLANT')
   @Patch('programmes/:id')
-  updateProgramme(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('id') id: string, @Body() body: Payload) {
-    return this.programmeService.update((tid?.trim() || u?.tenantId)!, id, body as never);
+  async updateProgramme(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('id') id: string, @Body() body: Payload) {
+    const tenant = (tid?.trim() || u?.tenantId)!;
+    await this.assertProgrammeAutorise(tenant, id, u);
+    return this.programmeService.update(tenant, id, body as never);
   }
 
   @Roles('ADMIN', 'SURVEILLANT')
   @Delete('programmes/:id')
-  deleteProgramme(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('id') id: string) {
-    return this.programmeService.remove((tid?.trim() || u?.tenantId)!, id);
+  async deleteProgramme(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('id') id: string) {
+    const tenant = (tid?.trim() || u?.tenantId)!;
+    await this.assertProgrammeAutorise(tenant, id, u);
+    return this.programmeService.remove(tenant, id);
   }
 
   @Roles('ADMIN', 'SURVEILLANT')
   @Post('programmes/:id/valider')
-  validerProgramme(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('id') id: string) {
-    return this.programmeService.valider((tid?.trim() || u?.tenantId)!, id);
+  async validerProgramme(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('id') id: string) {
+    const tenant = (tid?.trim() || u?.tenantId)!;
+    await this.assertProgrammeAutorise(tenant, id, u);
+    return this.programmeService.valider(tenant, id);
   }
 
   @Roles('ADMIN', 'SURVEILLANT')
   @Post('programmes/:id/dupliquer')
-  dupliquerProgramme(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('id') id: string, @Body() body: { anneeAcademiqueId: string }) {
-    return this.programmeService.dupliquer((tid?.trim() || u?.tenantId)!, id, body.anneeAcademiqueId);
+  async dupliquerProgramme(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('id') id: string, @Body() body: { anneeAcademiqueId: string }) {
+    const tenant = (tid?.trim() || u?.tenantId)!;
+    await this.assertProgrammeAutorise(tenant, id, u);
+    return this.programmeService.dupliquer(tenant, id, body.anneeAcademiqueId);
   }
 
   @Roles('ADMIN', 'SURVEILLANT')
   @Post('programmes/:id/chapitres')
-  addChapitre(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('id') id: string, @Body() body: Payload) {
-    return this.programmeService.addChapitre((tid?.trim() || u?.tenantId)!, id, body as never);
+  async addChapitre(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('id') id: string, @Body() body: Payload) {
+    const tenant = (tid?.trim() || u?.tenantId)!;
+    await this.assertProgrammeAutorise(tenant, id, u);
+    return this.programmeService.addChapitre(tenant, id, body as never);
   }
 
   @Roles('ADMIN', 'SURVEILLANT')
   @Patch('programmes/:pid/chapitres/:cid')
-  updateChapitre(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('pid') pid: string, @Param('cid') cid: string, @Body() body: Payload) {
-    return this.programmeService.updateChapitre((tid?.trim() || u?.tenantId)!, pid, cid, body as never);
+  async updateChapitre(@Headers('x-tenant-id') tid: string | undefined, @CurrentUser() u: JwtUser, @Param('pid') pid: string, @Param('cid') cid: string, @Body() body: Payload) {
+    const tenant = (tid?.trim() || u?.tenantId)!;
+    await this.assertProgrammeAutorise(tenant, pid, u);
+    return this.programmeService.updateChapitre(tenant, pid, cid, body as never);
   }
 
   @Roles('ADMIN', 'SURVEILLANT')
@@ -2010,6 +2117,13 @@ export class AdminController {
     if (query.personnelId) where.personnelId = query.personnelId;
     if (query.sujetType) where.sujetType = query.sujetType;
     if (query.statut) where.statut = query.statut; // Override default filter if explicit
+    // Cloisonnement : les incidents disciplinaires sont rattachés à une classe.
+    // Ceux qui n'en ont pas (personnel, enseignant) restent hors périmètre du
+    // surveillant, qui n'a autorité que sur les élèves de son cycle.
+    const cycleIdsDiscipline = await this.cycleScope.visibleCycleIds(tid, user);
+    if (cycleIdsDiscipline) {
+      where.classe = { niveau: { cycleId: { in: cycleIdsDiscipline } } };
+    }
     if (query.type) where.type = query.type;
     if (query.rapporteurRole) where.rapporteurRole = query.rapporteurRole;
     if (query.signaleParId) where.signaleParId = query.signaleParId;
