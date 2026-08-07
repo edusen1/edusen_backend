@@ -9,12 +9,28 @@ export class ProgrammeService {
 
   // ── CRUD Programmes ───────────────────────────────────────────────────
 
-  async findAll(tenantId: string, filters: { niveauId?: string; matiereId?: string; anneeAcademiqueId?: string; statut?: string }) {
+  async findAll(tenantId: string, filters: { niveauId?: string; matiereId?: string; anneeAcademiqueId?: string; statut?: string; niveauIdsAutorises?: string[] | null }) {
     const where: Record<string, unknown> = { tenantId };
     if (filters.niveauId) where.niveauId = filters.niveauId;
     if (filters.matiereId) where.matiereId = filters.matiereId;
     if (filters.anneeAcademiqueId) where.anneeAcademiqueId = filters.anneeAcademiqueId;
     if (filters.statut) where.statut = filters.statut;
+    /**
+     * Cloisonnement par cycle. `ProgrammePedagogique.niveauId` est une colonne
+     * simple sans relation Prisma vers `Niveau` : on filtre donc sur une liste
+     * de niveaux déjà résolue par `CycleScopeService`.
+     *
+     * L'intersection avec un `niveauId` fourni par l'appelant est volontaire :
+     * demander un niveau hors périmètre ne doit rien renvoyer, pas élargir le
+     * résultat.
+     */
+    if (filters.niveauIdsAutorises) {
+      const autorises = filters.niveauId
+        ? filters.niveauIdsAutorises.filter((id) => id === filters.niveauId)
+        : filters.niveauIdsAutorises;
+      delete where.niveauId;
+      where.niveauId = { in: autorises };
+    }
 
     const programmes = await this.prisma.programmePedagogique.findMany({
       where,
@@ -294,11 +310,11 @@ export class ProgrammeService {
 
     return (programmes as any[]).map((prog: any) => {
       const totalChapitres = prog.chapitres.length;
-      const chapitresTraites = prog.chapitres.filter((ch: any) => ch.cahiersTexte.length > 0).length;
+      const chapitresTraites = prog.chapitres.filter((ch: any) => ch.statut === 'TERMINE' || ch.cahiersTexte.length > 0).length;
       const pourcentage = totalChapitres > 0 ? Math.round((chapitresTraites / totalChapitres) * 100) : 0;
 
       const chapitresEnRetard = prog.chapitres.filter((ch: any) =>
-        ch.dateLimite < today && ch.cahiersTexte.length === 0,
+        ch.statut !== 'TERMINE' && ch.dateLimite < today && ch.cahiersTexte.length === 0,
       ).length;
 
       const chapitresDetail = prog.chapitres.map((ch: any) => {
