@@ -55,6 +55,20 @@ export const GRILLE_PAR_DEFAUT: GrilleCycle = {
   recreationMinutes: 30,
 };
 
+/**
+ * Lit une colonne JSON comme un objet exploitable.
+ *
+ * Prisma type ces colonnes `JsonValue` : la valeur peut être un tableau, un
+ * nombre ou une chaîne, formes qu'un transtypage direct vers un `Record`
+ * accepterait sans broncher au prix d'une erreur de compilation — et, si le
+ * transtypage passait, d'un plantage à l'exécution sur une donnée mal formée.
+ * On vérifie donc la forme avant d'exploiter la valeur.
+ */
+export function objetJson<T extends object>(valeur: unknown): Partial<T> {
+  if (!valeur || typeof valeur !== 'object' || Array.isArray(valeur)) return {};
+  return valeur as Partial<T>;
+}
+
 function versMinutes(heure: string): number {
   const [h, m] = String(heure).split(':').map((v) => Number(v) || 0);
   return h * 60 + m;

@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
-import { CYCLES_TRAME_FIXE, GRILLE_PAR_DEFAUT, type GrilleHoraire } from '@/common/utils/grille-horaire.util';
+import { CYCLES_TRAME_FIXE, GRILLE_PAR_DEFAUT, objetJson, type GrilleCycle, type GrilleHoraire } from '@/common/utils/grille-horaire.util';
 import { StorageService } from '@/infrastructure/storage/storage.service';
 import { AppCacheService } from '@/infrastructure/cache/app-cache.service';
 import { UpdateEcoleConfigDto } from './dto/update-ecole-config.dto';
@@ -84,10 +84,12 @@ export class EcoleConfigService {
       where: { tenantId },
       select: { grilleHoraire: true },
     });
-    const enregistree = (config?.grilleHoraire ?? {}) as GrilleHoraire;
+    // Colonne JSON : la valeur stockée peut être un tableau ou un scalaire.
+    // `objetJson` écarte ces formes plutôt que de les transtyper aveuglément.
+    const enregistree = objetJson<GrilleHoraire>(config?.grilleHoraire);
     const complete: GrilleHoraire = {};
     for (const cycle of CYCLES_TRAME_FIXE) {
-      complete[cycle] = { ...GRILLE_PAR_DEFAUT, ...(enregistree[cycle] ?? {}) };
+      complete[cycle] = { ...GRILLE_PAR_DEFAUT, ...objetJson<GrilleCycle>(enregistree[cycle]) };
     }
     return complete;
   }

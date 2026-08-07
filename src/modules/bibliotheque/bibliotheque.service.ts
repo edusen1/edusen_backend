@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
+import { objetJson } from '@/common/utils/grille-horaire.util';
 
 /**
  * Bibliothèque : catalogue et emprunts.
@@ -47,7 +48,9 @@ export class BibliothequeService {
       where: { tenantId },
       select: { tarifsBibliotheque: true },
     });
-    return { ...TARIFS_PAR_DEFAUT, ...((config?.tarifsBibliotheque ?? {}) as Partial<TarifsBibliotheque>) };
+    // Colonne JSON : même précaution que pour la grille horaire — la valeur
+    // pourrait être un tableau ou un scalaire, formes qu'on écarte.
+    return { ...TARIFS_PAR_DEFAUT, ...objetJson<TarifsBibliotheque>(config?.tarifsBibliotheque) };
   }
 
   async updateTarifs(tenantId: string, tarifs: Partial<TarifsBibliotheque>): Promise<TarifsBibliotheque> {
