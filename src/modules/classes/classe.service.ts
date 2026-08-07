@@ -265,11 +265,6 @@ export class ClasseService {
       include: CLASSE_INCLUDE,
     });
 
-    // Prescolaire/Primaire: generer l'emploi du temps par defaut quand un prof est assigne
-    if (isPrimary && dto.professeurResponsableId) {
-      await this.generatePrimarySchedule(tenantId, classe.id, dto.professeurResponsableId, dto.salleId ?? null, annee.libelle);
-    }
-
     return this.toResponse(classe);
   }
 
@@ -1316,16 +1311,6 @@ export class ClasseService {
       include: CLASSE_INCLUDE,
     });
 
-    // Prescolaire/Primaire: generer l'emploi du temps quand on assigne un prof
-    if (isPrimary && isNewProfAssignment) {
-      // Supprimer l'ancien emploi du temps auto-genere
-      await this.prisma.emploiDuTemps.deleteMany({ where: { tenantId, classeId: id } });
-      const annee = existing.anneeAcademiqueId
-        ? await this.prisma.anneeAcademique.findUnique({ where: { id: existing.anneeAcademiqueId }, select: { libelle: true } })
-        : null;
-      await this.generatePrimarySchedule(tenantId, id, dto.professeurResponsableId!, dto.salleId ?? updated.salleId ?? null, annee?.libelle ?? '');
-    }
-
     return this.toResponse(updated);
   }
 
@@ -1839,49 +1824,6 @@ export class ClasseService {
     if (!cycleCode) return false;
     const code = cycleCode.toUpperCase();
     return ['PRESCOLAIRE', 'PRIMAIRE', 'MATERNELLE', 'CRECHE', 'ELEMENTAIRE'].includes(code);
-  }
-
-  /**
-   * Generate default timetable for primary/preschool classes.
-   * Monday-Friday: 08:00-12:00 and 15:00-18:00
-   * Wednesday: 08:00-12:00 only (no afternoon)
-   * Break: 10:00-10:30 (recreation)
-   * Same teacher, same room all year.
-   */
-  private async generatePrimarySchedule(
-    tenantId: string,
-    classeId: string,
-    enseignantId: string,
-    salleId: string | null,
-    anneeScolaire: string,
-  ): Promise<void> {
-    const jours = ['LUNDI', 'MARDI', 'MERCREDI', 'JEUDI', 'VENDREDI'];
-    const slots: { jour: string; heureDebut: string; heureFin: string }[] = [];
-
-    for (const jour of jours) {
-      // Matin : 08:00-10:00, pause 10:00-10:30, puis 10:30-12:00
-      slots.push({ jour, heureDebut: '08:00', heureFin: '10:00' });
-      slots.push({ jour, heureDebut: '10:30', heureFin: '12:00' });
-
-      // Apres-midi : sauf mercredi
-      if (jour !== 'MERCREDI') {
-        slots.push({ jour, heureDebut: '15:00', heureFin: '18:00' });
-      }
-    }
-
-    await this.prisma.emploiDuTemps.createMany({
-      data: slots.map((s) => ({
-        tenantId,
-        classeId,
-        enseignantId,
-        salleId,
-        jourSemaine: s.jour,
-        heureDebut: s.heureDebut,
-        heureFin: s.heureFin,
-        anneeScolaire: anneeScolaire || null,
-        publie: true,
-      })),
-    });
   }
 
   private toResponse(classe: any) {
