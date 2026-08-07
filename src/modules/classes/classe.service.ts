@@ -244,6 +244,12 @@ export class ClasseService {
       if (!prof) throw new NotFoundException('Enseignant introuvable');
     }
 
+    // Prescolaire/Primaire: professeur obligatoire
+    const isPrimary = this.isCyclePrimaire(cycle?.code);
+    if (isPrimary && !dto.professeurResponsableId) {
+      throw new BadRequestException('Un professeur responsable est obligatoire pour les classes du prescolaire et du primaire');
+    }
+
     const classe = await this.prisma.classe.create({
       data: {
         tenantId,
@@ -251,11 +257,17 @@ export class ClasseService {
         niveauId: niveau?.id ?? null,
         anneeAcademiqueId: dto.anneeAcademiqueId,
         professeurResponsableId: dto.professeurResponsableId ?? null,
+        salleId: dto.salleId ?? null,
         effectifMax: dto.effectifMax ?? null,
         actif: Boolean(annee.actif),
       },
       include: CLASSE_INCLUDE,
     });
+
+    // Prescolaire/Primaire: generer l'emploi du temps par defaut
+    if (isPrimary && dto.professeurResponsableId) {
+      await this.generatePrimarySchedule(tenantId, classe.id, dto.professeurResponsableId, dto.salleId ?? null, annee.libelle);
+    }
 
     return this.toResponse(classe);
   }
@@ -1775,6 +1787,59 @@ export class ClasseService {
       ...classe,
       nbElevesActifs: countByClasseId.get(classe.id) ?? 0,
     }));
+  }
+
+  // ----------------------------------------------------------------
+  // Primary/Preschool helpers
+  // ----------------------------------------------------------------
+
+  private isCyclePrimaire(cycleCode?: string | null): boolean {
+    if (!cycleCode) return false;
+    const code = cycleCode.toUpperCase();
+    return ['PRESCOLAIRE', 'PRIMAIRE', 'MATERNELLE', 'CRECHE', 'ELEMENTAIRE'].includes(code);
+  }
+
+  /**
+   * Generate default timetable for primary/preschool classes.
+   * Monday-Friday: 08:00-12:00 and 15:00-18:00
+   * Wednesday: 08:00-12:00 only (no afternoon)
+   * Break: 10:00-10:30 (recreation)
+   * Same teacher, same room all year.
+   */
+  private async generatePrimarySchedule(
+    tenantId: string,
+    classeId: string,
+    enseignantId: string,
+    salleId: string | null,
+    anneeScolaire: string,
+  ): Promise<void> {
+    const jours = ['LUNDI', 'MARDI', 'MERCREDI', 'JEUDI', 'VENDREDI'];
+    const slots: { jour: string; heureDebut: string; heureFin: string }[] = [];
+
+    for (const jour of jours) {
+      // Matin : 08:00-10:00, pause 10:00-10:30, puis 10:30-12:00
+      slots.push({ jour, heureDebut: '08:00', heureFin: '10:00' });
+      slots.push({ jour, heureDebut: '10:30', heureFin: '12:00' });
+
+      // Apres-midi : sauf mercredi
+      if (jour !== 'MERCREDI') {
+        slots.push({ jour, heureDebut: '15:00', heureFin: '18:00' });
+      }
+    }
+
+    await this.prisma.emploiDuTemps.createMany({
+      data: slots.map((s) => ({
+        tenantId,
+        classeId,
+        enseignantId,
+        salleId,
+        jourSemaine: s.jour,
+        heureDebut: s.heureDebut,
+        heureFin: s.heureFin,
+        anneeScolaire: anneeScolaire || null,
+        publie: true,
+      })),
+    });
   }
 
   private toResponse(classe: any) {
