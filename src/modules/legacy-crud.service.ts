@@ -2728,6 +2728,15 @@ export class LegacyCrudService {
         } catch { /* silencieux si pas de config frais */ }
       }
 
+      // Generate cardToken for the student if not already set
+      const eleveIdForToken = String(data.eleveId ?? '');
+      if (eleveIdForToken) {
+        const eleveForToken = await this.prisma.user.findUnique({ where: { id: eleveIdForToken }, select: { cardToken: true } });
+        if (eleveForToken && !eleveForToken.cardToken) {
+          await this.prisma.user.update({ where: { id: eleveIdForToken }, data: { cardToken: randomBytes(16).toString('hex') } });
+        }
+      }
+
       delete data.ignoreImpayes;
       delete data.utilisateurId;
       delete data.sectionId;

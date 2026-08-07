@@ -3,6 +3,7 @@ import { PrismaService } from '@/config/prisma.service';
 import { buildPageResult, PageResult, PaginationQueryDto } from '@/shared/dto/pagination-query.dto';
 import { Prisma, StatutInscription } from '@prisma/client';
 import { rethrowServiceError } from '@/common/utils/service-error.util';
+import { randomBytes } from 'node:crypto';
 
 export interface CreateInscriptionDto {
   eleveId: string;
@@ -26,6 +27,15 @@ export class InscriptionService {
           throw new BadRequestException('ELEVE_EXCLU: cet élève est exclu pour cette année scolaire');
         }
         throw new BadRequestException('INSCRIPTION_DEJA_EXISTANTE: cet élève est déjà inscrit pour cette année scolaire');
+      }
+
+      // Generate cardToken if the student doesn't have one yet
+      const eleve = await this.prisma.user.findUnique({ where: { id: dto.eleveId }, select: { cardToken: true } });
+      if (eleve && !eleve.cardToken) {
+        await this.prisma.user.update({
+          where: { id: dto.eleveId },
+          data: { cardToken: randomBytes(16).toString('hex') },
+        });
       }
 
       const numeroInscription = this.generateNumero(tenantId);
