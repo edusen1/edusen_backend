@@ -905,7 +905,11 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
         throw new BadRequestException(`Numéro de téléphone invalide: ${phone}`);
       }
 
-      const response = await this.relayioRequest<RelayioMessagePayload>(`/v1/messages/text`, {
+      const binding = await this.resolveRelayioSession(tenantId, false);
+      const msgPath = binding
+        ? `/v1/sessions/${encodeURIComponent(binding.sessionId)}/messages/text`
+        : `/v1/messages/text`;
+      const response = await this.relayioRequest<RelayioMessagePayload>(msgPath, {
         method: 'POST',
         body: {
           to: plainPhone,
@@ -961,8 +965,12 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
         throw new BadRequestException(`Numéro de téléphone invalide: ${phone}`);
       }
 
+      const binding = await this.resolveRelayioSession(tenantId, false);
+      const filePath = binding
+        ? `/v1/sessions/${encodeURIComponent(binding.sessionId)}/messages/file`
+        : `/v1/messages/file`;
       const media = await this.uploadRelayioMedia(filename, mimeType, data);
-      const response = await this.relayioRequest<RelayioMessagePayload>(`/v1/messages/file`, {
+      const response = await this.relayioRequest<RelayioMessagePayload>(filePath, {
         method: 'POST',
         body: {
           to: plainPhone,
