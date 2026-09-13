@@ -151,5 +151,5 @@ jobs:
           fi
 
           curl --fail-with-body --silent --show-error \
-            --request GET "$COOLIFY_WEBHOOK" \
+            --request POST "$COOLIFY_WEBHOOK" \
             "${headers[@]}"
