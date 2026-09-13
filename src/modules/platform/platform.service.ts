@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '@/config/prisma.service';
@@ -8,6 +8,7 @@ import { rethrowServiceError } from '@/common/utils/service-error.util';
 import { StorageService } from '@/infrastructure/storage/storage.service';
 import { MailService } from '@/infrastructure/mail/mail.service';
 import { AppCacheService } from '@/infrastructure/cache/app-cache.service';
+import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 
 const PLATFORM_USER_SELECT = {
   id: true,
@@ -23,11 +24,14 @@ const PLATFORM_USER_SELECT = {
 
 @Injectable()
 export class PlatformService {
+  private readonly logger = new Logger(PlatformService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly mailService: MailService,
     private readonly cache: AppCacheService,
+    private readonly whatsapp: WhatsappService,
   ) {}
 
   async findTenants() {
@@ -311,6 +315,25 @@ export class PlatformService {
       select: { id: true, email: true, telephone: true, firstName: true, lastName: true, role: true },
     });
     this.mailService.sendCompteCree(admin.email ?? email, admin.firstName, admin.lastName, password, tenantName);
+
+    const phone = this.clean(dto.initialAdminTelephone);
+    if (phone) {
+      const message = [
+        `*EduSen* — Bienvenue !`,
+        ``,
+        `Un compte administrateur a été créé pour l'établissement *${tenantName}*.`,
+        ``,
+        `📧 Email : ${admin.email ?? email}`,
+        `🔑 Mot de passe : *${password}*`,
+        ``,
+        `Connectez-vous sur https://edusen.minifootapp.com`,
+        `Vous devrez changer ce mot de passe à la première connexion.`,
+      ].join('\n');
+      this.whatsapp.sendMessage(tenantId, phone, message).catch((err: Error) => {
+        this.logger.warn(`[createTenant] WhatsApp admin non envoyé (${phone}): ${err.message}`);
+      });
+    }
+
     return { ...admin, temporaryPassword: password };
   }
 
