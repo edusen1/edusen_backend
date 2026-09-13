@@ -27,6 +27,10 @@ export interface TarifsBibliotheque {
   penaliteMax: number;
   /** Montant réclamé en cas de perte quand l'ouvrage n'a pas de valeur connue. */
   valeurRemplacementDefaut: number;
+  /** Frais réclamés à chaque emprunt. 0 = emprunt gratuit. */
+  prixEmprunt: number;
+  /** Abonnement mensuel dispensant des frais d'emprunt. 0 = pas d'abonnement proposé. */
+  abonnementMensuel: number;
 }
 
 export const TARIFS_PAR_DEFAUT: TarifsBibliotheque = {
@@ -35,6 +39,8 @@ export const TARIFS_PAR_DEFAUT: TarifsBibliotheque = {
   penaliteParJour: 100,
   penaliteMax: 5000,
   valeurRemplacementDefaut: 10000,
+  prixEmprunt: 0,
+  abonnementMensuel: 0,
 };
 
 @Injectable()
@@ -212,6 +218,12 @@ export class BibliothequeService {
      * `nbDisponibles` tombait à −1. Ici, la seconde écriture ne trouve aucune
      * ligne à mettre à jour et la transaction échoue.
      */
+    // Un abonnement en cours dispense des frais d'emprunt. Le montant est figé
+    // sur l'emprunt : changer le tarif plus tard ne doit pas réécrire les
+    // sommes déjà dues.
+    const abonne = await this.abonnementActif(tenantId, emprunteurId);
+    const fraisEmprunt = abonne ? 0 : tarifs.prixEmprunt;
+
     return this.prisma.$transaction(async (tx) => {
       const reserve = await tx.ouvrage.updateMany({
         where: { id: ouvrageId, tenantId, nbDisponibles: { gt: 0 } },
@@ -224,7 +236,7 @@ export class BibliothequeService {
         data: {
           tenantId, ouvrageId, emprunteurId,
           typeEmprunteur: emprunteur.role === 'ELEVE' ? 'ELEVE' : 'ENSEIGNANT',
-          dateEmprunt, dureeJours, dateRetourPrevue,
+          dateEmprunt, dureeJours, dateRetourPrevue, fraisEmprunt,
           observations: (dto.observations as string)?.trim() || null,
           enregistreParId: enregistreParId ?? null,
         },
@@ -287,6 +299,106 @@ export class BibliothequeService {
     return maj;
   }
 
+  // ── Abonnements ───────────────────────────────────────────────────
+
+  /** Abonnement couvrant la date du jour, ou `null`. */
+  async abonnementActif(tenantId: string, abonneId: string) {
+    const maintenant = new Date();
+    return this.prisma.abonnementBibliotheque.findFirst({
+      where: { tenantId, abonneId, dateDebut: { lte: maintenant }, dateFin: { gte: maintenant } },
+      orderBy: { dateFin: 'desc' },
+    });
+  }
+
+  async listAbonnements(tenantId: string, query: Record<string, string> = {}) {
+    const where: Prisma.AbonnementBibliothequeWhereInput = { tenantId };
+    if (query.abonneId) where.abonneId = query.abonneId;
+    if (query.actifs === 'true') {
+      const maintenant = new Date();
+      where.dateDebut = { lte: maintenant };
+      where.dateFin = { gte: maintenant };
+    }
+    const abonnements = await this.prisma.abonnementBibliotheque.findMany({
+      where,
+      include: { abonne: { select: { id: true, firstName: true, lastName: true, matricule: true, role: true } } },
+      orderBy: [{ dateFin: 'desc' }],
+      take: 500,
+    });
+    const maintenant = new Date();
+    return abonnements.map((a) => ({
+      ...a,
+      actif: a.dateDebut <= maintenant && a.dateFin >= maintenant,
+    }));
+  }
+
+  /**
+   * Souscription d'un abonnement mensuel.
+   *
+   * Si l'abonné a déjà une période en cours, la nouvelle prend la suite au lieu
+   * de démarrer aujourd'hui : payer d'avance ne doit pas faire perdre les jours
+   * restants. L'encaissement suit la même limite que les amendes — le registre
+   * des paiements ne connaît que les élèves.
+   */
+  async souscrireAbonnement(tenantId: string, dto: Record<string, unknown>, souscritParId?: string) {
+    const abonneId = String(dto.abonneId ?? '');
+    if (!abonneId) throw new BadRequestException('Abonné requis');
+    const mois = Math.max(1, Math.min(Number(dto.moisPayes ?? 1), 12));
+
+    const tarifs = await this.getTarifs(tenantId);
+    if (tarifs.abonnementMensuel <= 0) {
+      throw new BadRequestException("Aucun abonnement n'est proposé : définissez le tarif mensuel en configuration");
+    }
+
+    const abonne = await this.prisma.user.findFirst({
+      where: { id: abonneId, tenantId },
+      select: { id: true, role: true },
+    });
+    if (!abonne) throw new NotFoundException('Abonné introuvable');
+
+    const enCours = await this.abonnementActif(tenantId, abonneId);
+    const dateDebut = enCours ? new Date(enCours.dateFin) : new Date();
+    const dateFin = new Date(dateDebut);
+    dateFin.setMonth(dateFin.getMonth() + mois);
+
+    const montant = tarifs.abonnementMensuel * mois;
+    const estEleve = abonne.role === 'ELEVE';
+
+    let paiementId: string | null = null;
+    if (estEleve) {
+      const inscription = await this.prisma.inscription.findFirst({
+        where: { tenantId, eleveId: abonneId, statut: 'ACTIF' },
+        select: { id: true, anneeAcademique: { select: { libelle: true } } },
+        orderBy: { createdAt: 'desc' },
+      });
+      const paiement = await this.prisma.paiement.create({
+        data: {
+          tenantId,
+          eleveId: abonneId,
+          inscriptionId: inscription?.id ?? null,
+          reference: `ABO-${Date.now().toString(36).toUpperCase()}`,
+          montant,
+          typePaiement: 'AUTRE',
+          modePaiement: (dto.modePaiement as never) ?? 'ESPECES',
+          statut: 'VALIDE',
+          anneeScolaire: inscription?.anneeAcademique?.libelle ?? String(new Date().getFullYear()),
+          description: `Bibliothèque — abonnement ${mois} mois`,
+          datePaiement: new Date(),
+          validePar: souscritParId ?? null,
+        },
+      });
+      paiementId = paiement.id;
+    }
+
+    return this.prisma.abonnementBibliotheque.create({
+      data: {
+        tenantId, abonneId,
+        typeAbonne: estEleve ? 'ELEVE' : 'ENSEIGNANT',
+        dateDebut, dateFin, moisPayes: mois, montant,
+        paiementId, souscritParId: souscritParId ?? null,
+      },
+    });
+  }
+
   /**
    * Règlement d'une amende : crée l'écriture de caisse et la relie à l'emprunt.
    *
@@ -296,6 +408,62 @@ export class BibliothequeService {
    * élève arbitraire, ce qui fausserait les comptes de cet élève. Les amendes du
    * personnel relèvent d'un autre circuit, à définir.
    */
+  /** Encaissement des frais d'emprunt. Même circuit et mêmes limites que l'amende. */
+  async reglerFraisEmprunt(tenantId: string, id: string, dto: Record<string, unknown>, validePar?: string) {
+    const emprunt = await this.prisma.empruntOuvrage.findFirst({
+      where: { id, tenantId },
+      include: { ouvrage: { select: { titre: true } } },
+    });
+    if (!emprunt) throw new NotFoundException('Emprunt introuvable');
+    if (!emprunt.fraisEmprunt) throw new BadRequestException('Aucun frais sur cet emprunt');
+    if (emprunt.paiementFraisId) throw new BadRequestException('Frais déjà réglés');
+    if (emprunt.typeEmprunteur !== 'ELEVE') {
+      throw new BadRequestException(
+        "Les frais du personnel ne passent pas par la caisse élèves : à traiter hors bibliothèque",
+      );
+    }
+
+    const paiement = await this.creerPaiementBibliotheque(
+      tenantId, emprunt.emprunteurId, emprunt.fraisEmprunt,
+      `Bibliothèque — emprunt : ${emprunt.ouvrage.titre}`,
+      'EMP', dto.modePaiement, validePar,
+    );
+    return this.prisma.empruntOuvrage.update({ where: { id }, data: { paiementFraisId: paiement.id } });
+  }
+
+  /**
+   * Écriture de caisse pour la bibliothèque.
+   *
+   * Factorisée : amendes, frais d'emprunt et abonnements suivaient la même
+   * recette recopiée trois fois, avec le risque qu'une évolution n'en corrige
+   * que deux.
+   */
+  private async creerPaiementBibliotheque(
+    tenantId: string, eleveId: string, montant: number, description: string,
+    prefixe: string, modePaiement: unknown, validePar?: string,
+  ) {
+    const inscription = await this.prisma.inscription.findFirst({
+      where: { tenantId, eleveId, statut: 'ACTIF' },
+      select: { id: true, anneeAcademique: { select: { libelle: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return this.prisma.paiement.create({
+      data: {
+        tenantId, eleveId,
+        inscriptionId: inscription?.id ?? null,
+        reference: `${prefixe}-${Date.now().toString(36).toUpperCase()}`,
+        montant,
+        typePaiement: 'AUTRE',
+        modePaiement: (modePaiement as never) ?? 'ESPECES',
+        statut: 'VALIDE',
+        anneeScolaire: inscription?.anneeAcademique?.libelle ?? String(new Date().getFullYear()),
+        description,
+        datePaiement: new Date(),
+        validePar: validePar ?? null,
+      },
+    });
+  }
+
   async reglerAmende(tenantId: string, id: string, dto: Record<string, unknown>, validePar?: string) {
     const emprunt = await this.prisma.empruntOuvrage.findFirst({
       where: { id, tenantId },
@@ -354,12 +522,24 @@ export class BibliothequeService {
     const amendesDues = emprunts
       .filter((e) => e.montantAmende && !e.paiementId)
       .reduce((somme, e) => somme + (e.montantAmende ?? 0), 0);
+    const fraisDus = emprunts
+      .filter((e) => e.fraisEmprunt && !e.paiementFraisId)
+      .reduce((somme, e) => somme + (e.fraisEmprunt ?? 0), 0);
+
+    // L'agent doit savoir si l'emprunt sera gratuit ou facturé avant de valider.
+    const abonnement = await this.abonnementActif(tenantId, emprunteurId);
+    const tarifs = await this.getTarifs(tenantId);
 
     return {
       nbEnCours: enCours.length,
       nbEnRetard: enRetard.length,
       nbPertes: pertes.length,
       amendesDues,
+      fraisDus,
+      abonne: !!abonnement,
+      abonnementJusquau: abonnement?.dateFin ?? null,
+      /** Frais que coûtera cet emprunt, une fois l'abonnement pris en compte. */
+      fraisEmpruntApplicable: abonnement ? 0 : tarifs.prixEmprunt,
       /** Un retard bloque tout nouvel emprunt — même règle que `creerEmprunt`. */
       peutEmprunter: enRetard.length === 0,
       ouvragesEnCours: [...enCours, ...enRetard].map((e) => ({

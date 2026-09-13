@@ -69,7 +69,7 @@ export class BibliothequeController {
 
   // ── Emprunts ──────────────────────────────────────────────────────
 
-  @Roles('ADMIN', 'SURVEILLANT')
+  @Roles('ADMIN', 'SURVEILLANT', 'CAISSIER')
   @Get('emprunts')
   listEmprunts(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -79,8 +79,31 @@ export class BibliothequeController {
     return this.bibliotheque.listEmprunts(this.tenant(tenantId, user), query);
   }
 
+  // ── Abonnements ───────────────────────────────────────────────────
+
+  @Roles('ADMIN', 'SURVEILLANT', 'CAISSIER')
+  @Get('abonnements')
+  listAbonnements(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Query() query: Record<string, string>,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.bibliotheque.listAbonnements(this.tenant(tenantId, user), query);
+  }
+
+  /** Le caissier encaisse les abonnements : il est habilité à les créer. */
+  @Roles('ADMIN', 'SURVEILLANT', 'CAISSIER')
+  @Post('abonnements')
+  souscrireAbonnement(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.bibliotheque.souscrireAbonnement(this.tenant(tenantId, user), body, user?.sub);
+  }
+
   /** Situation d'un emprunteur, affichée avant de valider un prêt. */
-  @Roles('ADMIN', 'SURVEILLANT')
+  @Roles('ADMIN', 'SURVEILLANT', 'CAISSIER')
   @Get('emprunteurs/:id/situation')
   situationEmprunteur(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -90,7 +113,7 @@ export class BibliothequeController {
     return this.bibliotheque.situationEmprunteur(this.tenant(tenantId, user), id);
   }
 
-  @Roles('ADMIN', 'SURVEILLANT')
+  @Roles('ADMIN', 'SURVEILLANT', 'CAISSIER')
   @Post('emprunts')
   creerEmprunt(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -100,7 +123,7 @@ export class BibliothequeController {
     return this.bibliotheque.creerEmprunt(this.tenant(tenantId, user), body, user?.sub);
   }
 
-  @Roles('ADMIN', 'SURVEILLANT')
+  @Roles('ADMIN', 'SURVEILLANT', 'CAISSIER')
   @Post('emprunts/:id/retour')
   retourner(
     @Headers('x-tenant-id') tenantId: string | undefined,
@@ -131,6 +154,18 @@ export class BibliothequeController {
     @CurrentUser() user?: JwtUser,
   ) {
     return this.bibliotheque.reglerAmende(this.tenant(tenantId, user), id, body ?? {}, user?.sub);
+  }
+
+  /** Encaissement des frais d'emprunt. */
+  @Roles('ADMIN', 'CAISSIER', 'SURVEILLANT')
+  @Post('emprunts/:id/frais/regler')
+  reglerFrais(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Body() body: Payload,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.bibliotheque.reglerFraisEmprunt(this.tenant(tenantId, user), id, body ?? {}, user?.sub);
   }
 
   /**

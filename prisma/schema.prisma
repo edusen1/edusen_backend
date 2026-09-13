@@ -291,6 +291,7 @@ model Tenant {
   featureOverrides    TenantFeatureOverride[]
   ouvrages            Ouvrage[]
   empruntsOuvrage     EmpruntOuvrage[]
+  abonnementsBibliotheque AbonnementBibliotheque[]
   documentTemplates   DocumentTemplate[]
 }
 
@@ -509,6 +510,7 @@ model User {
   stagiaireIn        ClasseStagiaire[]    @relation("UserStagiaires")
   pushTokens          PushToken[]
   empruntsOuvrage     EmpruntOuvrage[]   @relation("EmpruntsEmprunteur")
+  abonnementsBibliotheque AbonnementBibliotheque[] @relation("AbonnementsBibliotheque")
   demandesReductionEleve     DemandeReduction[] @relation("DemandeReductionEleve")
   demandesReductionDemandees DemandeReduction[] @relation("DemandeReductionDemandeur")
   demandesReductionTraitees  DemandeReduction[] @relation("DemandeReductionTraiteur")
@@ -1823,6 +1825,10 @@ model EmpruntOuvrage {
   statut           StatutEmprunt @default(EN_COURS)
   /** Amende de retard ou valeur de l'ouvrage perdu. */
   montantAmende    Float?
+  /** Frais d'emprunt dus : 0 pour un abonné, le tarif de l'école sinon. */
+  fraisEmprunt     Float?
+  /** Écriture de caisse des frais d'emprunt, une fois encaissés. */
+  paiementFraisId  String?       @db.Uuid
   /** Paiement correspondant, une fois l'amende réglée à la caisse. */
   paiementId       String?       @db.Uuid
   observations     String?
@@ -1833,4 +1839,26 @@ model EmpruntOuvrage {
   @@index([tenantId, statut])
   @@index([tenantId, emprunteurId])
   @@index([ouvrageId])
+}
+
+model AbonnementBibliotheque {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @db.Uuid
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  abonneId     String   @db.Uuid
+  abonne       User     @relation("AbonnementsBibliotheque", fields: [abonneId], references: [id])
+  /** ELEVE ou ENSEIGNANT — figé à la souscription. */
+  typeAbonne   String   @db.VarChar(20)
+  dateDebut    DateTime
+  dateFin      DateTime
+  moisPayes    Int      @default(1)
+  montant      Float
+  /** Écriture de caisse correspondante. */
+  paiementId   String?  @db.Uuid
+  souscritParId String? @db.Uuid
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([tenantId, abonneId])
+  @@index([tenantId, dateFin])
 }
