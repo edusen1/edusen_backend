@@ -438,7 +438,7 @@ export class PlatformController {
     // WhatsApp Relayio ping
     let whatsappOk = false;
     let whatsappLatency = 0;
-    const relayioUrl = process.env.RELAYIO_BASE_URL ?? process.env.WHATSAPP_RELAYIO_BASE_URL ?? 'https://relayio-backend.medaaris.com';
+    const relayioUrl = process.env.RELAYIO_BASE_URL ?? process.env.WHATSAPP_RELAYIO_BASE_URL ?? 'https://relayio.minifootapp.com';
     try {
       const start = Date.now();
       const resp = await fetch(`${relayioUrl}/health`, { signal: AbortSignal.timeout(5000) });
@@ -688,7 +688,7 @@ export class PlatformController {
     }
 
     // 7. WhatsApp Relayio check
-    const relayUrl = process.env.RELAYIO_BASE_URL ?? process.env.WHATSAPP_RELAYIO_BASE_URL ?? 'https://relayio-backend.medaaris.com';
+    const relayUrl = process.env.RELAYIO_BASE_URL ?? process.env.WHATSAPP_RELAYIO_BASE_URL ?? 'https://relayio.minifootapp.com';
     try {
       const resp = await fetch(`${relayUrl}/health`, { signal: AbortSignal.timeout(5000) });
       if (!resp.ok) {

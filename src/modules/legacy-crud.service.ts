@@ -3367,7 +3367,7 @@ export class LegacyCrudService {
 
     const schoolName = config?.nom || tenant?.nom || 'Noura School';
     const localDomain = tenant?.slug || this.schoolDomainName(schoolName);
-    return `${schoolName} <contact@${localDomain}.assanediallo.com>`;
+    return `${schoolName} <contact@${localDomain}.minifootapp.com>`;
   }
 
   private formatError(error: unknown): string {

@@ -1113,7 +1113,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     const configured = this.readConfig('RELAYIO_SESSION_NAME', 'WHATSAPP_RELAYIO_SESSION_NAME');
     if (configured) return configured;
     const suffix = String(tenantName ?? '').trim();
-    return suffix ? `Medaaris - ${suffix}` : 'Medaaris WhatsApp';
+    return suffix ? `Edusen - ${suffix}` : 'Edusen WhatsApp';
   }
 
   private getRelayioSessionAuthType(): string {
@@ -1250,7 +1250,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
   }
 
   private getRelayioBaseUrl(): string {
-    const configured = this.readConfig('RELAYIO_BASE_URL', 'WHATSAPP_RELAYIO_BASE_URL') ?? 'https://relayio-backend.medaaris.com';
+    const configured = this.readConfig('RELAYIO_BASE_URL', 'WHATSAPP_RELAYIO_BASE_URL') ?? 'https://relayio.minifootapp.com';
     return configured.replace(/\/+$/, '');
   }
 

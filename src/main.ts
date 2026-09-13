@@ -79,13 +79,9 @@ async function bootstrap(): Promise<void> {
     'http://127.0.0.1:3001',
     'http://localhost:4300',
     'http://127.0.0.1:4300',
-    'https://edusen.assanediallo.com',
-    'https://plateforme_edusen.assanediallo.com',
-    'https://medaaris.com',
-    'https://sablettes.medaaris.com',
-    'https://noukhbetelasr.medaaris.com',
-    'https://noura.medaaris.com',
-    'https://zeinelabidine.medaaris.com',
+    'https://edusen.minifootapp.com',
+    'https://edusen-api.minifootapp.com',
+    'https://edusen-platform.minifootapp.com',
   ];
   const normalizeOrigin = (origin: string) => origin.trim().replace(/\/$/, '').toLowerCase();
   const allowedOrigins = new Set(
@@ -97,7 +93,7 @@ async function bootstrap(): Promise<void> {
       .map(normalizeOrigin)
       .filter(Boolean),
   );
-  const allowedDomainSuffixes = (process.env.CORS_ALLOWED_DOMAIN_SUFFIXES ?? '.medaaris.com')
+  const allowedDomainSuffixes = (process.env.CORS_ALLOWED_DOMAIN_SUFFIXES ?? '.minifootapp.com')
     .split(',')
     .map((suffix) => suffix.trim().toLowerCase())
     .filter(Boolean);

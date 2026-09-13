@@ -109,7 +109,7 @@ export class SchoolCardDocumentService implements OnModuleDestroy {
     }
 
     // QR contient le token signe — lisible uniquement via l'endpoint /verify-card/:token
-    const apiBase = process.env.API_PUBLIC_URL ?? 'https://edusen-api.assanediallo.com/api';
+    const apiBase = process.env.API_PUBLIC_URL ?? 'https://edusen-api.minifootapp.com/api';
     const qrContent = `${apiBase}/verify-card/${cardToken}`;
     const qrPayload = { token: cardToken };
     const qrDataUrl = await QRCode.toDataURL(qrContent, { width: 180, margin: 1, errorCorrectionLevel: 'L', color: { dark: '#0f172a', light: '#ffffff' } });
