@@ -498,9 +498,11 @@ export class AuthService {
       throw new BadRequestException('MOT_DE_PASSE_ACTUEL_REQUIS');
     }
 
-    if (newPassword.length < PASSWORD_MIN_LENGTH) {
-      throw new BadRequestException('MOT_DE_PASSE_TROP_COURT');
-    }
+    if (newPassword.length < PASSWORD_MIN_LENGTH) throw new BadRequestException('MOT_DE_PASSE_TROP_COURT');
+    if (!/[A-Z]/.test(newPassword)) throw new BadRequestException('MOT_DE_PASSE_MAJUSCULE_REQUISE');
+    if (!/[a-z]/.test(newPassword)) throw new BadRequestException('MOT_DE_PASSE_MINUSCULE_REQUISE');
+    if (!/[0-9]/.test(newPassword)) throw new BadRequestException('MOT_DE_PASSE_CHIFFRE_REQUIS');
+    if (!/[^A-Za-z0-9]/.test(newPassword)) throw new BadRequestException('MOT_DE_PASSE_CARACTERE_SPECIAL_REQUIS');
 
     if (await bcrypt.compare(newPassword, user.passwordHash)) {
       throw new BadRequestException('NOUVEAU_MOT_DE_PASSE_IDENTIQUE');
