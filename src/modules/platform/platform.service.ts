@@ -418,9 +418,9 @@ export class PlatformService {
   }
 
   private generateTempPassword(): string {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@$!';
-    const bytes = randomBytes(14);
-    return Array.from(bytes, (byte) => chars[byte % chars.length]).join('');
+    // Alphanumérique uniquement, sans caractères ambigus (0/O, 1/I/l)
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    return Array.from(randomBytes(8), (b) => chars[b % chars.length]).join('');
   }
 
   private splitAdminName(tenantName: string): { firstName: string; lastName: string } {

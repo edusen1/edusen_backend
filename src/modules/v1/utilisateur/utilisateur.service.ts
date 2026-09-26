@@ -250,11 +250,9 @@ export class UtilisateurService {
   }
 
   private generateTempPassword(): string {
-    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789@#$';
-    return Array.from(randomBytes(16))
-      .map((b) => chars[b % chars.length])
-      .join('')
-      .slice(0, 16);
+    // Alphanumérique uniquement, sans caractères ambigus (0/O, 1/I/l)
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    return Array.from(randomBytes(8), (b) => chars[b % chars.length]).join('');
   }
 
   private selectFields() {

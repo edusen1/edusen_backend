@@ -4915,6 +4915,8 @@ export class LegacyCrudService {
   }
 
   private generateTempPassword(): string {
-    return randomBytes(12).toString('base64url');
+    // Alphanumérique uniquement, sans caractères ambigus (0/O, 1/I/l)
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    return Array.from(randomBytes(8), (b) => chars[b % chars.length]).join('');
   }
 }
