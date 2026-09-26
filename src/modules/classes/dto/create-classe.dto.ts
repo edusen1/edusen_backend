@@ -26,6 +26,11 @@ export class CreateClasseDto {
   salleId?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  serie?: string | null;
+
+  @IsOptional()
   @IsInt()
   @Min(1)
   effectifMax?: number;

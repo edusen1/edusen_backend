@@ -24,6 +24,11 @@ export class UpdateClasseDto {
   salleId?: string | null;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  serie?: string | null;
+
+  @IsOptional()
   @IsInt()
   @Min(1)
   effectifMax?: number | null;

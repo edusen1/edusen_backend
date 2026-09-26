@@ -209,7 +209,7 @@ export class LegacyCrudService {
         select: {
           id: true,
           matiere: { select: { id: true, code: true, libelle: true } },
-          classe: { select: { id: true, nom: true } },
+          classe: { select: { id: true, nom: true, serie: true } },
         },
       },
     } : config.model === 'classe' ? {
@@ -221,7 +221,7 @@ export class LegacyCrudService {
       stagiaires: { include: { stagiaire: true } },
       _count: { select: { eleves: true } }
     } : config.model === 'inscription' ? {
-      classe: { select: { id: true, nom: true } },
+      classe: { select: { id: true, nom: true, serie: true } },
       anneeAcademique: { select: { id: true, libelle: true } },
     } : config.model === 'matiereClasse' ? {
       matiere: true,
@@ -271,7 +271,7 @@ export class LegacyCrudService {
       _count: { select: { cours: true, notes: true } },
       cours: {
         include: {
-          classe: { select: { id: true, nom: true } },
+          classe: { select: { id: true, nom: true, serie: true } },
           anneeAcademique: { select: { id: true, libelle: true } },
         },
         orderBy: { createdAt: 'desc' },
@@ -279,17 +279,17 @@ export class LegacyCrudService {
     } : config.model === 'bulletin' ? {
       classe: { select: { id: true, nom: true, anneeAcademiqueId: true } },
     } : config.model === 'absenceEleve' ? {
-      classe: { select: { id: true, nom: true } },
+      classe: { select: { id: true, nom: true, serie: true } },
     } : config.model === 'cours' ? {
       matiere: { select: { id: true, code: true, libelle: true } },
-      classe: { select: { id: true, nom: true } },
+      classe: { select: { id: true, nom: true, serie: true } },
       anneeAcademique: { select: { id: true, libelle: true } },
     } : config.model === 'note' ? {
       matiere: { select: { id: true, code: true, libelle: true } },
     } : config.model === 'paiement' ? {
       inscription: {
         include: {
-          classe: { select: { id: true, nom: true } },
+          classe: { select: { id: true, nom: true, serie: true } },
           anneeAcademique: { select: { id: true, libelle: true } },
         },
       },
@@ -350,7 +350,7 @@ export class LegacyCrudService {
         select: {
           id: true,
           matiere: { select: { id: true, code: true, libelle: true } },
-          classe: { select: { id: true, nom: true } },
+          classe: { select: { id: true, nom: true, serie: true } },
         },
       },
     } : config.model === 'classe' ? {
@@ -362,7 +362,7 @@ export class LegacyCrudService {
       stagiaires: { include: { stagiaire: true } },
       _count: { select: { eleves: true } }
     } : config.model === 'inscription' ? {
-      classe: { select: { id: true, nom: true } },
+      classe: { select: { id: true, nom: true, serie: true } },
       anneeAcademique: { select: { id: true, libelle: true } },
     } : config.model === 'matiereClasse' ? {
       matiere: true,
@@ -412,25 +412,25 @@ export class LegacyCrudService {
       _count: { select: { cours: true, notes: true } },
       cours: {
         include: {
-          classe: { select: { id: true, nom: true } },
+          classe: { select: { id: true, nom: true, serie: true } },
           anneeAcademique: { select: { id: true, libelle: true } },
         },
         orderBy: { createdAt: 'desc' },
       },
     } : config.model === 'bulletin' ? {
-      classe: { select: { id: true, nom: true } },
+      classe: { select: { id: true, nom: true, serie: true } },
     } : config.model === 'absenceEleve' ? {
-      classe: { select: { id: true, nom: true } },
+      classe: { select: { id: true, nom: true, serie: true } },
     } : config.model === 'cours' ? {
       matiere: { select: { id: true, code: true, libelle: true } },
-      classe: { select: { id: true, nom: true } },
+      classe: { select: { id: true, nom: true, serie: true } },
       anneeAcademique: { select: { id: true, libelle: true } },
     } : config.model === 'note' ? {
       matiere: { select: { id: true, code: true, libelle: true } },
     } : config.model === 'paiement' ? {
       inscription: {
         include: {
-          classe: { select: { id: true, nom: true } },
+          classe: { select: { id: true, nom: true, serie: true } },
           anneeAcademique: { select: { id: true, libelle: true } },
           eleve: { select: { id: true, firstName: true, lastName: true, matricule: true } },
         },
@@ -588,7 +588,7 @@ export class LegacyCrudService {
             montantHoraire: assignment.montantHoraire,
           },
           include: {
-            classe: { select: { id: true, nom: true } },
+            classe: { select: { id: true, nom: true, serie: true } },
           },
         }).then(async (createdCours) => {
           await tx.matiereClasse.upsert({
@@ -854,7 +854,7 @@ export class LegacyCrudService {
         _count: { select: { cours: true, notes: true } },
         cours: {
           include: {
-            classe: { select: { id: true, nom: true } },
+            classe: { select: { id: true, nom: true, serie: true } },
             anneeAcademique: { select: { id: true, libelle: true } },
           },
           orderBy: { createdAt: 'desc' },
@@ -2035,7 +2035,7 @@ export class LegacyCrudService {
       this.prisma.bulletin.findMany({
         where: { tenantId, eleveId },
         include: {
-          classe: { select: { id: true, nom: true } },
+          classe: { select: { id: true, nom: true, serie: true } },
         },
         orderBy: [{ anneeScolaire: 'asc' }, { trimestre: 'asc' }],
       }),
@@ -2770,7 +2770,9 @@ export class LegacyCrudService {
     }
 
     if (config.model === 'matiereNiveau' && data.serie !== undefined) {
-      data.serie = normalizeSerie(data.serie);
+      const serie = normalizeSerie(data.serie);
+      if (serie) data.serie = serie;
+      else delete data.serie;
     }
 
     if (config.model === 'bulletin') {
@@ -3114,7 +3116,7 @@ export class LegacyCrudService {
     const inscriptions = await this.prisma.inscription.findMany({
       where: { tenantId, eleveId: { in: [...new Set(eleveIds)] }, statut: 'ACTIF' },
       include: {
-        classe: { select: { id: true, nom: true } },
+        classe: { select: { id: true, nom: true, serie: true } },
         anneeAcademique: { select: { id: true, libelle: true } },
       },
       orderBy: { createdAt: 'desc' },
@@ -3170,7 +3172,7 @@ export class LegacyCrudService {
       ? await this.prisma.inscription.findMany({
           where: { tenantId, eleveId: { in: eleveIds } },
           include: {
-            classe: { select: { id: true, nom: true } },
+            classe: { select: { id: true, nom: true, serie: true } },
             anneeAcademique: { select: { libelle: true } },
           },
           orderBy: { createdAt: 'desc' },

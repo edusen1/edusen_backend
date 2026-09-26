@@ -5,6 +5,7 @@ import { BulletinDocumentService } from '@/modules/bulletin-document.service';
 import { CreateClasseDto } from './dto/create-classe.dto';
 import { UpdateClasseDto } from './dto/update-classe.dto';
 import { Prisma, StatutPresence } from '@prisma/client';
+import { normalizeSerie } from '@/common/utils/serie-coefficients.util';
 
 type QueryValue = string | string[] | undefined;
 type TeacherQueryParams = Record<string, QueryValue>;
@@ -247,6 +248,7 @@ export class ClasseService {
     if (existing) throw new ConflictException('Une classe avec ce nom existe déjà pour cette année');
 
     const isPrimary = this.isCyclePrimaire(cycle?.code);
+    const serie = this.isCycleLycee(cycle?.code) ? normalizeSerie(dto.serie) : null;
 
     if (dto.professeurResponsableId) {
       const prof = await this.prisma.user.findFirst({
@@ -282,6 +284,7 @@ export class ClasseService {
         anneeAcademiqueId: dto.anneeAcademiqueId,
         professeurResponsableId: dto.professeurResponsableId ?? null,
         salleId: dto.salleId ?? null,
+        serie,
         effectifMax: dto.effectifMax ?? null,
         actif: Boolean(annee.actif),
       },
@@ -514,6 +517,7 @@ export class ClasseService {
       classe: {
         id: classe.id,
         nom: classe.nom,
+        serie: classe.serie ?? null,
         annee: classe.anneeAcademique?.libelle ?? null,
         cycle: classe.niveau?.cycle?.libelle ?? null,
         bareme: noteScale,
@@ -1306,6 +1310,9 @@ export class ClasseService {
 
     const resolvedCycleCode = cycle?.code ?? existing.niveau?.cycle?.code ?? null;
     const isPrimary = this.isCyclePrimaire(resolvedCycleCode);
+    const serie = this.isCycleLycee(resolvedCycleCode)
+      ? normalizeSerie(dto.serie !== undefined ? dto.serie : existing.serie)
+      : null;
     const isNewProfAssignment = dto.professeurResponsableId && dto.professeurResponsableId !== existing.professeurResponsableId;
 
     if (dto.professeurResponsableId) {
@@ -1342,6 +1349,11 @@ export class ClasseService {
           ? { professeurResponsableId: dto.professeurResponsableId }
           : {}),
         ...(dto.salleId !== undefined ? { salleId: dto.salleId } : {}),
+        ...(
+          dto.serie !== undefined || dto.niveauId !== undefined || dto.cycleId !== undefined
+            ? { serie }
+            : {}
+        ),
         ...(dto.effectifMax !== undefined ? { effectifMax: dto.effectifMax } : {}),
       },
       include: CLASSE_INCLUDE,
@@ -1862,6 +1874,12 @@ export class ClasseService {
     return ['PRESCOLAIRE', 'PRIMAIRE', 'MATERNELLE', 'CRECHE', 'ELEMENTAIRE'].includes(code);
   }
 
+  private isCycleLycee(cycleCode?: string | null): boolean {
+    if (!cycleCode) return false;
+    const code = cycleCode.toUpperCase();
+    return ['LYCEE', 'LYCÉE', 'SECONDAIRE'].includes(code);
+  }
+
   private toResponse(classe: any) {
     const cycle = classe.niveau?.cycle ?? null;
     const cycleCode = cycle?.code ?? '';
@@ -1870,6 +1888,7 @@ export class ClasseService {
     return {
       id: classe.id,
       nom: classe.nom,
+      serie: classe.serie ?? null,
       effectifMax: classe.effectifMax,
       anneeAcademique: classe.anneeAcademique
         ? { id: classe.anneeAcademique.id, libelle: classe.anneeAcademique.libelle, courante: classe.anneeAcademique.actif }

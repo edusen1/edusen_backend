@@ -3,6 +3,7 @@ import { PrismaService } from '@/config/prisma.service';
 import { buildPageResult, PageResult, PaginationQueryDto } from '@/shared/dto/pagination-query.dto';
 import { Prisma, TypeEvaluation } from '@prisma/client';
 import { rethrowServiceError } from '@/common/utils/service-error.util';
+import { resolveClassCoefficients } from '@/common/utils/serie-coefficients.util';
 
 export interface CreateNoteDto {
   eleveId: string;
@@ -211,25 +212,37 @@ export class NoteService {
   ): Promise<Map<string, number>> {
     const inscription = await this.prisma.inscription.findFirst({
       where: { tenantId, eleveId, anneeAcademique: { libelle: anneeScolaire } },
-      select: { classeId: true },
+      select: { classeId: true, classe: { select: { niveauId: true, serie: true } } },
       orderBy: { createdAt: 'desc' },
     });
 
     if (!inscription?.classeId) return new Map();
 
-    const cours = await this.prisma.cours.findMany({
-      where: {
-        tenantId,
-        classeId: inscription.classeId,
-        OR: [
-          { anneeAcademique: { libelle: anneeScolaire } },
-          { anneeAcademiqueId: null },
-        ],
-      },
-      select: { matiereId: true, coefficient: true },
-    });
+    const [cours, matiereNiveaux] = await Promise.all([
+      this.prisma.cours.findMany({
+        where: {
+          tenantId,
+          classeId: inscription.classeId,
+          OR: [
+            { anneeAcademique: { libelle: anneeScolaire } },
+            { anneeAcademiqueId: null },
+          ],
+        },
+        select: { matiereId: true, coefficient: true },
+      }),
+      inscription.classe?.niveauId
+        ? this.prisma.matiereNiveau.findMany({
+            where: { tenantId, niveauId: inscription.classe.niveauId },
+            select: { matiereId: true, serie: true, coefficient: true },
+          })
+        : Promise.resolve([]),
+    ]);
 
-    return new Map(cours.map((row) => [row.matiereId, row.coefficient ?? 1]));
+    return resolveClassCoefficients({
+      serie: inscription.classe?.serie ?? null,
+      matiereNiveaux,
+      cours,
+    });
   }
 
   private toCreateData(tenantId: string, dto: CreateNoteDto): Prisma.NoteUncheckedCreateInput {

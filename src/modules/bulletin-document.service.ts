@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException, OnModuleDestroy } from '@nestjs/
 import { AsyncSemaphore } from '@/common/utils/async.util';
 import { PrismaService } from '@/config/prisma.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
+import { resolveClassCoefficients } from '@/common/utils/serie-coefficients.util';
 
 interface BulletinSubjectRow {
   label: string;
@@ -93,7 +94,7 @@ export class BulletinDocumentService implements OnModuleDestroy {
     const bulletin = await this.prisma.bulletin.findFirst({
       where: { id: bulletinId, tenantId },
       include: {
-        classe: { select: { id: true, nom: true, anneeAcademiqueId: true, niveauId: true } },
+        classe: { select: { id: true, nom: true, anneeAcademiqueId: true, niveauId: true, serie: true } },
       },
     });
     if (!bulletin) throw new NotFoundException('Bulletin introuvable');
@@ -143,7 +144,7 @@ export class BulletinDocumentService implements OnModuleDestroy {
       bulletin.classe.niveauId
         ? this.prisma.matiereNiveau.findMany({
             where: { tenantId, niveauId: bulletin.classe.niveauId },
-            select: { matiereId: true, coefficient: true, noteMaximum: true },
+            select: { matiereId: true, serie: true, coefficient: true, noteMaximum: true },
           })
         : Promise.resolve([]),
       directorPromise,
@@ -151,11 +152,11 @@ export class BulletinDocumentService implements OnModuleDestroy {
 
     if (!student) throw new NotFoundException('Élève introuvable');
 
-    // Coefficients depuis MatiereNiveau (config admin)
-    const coefMap = new Map<string, number>();
-    for (const mn of (matiereNiveaux as Array<{ matiereId: string; coefficient: number }>)) {
-      coefMap.set(mn.matiereId, mn.coefficient ?? 1);
-    }
+    const coefMap = resolveClassCoefficients({
+      serie: bulletin.classe.serie ?? null,
+      matiereNiveaux: matiereNiveaux as Array<{ matiereId: string; serie?: string | null; coefficient: number }>,
+      cours: courses,
+    });
 
     const subjects = new Map<string, { label: string; coefficient: number; teacher: string }>();
     for (const course of courses) {
@@ -166,11 +167,11 @@ export class BulletinDocumentService implements OnModuleDestroy {
       });
     }
     // Matières depuis MatiereNiveau qui ne sont pas dans Cours
-    for (const mn of (matiereNiveaux as Array<{ matiereId: string; coefficient: number }>)) {
+    for (const mn of (matiereNiveaux as Array<{ matiereId: string; serie?: string | null; coefficient: number }>)) {
       if (!subjects.has(mn.matiereId)) {
         const note = notes.find((n) => n.matiereId === mn.matiereId);
         if (note) {
-          subjects.set(mn.matiereId, { label: note.matiere.libelle, coefficient: mn.coefficient ?? 1, teacher: '—' });
+          subjects.set(mn.matiereId, { label: note.matiere.libelle, coefficient: coefMap.get(mn.matiereId) ?? 1, teacher: '—' });
         }
       }
     }

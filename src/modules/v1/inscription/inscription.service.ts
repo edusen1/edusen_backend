@@ -51,7 +51,7 @@ export class InscriptionService {
           creePar,
         },
         include: {
-          classe: { select: { id: true, nom: true } },
+          classe: { select: { id: true, nom: true, serie: true } },
           anneeAcademique: { select: { id: true, libelle: true } },
         },
       });
@@ -79,7 +79,7 @@ export class InscriptionService {
         take: query.size ?? 20,
         orderBy: { createdAt: 'desc' },
         include: {
-          classe: { select: { id: true, nom: true } },
+          classe: { select: { id: true, nom: true, serie: true } },
           anneeAcademique: { select: { id: true, libelle: true } },
         },
       }),

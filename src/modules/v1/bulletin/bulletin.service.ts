@@ -8,6 +8,7 @@ import { PushNotificationService } from '@/modules/push-notification.service';
 import { BulletinDocumentService } from '@/modules/bulletin-document.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
 import { calculateBulletinAverages, BulletinGradeInput } from '@/common/utils/bulletin-calculation.util';
+import { resolveClassCoefficients } from '@/common/utils/serie-coefficients.util';
 
 export interface CreateBulletinDto {
   eleveId: string;
@@ -75,14 +76,20 @@ export class BulletinService {
   ): Promise<unknown[]> {
     const [inscriptions, classe] = await Promise.all([
       this.prisma.inscription.findMany({ where: { tenantId, classeId, statut: 'ACTIF' } }),
-      this.prisma.classe.findUnique({ where: { id: classeId }, select: { niveauId: true } }),
+      this.prisma.classe.findUnique({ where: { id: classeId }, select: { niveauId: true, serie: true } }),
     ]);
 
     const totalEleves = inscriptions.length;
     const studentIds = inscriptions.map((i) => i.eleveId);
 
     // Coefficients depuis MatiereNiveau (source de vérité)
-    const coefficients = await this.getMatiereNiveauCoefficients(tenantId, classeId, classe?.niveauId ?? null, anneeScolaire);
+    const coefficients = await this.getMatiereNiveauCoefficients(
+      tenantId,
+      classeId,
+      classe?.niveauId ?? null,
+      classe?.serie ?? null,
+      anneeScolaire,
+    );
 
     // Charger toutes les notes de la classe en une fois
     const allNotes = await this.prisma.note.findMany({
@@ -393,31 +400,30 @@ export class BulletinService {
     tenantId: string,
     classeId: string,
     niveauId: string | null,
+    serie: string | null,
     anneeScolaire: string,
   ): Promise<Map<string, number>> {
-    // Source de vérité : MatiereNiveau (config admin)
-    if (niveauId) {
-      const matiereNiveaux = await this.prisma.matiereNiveau.findMany({
-        where: { tenantId, niveauId },
+    const [matiereNiveaux, cours] = await Promise.all([
+      niveauId
+        ? this.prisma.matiereNiveau.findMany({
+            where: { tenantId, niveauId },
+            select: { matiereId: true, serie: true, coefficient: true },
+          })
+        : Promise.resolve([]),
+      this.prisma.cours.findMany({
+        where: {
+          tenantId,
+          classeId,
+          OR: [
+            { anneeAcademique: { libelle: anneeScolaire } },
+            { anneeAcademiqueId: null },
+          ],
+        },
         select: { matiereId: true, coefficient: true },
-      });
-      if (matiereNiveaux.length > 0) {
-        return new Map(matiereNiveaux.map((mn) => [mn.matiereId, mn.coefficient ?? 1]));
-      }
-    }
-    // Fallback : Cours.coefficient
-    const cours = await this.prisma.cours.findMany({
-      where: {
-        tenantId,
-        classeId,
-        OR: [
-          { anneeAcademique: { libelle: anneeScolaire } },
-          { anneeAcademiqueId: null },
-        ],
-      },
-      select: { matiereId: true, coefficient: true },
-    });
-    return new Map(cours.map((row) => [row.matiereId, row.coefficient ?? 1]));
+      }),
+    ]);
+
+    return resolveClassCoefficients({ serie, matiereNiveaux, cours });
   }
 
   private async updateRangs(tenantId: string, classeId: string, trimestre: string, anneeScolaire: string): Promise<void> {
