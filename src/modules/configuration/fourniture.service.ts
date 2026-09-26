@@ -8,6 +8,7 @@ export interface CreateFournitureDto {
   description?: string;
   obligatoire?: boolean;
   ordre?: number;
+  serie?: string | null;
 }
 
 export interface UpdateFournitureDto {
@@ -16,6 +17,7 @@ export interface UpdateFournitureDto {
   description?: string;
   obligatoire?: boolean;
   ordre?: number;
+  serie?: string | null;
 }
 
 @Injectable()
@@ -23,21 +25,31 @@ export class FournitureService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(tenantId: string) {
-    const niveaux = await this.prisma.niveau.findMany({
+    const cycles = await this.prisma.cycle.findMany({
       where: { tenantId, actif: true },
       select: {
         id: true,
         libelle: true,
         code: true,
         ordre: true,
-        fournitures: {
-          where: { tenantId },
-          orderBy: [{ ordre: 'asc' }, { nom: 'asc' }],
+        niveaux: {
+          where: { tenantId, actif: true },
+          select: {
+            id: true,
+            libelle: true,
+            code: true,
+            ordre: true,
+            fournitures: {
+              where: { tenantId },
+              orderBy: [{ ordre: 'asc' }, { nom: 'asc' }],
+            },
+          },
+          orderBy: { ordre: 'asc' },
         },
       },
       orderBy: { ordre: 'asc' },
     });
-    return niveaux;
+    return cycles;
   }
 
   async findByNiveau(tenantId: string, niveauId: string) {
@@ -64,6 +76,7 @@ export class FournitureService {
         description: dto.description?.trim() ?? null,
         obligatoire: dto.obligatoire ?? true,
         ordre: dto.ordre ?? 0,
+        serie: dto.serie?.trim() || null,
       },
     });
   }
@@ -80,6 +93,7 @@ export class FournitureService {
         ...(dto.description !== undefined ? { description: dto.description?.trim() ?? null } : {}),
         ...(dto.obligatoire !== undefined ? { obligatoire: dto.obligatoire } : {}),
         ...(dto.ordre !== undefined ? { ordre: dto.ordre } : {}),
+        ...('serie' in dto ? { serie: dto.serie?.trim() || null } : {}),
       },
     });
   }
@@ -92,10 +106,14 @@ export class FournitureService {
   }
 
   /** Retourne les fournitures pour un niveau donné (utilisé lors de l'inscription) */
-  async findForNiveau(tenantId: string, niveauId: string | null | undefined) {
+  async findForNiveau(tenantId: string, niveauId: string | null | undefined, serie?: string | null) {
     if (!niveauId) return [];
     return this.prisma.fourniture.findMany({
-      where: { tenantId, niveauId },
+      where: {
+        tenantId,
+        niveauId,
+        ...(serie ? { OR: [{ serie }, { serie: null }] } : {}),
+      },
       orderBy: [{ ordre: 'asc' }, { nom: 'asc' }],
     });
   }

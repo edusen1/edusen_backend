@@ -53,7 +53,7 @@ export class ConfigurationController {
   @Post('fournitures')
   createFourniture(
     @Headers('x-tenant-id') tenantId: string | undefined,
-    @Body() body: { niveauId: string; nom: string; quantite?: number; description?: string; obligatoire?: boolean; ordre?: number },
+    @Body() body: { niveauId: string; nom: string; quantite?: number; description?: string; obligatoire?: boolean; ordre?: number; serie?: string | null },
     @CurrentUser() user?: JwtUser,
   ) {
     const tid = (tenantId?.trim() || user?.tenantId)!;
@@ -65,7 +65,7 @@ export class ConfigurationController {
   updateFourniture(
     @Headers('x-tenant-id') tenantId: string | undefined,
     @Param('id') id: string,
-    @Body() body: { nom?: string; quantite?: number; description?: string; obligatoire?: boolean; ordre?: number },
+    @Body() body: { nom?: string; quantite?: number; description?: string; obligatoire?: boolean; ordre?: number; serie?: string | null },
     @CurrentUser() user?: JwtUser,
   ) {
     const tid = (tenantId?.trim() || user?.tenantId)!;
