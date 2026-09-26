@@ -64,9 +64,10 @@ export class BibliothequeService {
 
   async updateTarifs(tenantId: string, tarifs: Partial<TarifsBibliotheque>): Promise<TarifsBibliotheque> {
     const fusionnes = { ...(await this.getTarifs(tenantId)), ...tarifs };
-    await this.prisma.ecoleConfig.update({
+    await this.prisma.ecoleConfig.upsert({
       where: { tenantId },
-      data: { tarifsBibliotheque: fusionnes as unknown as Prisma.InputJsonValue },
+      update: { tarifsBibliotheque: fusionnes as unknown as Prisma.InputJsonValue },
+      create: { tenantId, tarifsBibliotheque: fusionnes as unknown as Prisma.InputJsonValue },
     });
     return fusionnes;
   }
