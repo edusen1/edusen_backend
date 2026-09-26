@@ -59,6 +59,10 @@ jobs:
           COOLIFY_BASE_URL: ${{ secrets.COOLIFY_BASE_URL }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
         run: |
+          if [ -z "${COOLIFY_BASE_URL}" ]; then
+            echo "COOLIFY_BASE_URL non défini — déclenchement Coolify ignoré."
+            exit 0
+          fi
           curl --fail --show-error --silent \
             --request POST \
             --header "Authorization: Bearer ${COOLIFY_TOKEN}" \
