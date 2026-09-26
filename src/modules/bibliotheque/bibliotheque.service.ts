@@ -31,6 +31,8 @@ export interface TarifsBibliotheque {
   prixEmprunt: number;
   /** Abonnement mensuel dispensant des frais d'emprunt. 0 = pas d'abonnement proposé. */
   abonnementMensuel: number;
+  /** Abonnement annuel (forfait 12 mois). 0 = pas d'abonnement annuel proposé. */
+  abonnementAnnuel: number;
 }
 
 export const TARIFS_PAR_DEFAUT: TarifsBibliotheque = {
@@ -41,6 +43,7 @@ export const TARIFS_PAR_DEFAUT: TarifsBibliotheque = {
   valeurRemplacementDefaut: 10000,
   prixEmprunt: 0,
   abonnementMensuel: 0,
+  abonnementAnnuel: 0,
 };
 
 @Injectable()
@@ -332,7 +335,7 @@ export class BibliothequeService {
   }
 
   /**
-   * Souscription d'un abonnement mensuel.
+   * Souscription d'un abonnement (MENSUEL ou ANNUEL).
    *
    * Si l'abonné a déjà une période en cours, la nouvelle prend la suite au lieu
    * de démarrer aujourd'hui : payer d'avance ne doit pas faire perdre les jours
@@ -342,11 +345,32 @@ export class BibliothequeService {
   async souscrireAbonnement(tenantId: string, dto: Record<string, unknown>, souscritParId?: string) {
     const abonneId = String(dto.abonneId ?? '');
     if (!abonneId) throw new BadRequestException('Abonné requis');
-    const mois = Math.max(1, Math.min(Number(dto.moisPayes ?? 1), 12));
+
+    const typeAbonnement = String(dto.typeAbonnement ?? 'MENSUEL').toUpperCase();
+    if (typeAbonnement !== 'MENSUEL' && typeAbonnement !== 'ANNUEL') {
+      throw new BadRequestException("typeAbonnement doit être MENSUEL ou ANNUEL");
+    }
 
     const tarifs = await this.getTarifs(tenantId);
-    if (tarifs.abonnementMensuel <= 0) {
-      throw new BadRequestException("Aucun abonnement n'est proposé : définissez le tarif mensuel en configuration");
+
+    let mois: number;
+    let montant: number;
+    let description: string;
+
+    if (typeAbonnement === 'ANNUEL') {
+      if (tarifs.abonnementAnnuel <= 0) {
+        throw new BadRequestException("Aucun abonnement annuel n'est proposé : définissez le tarif annuel en configuration");
+      }
+      mois = 12;
+      montant = tarifs.abonnementAnnuel;
+      description = 'Bibliothèque — abonnement annuel';
+    } else {
+      if (tarifs.abonnementMensuel <= 0) {
+        throw new BadRequestException("Aucun abonnement mensuel n'est proposé : définissez le tarif mensuel en configuration");
+      }
+      mois = Math.max(1, Math.min(Number(dto.moisPayes ?? 1), 12));
+      montant = tarifs.abonnementMensuel * mois;
+      description = `Bibliothèque — abonnement ${mois} mois`;
     }
 
     const abonne = await this.prisma.user.findFirst({
@@ -360,7 +384,6 @@ export class BibliothequeService {
     const dateFin = new Date(dateDebut);
     dateFin.setMonth(dateFin.getMonth() + mois);
 
-    const montant = tarifs.abonnementMensuel * mois;
     const estEleve = abonne.role === 'ELEVE';
 
     let paiementId: string | null = null;
@@ -381,7 +404,7 @@ export class BibliothequeService {
           modePaiement: (dto.modePaiement as never) ?? 'ESPECES',
           statut: 'VALIDE',
           anneeScolaire: inscription?.anneeAcademique?.libelle ?? String(new Date().getFullYear()),
-          description: `Bibliothèque — abonnement ${mois} mois`,
+          description,
           datePaiement: new Date(),
           validePar: souscritParId ?? null,
         },
@@ -393,6 +416,7 @@ export class BibliothequeService {
       data: {
         tenantId, abonneId,
         typeAbonne: estEleve ? 'ELEVE' : 'ENSEIGNANT',
+        typeAbonnement,
         dateDebut, dateFin, moisPayes: mois, montant,
         paiementId, souscritParId: souscritParId ?? null,
       },

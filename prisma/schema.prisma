@@ -1871,7 +1871,9 @@ model AbonnementBibliotheque {
   abonneId     String   @db.Uuid
   abonne       User     @relation("AbonnementsBibliotheque", fields: [abonneId], references: [id])
   /** ELEVE ou ENSEIGNANT — figé à la souscription. */
-  typeAbonne   String   @db.VarChar(20)
+  typeAbonne      String   @db.VarChar(20)
+  /** MENSUEL ou ANNUEL */
+  typeAbonnement  String   @default("MENSUEL") @db.VarChar(10)
   dateDebut    DateTime
   dateFin      DateTime
   moisPayes    Int      @default(1)
