@@ -33,6 +33,7 @@ import { AppCacheService } from '@/infrastructure/cache/app-cache.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
 import { EcoleConfigService } from '@/modules/configuration/ecole-config.service';
 import { AcademiqueConfigService } from '@/modules/configuration/academique-config.service';
+import { FournitureService } from '@/modules/configuration/fourniture.service';
 import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 import { ClasseService } from '@/modules/classes/classe.service';
 import { HealthController } from '@/modules/health.controller';
@@ -93,6 +94,7 @@ import { TemplateRendererService } from '@/modules/document/template-renderer.se
     StorageService,
     EcoleConfigService,
     AcademiqueConfigService,
+    FournitureService,
     WhatsappService,
     ClasseService,
     EmploiDuTempsService,

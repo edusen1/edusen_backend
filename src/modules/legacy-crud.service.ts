@@ -12,7 +12,9 @@ import { calculateBulletinAverages } from '@/common/utils/bulletin-calculation.u
 import { AppCacheService } from '@/infrastructure/cache/app-cache.service';
 import { BulletinDocumentService } from '@/modules/bulletin-document.service';
 import { PushNotificationService } from '@/modules/push-notification.service';
+import { FournitureService } from '@/modules/configuration/fourniture.service';
 import { buildDebtDashboardSummary, buildDebtSummary, DebtPaymentRow } from '@/modules/debt-summary.util';
+import { normalizeSerie, resolveClassCoefficients } from '@/common/utils/serie-coefficients.util';
 
 type QueryValue = string | string[] | undefined;
 type QueryParams = Record<string, QueryValue>;
@@ -119,6 +121,7 @@ export class LegacyCrudService {
     private readonly cache: AppCacheService,
     private readonly bulletinDocument: BulletinDocumentService,
     private readonly pushNotifications: PushNotificationService,
+    private readonly fournitureService: FournitureService,
   ) {}
 
   async resolveTenantId(tenantId: string | undefined, user?: JwtUser): Promise<string | undefined> {
@@ -920,6 +923,7 @@ export class LegacyCrudService {
 
     if (config.model === 'inscription') {
       await this.syncEleveClasse(created.eleveId, created.classeId);
+      void this.sendFournituresNotification(tenantId ?? String(created.tenantId ?? ''), created.eleveId, created.classeId);
       return this.findOne(config, tenantId, created.id);
     }
 
@@ -2372,7 +2376,7 @@ export class LegacyCrudService {
     if (!studentIds.length) return [];
 
     // Resolve niveauId for this class
-    const classe = await this.prisma.classe.findUnique({ where: { id: classeId }, select: { niveauId: true } });
+    const classe = await this.prisma.classe.findUnique({ where: { id: classeId }, select: { niveauId: true, serie: true } });
 
     // All class data is read in parallel.
     const [notes, absenceRows, matiereNiveaux] = await Promise.all([
@@ -2388,13 +2392,15 @@ export class LegacyCrudService {
       classe?.niveauId
         ? this.prisma.matiereNiveau.findMany({
             where: { tenantId, niveauId: classe.niveauId },
-            select: { matiereId: true, coefficient: true },
+            select: { matiereId: true, serie: true, coefficient: true },
           })
         : [],
     ]);
 
-    // Coefficients from MatiereNiveau (source of truth)
-    const coefficients = new Map(matiereNiveaux.map((mn) => [mn.matiereId, mn.coefficient ?? 1]));
+    const coefficients = resolveClassCoefficients({
+      serie: classe?.serie ?? null,
+      matiereNiveaux,
+    });
     const averages = calculateBulletinAverages(studentIds, notes, coefficients);
     const absencesByStudent = new Map<string, { total: number; retards: number }>();
     for (const row of absenceRows) {
@@ -2763,6 +2769,10 @@ export class LegacyCrudService {
       delete data.coefficient;
     }
 
+    if (config.model === 'matiereNiveau' && data.serie !== undefined) {
+      data.serie = normalizeSerie(data.serie);
+    }
+
     if (config.model === 'bulletin') {
       await this.normalizeBulletinData(tenantId ?? String(data.tenantId ?? ''), data, userId);
     }
@@ -2829,6 +2839,93 @@ export class LegacyCrudService {
 
   private async sendStudentCredentials(tenantId: string | undefined, user: Payload, tempPassword: string): Promise<void> {
     await this.sendUserCredentials(tenantId, user, tempPassword, 'élève');
+  }
+
+  private async sendFournituresNotification(tenantId: string, eleveId: string, classeId: string): Promise<void> {
+    try {
+      // Récupère le niveau de la classe
+      const classe = await this.prisma.classe.findUnique({
+        where: { id: classeId },
+        select: { niveauId: true, nom: true },
+      });
+      if (!classe?.niveauId) return;
+
+      // Récupère les fournitures pour ce niveau
+      const fournitures = await this.fournitureService.findForNiveau(tenantId, classe.niveauId);
+      if (fournitures.length === 0) return;
+
+      // Récupère l'élève
+      const eleve = await this.prisma.user.findUnique({
+        where: { id: eleveId },
+        select: { firstName: true, lastName: true },
+      });
+      const eleveNom = eleve ? `${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim() : 'Votre enfant';
+
+      // Récupère les parents avec leurs coordonnées
+      const parentLinks = await this.prisma.eleveParent.findMany({ where: { eleveId } });
+      if (parentLinks.length === 0) return;
+      const parentIds = parentLinks.map((l) => l.parentId);
+      const parents = await this.prisma.user.findMany({
+        where: { id: { in: parentIds } },
+        select: { firstName: true, lastName: true, email: true, telephone: true },
+      });
+      if (parents.length === 0) return;
+
+      // Construit le message
+      type FournitureItem = { nom: string; quantite: number; obligatoire: boolean; description?: string | null };
+      const lignes = (fournitures as FournitureItem[])
+        .map((f) => `• ${f.nom} (x${f.quantite})${f.obligatoire ? '' : ' — facultatif'}`)
+        .join('\n');
+      const whatsappMessage = `Bonjour,\n\n*${eleveNom}* vient d'être inscrit(e) en classe de *${classe.nom}*.\n\nVoici la liste des fournitures scolaires requises :\n\n${lignes}\n\n_Bonne rentrée !_\n\n— EduSen`;
+
+      const sujetMail = `Liste des fournitures — ${eleveNom} (${classe.nom})`;
+      const lignesHtml = (fournitures as FournitureItem[])
+        .map((f) => `<tr><td style="padding:6px 12px;">${f.nom}</td><td style="padding:6px 12px;text-align:center;">${f.quantite}</td><td style="padding:6px 12px;text-align:center;">${f.obligatoire ? 'Oui' : 'Non'}</td>${f.description ? `<td style="padding:6px 12px;color:#64748b;">${f.description}</td>` : '<td></td>'}</tr>`)
+        .join('');
+      const corpsMail = `
+        <h2 style="color:#1E40AF;margin:0 0 16px;">Liste des fournitures scolaires</h2>
+        <p>Bonjour,</p>
+        <p><strong>${eleveNom}</strong> vient d'être inscrit(e) en classe de <strong>${classe.nom}</strong>.</p>
+        <p>Voici la liste des fournitures scolaires :</p>
+        <table style="border-collapse:collapse;width:100%;margin:16px 0;">
+          <thead>
+            <tr style="background:#f1f5f9;">
+              <th style="padding:8px 12px;text-align:left;font-size:13px;">Article</th>
+              <th style="padding:8px 12px;text-align:center;font-size:13px;">Quantité</th>
+              <th style="padding:8px 12px;text-align:center;font-size:13px;">Obligatoire</th>
+              <th style="padding:8px 12px;text-align:left;font-size:13px;">Remarque</th>
+            </tr>
+          </thead>
+          <tbody>${lignesHtml}</tbody>
+        </table>
+        <p style="color:#64748b;font-size:12px;">Bonne rentrée !</p>
+      `;
+
+      for (const parent of parents) {
+        const parentNom = `${parent.firstName ?? ''} ${parent.lastName ?? ''}`.trim();
+
+        // Mail
+        if (parent.email) {
+          this.mailService.sendAsync(parent.email, sujetMail, corpsMail);
+        }
+
+        // WhatsApp
+        if (parent.telephone) {
+          try {
+            const phone = normalizePhoneForCountry(parent.telephone);
+            if (phone) {
+              await this.whatsappService.sendMessage(tenantId, phone, whatsappMessage);
+            }
+          } catch {
+            // WhatsApp non connecté ou erreur — on continue silencieusement
+          }
+        }
+
+        this.logger.log(`[Fournitures] Notification envoyée au parent ${parentNom} pour élève ${eleveNom}`);
+      }
+    } catch (err: unknown) {
+      this.logger.warn(`[Fournitures] Erreur notification: ${(err as Error).message}`);
+    }
   }
 
   private async sendPersonnelCredentials(
@@ -3474,6 +3571,10 @@ export class LegacyCrudService {
 
     if (data.nombreMaxEleves !== undefined && data.effectifMax === undefined) {
       data.effectifMax = Number(data.nombreMaxEleves);
+    }
+
+    if (data.serie !== undefined) {
+      data.serie = normalizeSerie(data.serie);
     }
 
     // Map enseignantPrincipalId to professeurResponsableId
@@ -4385,25 +4486,37 @@ export class LegacyCrudService {
   ): Promise<Map<string, number>> {
     const inscription = await this.prisma.inscription.findFirst({
       where: { tenantId, eleveId, anneeAcademique: { libelle: anneeScolaire } },
-      select: { classeId: true },
+      select: { classeId: true, classe: { select: { niveauId: true, serie: true } } },
       orderBy: { createdAt: 'desc' },
     });
 
     if (!inscription?.classeId) return new Map();
 
-    const cours = await this.prisma.cours.findMany({
-      where: {
-        tenantId,
-        classeId: inscription.classeId,
-        OR: [
-          { anneeAcademique: { libelle: anneeScolaire } },
-          { anneeAcademiqueId: null },
-        ],
-      },
-      select: { matiereId: true, coefficient: true },
-    });
+    const [cours, matiereNiveaux] = await Promise.all([
+      this.prisma.cours.findMany({
+        where: {
+          tenantId,
+          classeId: inscription.classeId,
+          OR: [
+            { anneeAcademique: { libelle: anneeScolaire } },
+            { anneeAcademiqueId: null },
+          ],
+        },
+        select: { matiereId: true, coefficient: true },
+      }),
+      inscription.classe?.niveauId
+        ? this.prisma.matiereNiveau.findMany({
+            where: { tenantId, niveauId: inscription.classe.niveauId },
+            select: { matiereId: true, serie: true, coefficient: true },
+          })
+        : Promise.resolve([]),
+    ]);
 
-    return new Map(cours.map((row) => [row.matiereId, row.coefficient ?? 1]));
+    return resolveClassCoefficients({
+      serie: inscription.classe?.serie ?? null,
+      matiereNiveaux,
+      cours,
+    });
   }
 
   private async computeClassBulletinStats(

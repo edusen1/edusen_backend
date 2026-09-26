@@ -293,6 +293,7 @@ model Tenant {
   empruntsOuvrage     EmpruntOuvrage[]
   abonnementsBibliotheque AbonnementBibliotheque[]
   documentTemplates   DocumentTemplate[]
+  fournitures         Fourniture[]
 }
 
 // ==================== FRAIS NIVEAU CONFIG ====================
@@ -597,8 +598,28 @@ model Niveau {
   classes               Classe[]
   personnelAffectations PersonnelNiveauAffectation[]
   matiereNiveaux        MatiereNiveau[]
+  fournitures           Fourniture[]
 
   @@unique([tenantId, code])
+}
+
+// ==================== FOURNITURES ====================
+
+model Fourniture {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  niveauId    String   @db.Uuid
+  niveau      Niveau   @relation(fields: [niveauId], references: [id], onDelete: Cascade)
+  nom         String
+  quantite    Int      @default(1)
+  description String?
+  obligatoire Boolean  @default(true)
+  ordre       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId, niveauId])
 }
 
 model AnneeAcademique {
@@ -667,6 +688,7 @@ model Classe {
   anneeAcademique   AnneeAcademique? @relation(fields: [anneeAcademiqueId], references: [id])
   salleId           String?          @db.Uuid
   salle             Salle?           @relation(fields: [salleId], references: [id])
+  serie             String?          @db.VarChar(20)
   effectifMax       Int?
   actif             Boolean          @default(true)
   createdAt         DateTime         @default(now())
@@ -769,14 +791,15 @@ model MatiereNiveau {
   niveau             Niveau   @relation(fields: [niveauId], references: [id])
   matiereId          String   @db.Uuid
   matiere            Matiere  @relation(fields: [matiereId], references: [id])
+  serie              String?  @db.VarChar(20)
   coefficient        Float    @default(1)
   noteMaximum        Float    @default(20) // barème de la matière pour ce niveau (ex: 100 pour maths en primaire)
   volumeHoraireHebdo Int?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  @@unique([tenantId, niveauId, matiereId])
   @@index([tenantId, niveauId])
+  @@index([tenantId, niveauId, matiereId, serie])
 }
 
 model Cours {
