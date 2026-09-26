@@ -483,14 +483,20 @@ export class AuthService {
 
   async changePassword(
     userId: string,
-    currentPassword: string,
+    currentPassword: string | undefined,
     newPassword: string,
   ): Promise<void> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('Utilisateur introuvable');
 
-    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
-    if (!valid) throw new BadRequestException('MOT_DE_PASSE_ACTUEL_INCORRECT');
+    if (currentPassword) {
+      // Changement volontaire : vérification du mot de passe actuel obligatoire
+      const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+      if (!valid) throw new BadRequestException('MOT_DE_PASSE_ACTUEL_INCORRECT');
+    } else if (!user.mustChangePwd) {
+      // Pas de première connexion : currentPassword obligatoire
+      throw new BadRequestException('MOT_DE_PASSE_ACTUEL_REQUIS');
+    }
 
     if (newPassword.length < PASSWORD_MIN_LENGTH) {
       throw new BadRequestException('MOT_DE_PASSE_TROP_COURT');
