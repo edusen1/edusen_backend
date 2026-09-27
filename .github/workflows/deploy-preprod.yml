@@ -52,7 +52,7 @@ jobs:
             ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=min
 
       - name: Trigger Coolify deployment
         env:
