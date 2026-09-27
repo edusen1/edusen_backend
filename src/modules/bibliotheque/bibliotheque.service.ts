@@ -67,7 +67,15 @@ export class BibliothequeService {
     await this.prisma.ecoleConfig.upsert({
       where: { tenantId },
       update: { tarifsBibliotheque: fusionnes as unknown as Prisma.InputJsonValue },
-      create: { tenantId, tarifsBibliotheque: fusionnes as unknown as Prisma.InputJsonValue },
+      create: {
+        tenantId,
+        nom: '',
+        adresse: '',
+        ville: '',
+        telephone: '',
+        email: '',
+        tarifsBibliotheque: fusionnes as unknown as Prisma.InputJsonValue,
+      },
     });
     return fusionnes;
   }
