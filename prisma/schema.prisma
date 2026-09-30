@@ -489,6 +489,7 @@ model User {
   updatedAt DateTime @updatedAt
 
   @@unique([tenantId, email])
+  @@unique([tenantId, telephone], map: "users_tenant_telephone_unique")
   @@unique([tenantId, matricule], map: "users_tenant_matricule_unique")
   @@index([tenantId, role])
 

@@ -351,7 +351,16 @@ export class CommunicationService {
     return this.prisma.$queryRaw<RecipientRow[]>`
       SELECT "id", "role"::text AS "role", "email", "telephone"
       FROM "User"
-      WHERE "tenantId" = ${tenantId}::uuid AND "actif" = true AND "role"::text IN (${Prisma.join(cleanRoles)})
+      WHERE "tenantId" = ${tenantId}::uuid
+        AND "actif" = true
+        AND (
+          "role"::text IN (${Prisma.join(cleanRoles)})
+          OR EXISTS (
+            SELECT 1
+            FROM unnest("roles") AS secondary_role
+            WHERE secondary_role::text IN (${Prisma.join(cleanRoles)})
+          )
+        )
       ORDER BY "role"::text, "lastName", "firstName"
     `;
   }

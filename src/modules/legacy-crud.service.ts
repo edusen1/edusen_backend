@@ -17,6 +17,12 @@ import { InscriptionDocumentService, FournitureDocItem } from '@/modules/inscrip
 import { buildDebtDashboardSummary, buildDebtSummary, DebtPaymentRow } from '@/modules/debt-summary.util';
 import { normalizeSerie, resolveClassCoefficients } from '@/common/utils/serie-coefficients.util';
 import { buildFournituresWhatsappMessage } from '@/modules/fournitures-notification-message.util';
+import {
+  buildRoleMembershipWhere,
+  hasUserRole,
+  mergeUserRoles,
+  normalizeOptionalEmail,
+} from '@/common/utils/user-identity.util';
 
 type QueryValue = string | string[] | undefined;
 type QueryParams = Record<string, QueryValue>;
@@ -543,7 +549,7 @@ export class LegacyCrudService {
       this.prisma.user.findMany({
         where: {
           tenantId,
-          role: 'ENSEIGNANT',
+          ...buildRoleMembershipWhere('ENSEIGNANT'),
           id: { in: [...new Set(assignments.map((assignment) => assignment.enseignantId))] },
         },
         select: { id: true },
@@ -698,7 +704,7 @@ export class LegacyCrudService {
         this.prisma.user.findMany({
           where: {
             tenantId,
-            role: 'ENSEIGNANT',
+            ...buildRoleMembershipWhere('ENSEIGNANT'),
             id: { in: [...new Set(assignments.map((assignment) => assignment.enseignantId))] },
           },
           select: { id: true },
@@ -915,7 +921,9 @@ export class LegacyCrudService {
       await this.applyNoteEvaluationRules(tenantId ?? String(data.tenantId ?? ''), data);
     }
 
-    const created = await this.delegate(config.model).create({ data });
+    const created = config.model === 'user' && config.role
+      ? await this.createOrReuseUserRole(config, tenantId ?? String(data.tenantId ?? ''), data)
+      : await this.delegate(config.model).create({ data });
 
     if (config.model === 'user' && data.role === 'ELEVE' && parentIds.length > 0) {
       await this.prisma.eleveParent.createMany({
@@ -1126,7 +1134,7 @@ export class LegacyCrudService {
 
   private async replaceProfesseurMatieres(tenantId: string, professeurId: string, matiereIds: string[]): Promise<void> {
     const [professeur, matieres] = await Promise.all([
-      this.prisma.user.findFirst({ where: { id: professeurId, tenantId, role: 'ENSEIGNANT' }, select: { id: true } }),
+      this.prisma.user.findFirst({ where: { id: professeurId, tenantId, ...buildRoleMembershipWhere('ENSEIGNANT') }, select: { id: true } }),
       matiereIds.length
         ? this.prisma.matiere.findMany({
             where: { tenantId, id: { in: matiereIds } },
@@ -1484,10 +1492,10 @@ export class LegacyCrudService {
       enseignantsAvecEmploiDuTemps,
       classesCycles,
     ] = await Promise.all([
-      this.prisma.user.count({ where: { ...tenantFilter, role: 'ELEVE' } }),
-      this.prisma.user.count({ where: { ...tenantFilter, role: 'ENSEIGNANT' } }),
-      this.prisma.user.count({ where: { ...tenantFilter, role: 'PARENT' } }),
-      this.prisma.user.count({ where: { ...tenantFilter, role: { in: ['ADMIN', 'CAISSIER', 'COMPTABLE', 'SURVEILLANT', 'SECURITE', 'RH', 'GESTIONNAIRE'] } } }),
+      this.prisma.user.count({ where: { ...tenantFilter, ...buildRoleMembershipWhere('ELEVE') } }),
+      this.prisma.user.count({ where: { ...tenantFilter, ...buildRoleMembershipWhere('ENSEIGNANT') } }),
+      this.prisma.user.count({ where: { ...tenantFilter, ...buildRoleMembershipWhere('PARENT') } }),
+      this.prisma.user.count({ where: { ...tenantFilter, OR: [{ role: { in: ['ADMIN', 'CAISSIER', 'COMPTABLE', 'SURVEILLANT', 'SECURITE', 'RH', 'GESTIONNAIRE'] } }, { roles: { hasSome: ['ADMIN', 'CAISSIER', 'COMPTABLE', 'SURVEILLANT', 'SECURITE', 'RH', 'GESTIONNAIRE'] } }] } }),
       this.prisma.classe.count({ where: tenantFilter }),
       this.prisma.salle.count({ where: tenantFilter }),
       this.prisma.inscription.count({ where: { ...tenantFilter, statut: 'ACTIF' } }),
@@ -1535,7 +1543,7 @@ export class LegacyCrudService {
       }),
       this.prisma.user.groupBy({
         by: ['specialite'],
-        where: { ...tenantFilter, role: 'ENSEIGNANT' },
+        where: { ...tenantFilter, ...buildRoleMembershipWhere('ENSEIGNANT') },
         _count: { _all: true },
       }),
       this.prisma.paiement.groupBy({
@@ -1582,10 +1590,10 @@ export class LegacyCrudService {
         orderBy: [{ createdAt: 'desc' }],
         take: 6,
       }),
-      this.prisma.user.count({ where: { ...tenantFilter, role: 'ELEVE', genre: 'F' } }),
-      this.prisma.user.count({ where: { ...tenantFilter, role: 'ELEVE', genre: 'M' } }),
+      this.prisma.user.count({ where: { ...tenantFilter, ...buildRoleMembershipWhere('ELEVE'), genre: 'F' } }),
+      this.prisma.user.count({ where: { ...tenantFilter, ...buildRoleMembershipWhere('ELEVE'), genre: 'M' } }),
       this.prisma.classe.count({ where: { ...tenantFilter, actif: true, professeurResponsableId: null } }),
-      this.prisma.user.count({ where: { ...tenantFilter, role: 'ELEVE', elevParents: { none: {} } } }),
+      this.prisma.user.count({ where: { ...tenantFilter, ...buildRoleMembershipWhere('ELEVE'), elevParents: { none: {} } } }),
       this.prisma.emploiDuTemps.findMany({
         where: { ...tenantFilter, enseignantId: { not: null } },
         distinct: ['enseignantId'],
@@ -1626,7 +1634,7 @@ export class LegacyCrudService {
       ? await this.prisma.user.findMany({
           where: {
             ...tenantFilter,
-            role: 'ELEVE',
+            ...buildRoleMembershipWhere('ELEVE'),
             id: { in: debtStudentIds },
           },
           select: {
@@ -1776,7 +1784,7 @@ export class LegacyCrudService {
         where: { ...tenantFilter, date: { gte: start, lte: end } },
         select: { date: true, typeAbsence: true },
       }),
-      this.prisma.user.count({ where: { ...tenantFilter, role: 'ELEVE' } }),
+      this.prisma.user.count({ where: { ...tenantFilter, ...buildRoleMembershipWhere('ELEVE') } }),
     ]);
     const months = Array.from({ length: 12 }, (_, index) => ({
       mois: index + 1,
@@ -1972,11 +1980,11 @@ export class LegacyCrudService {
         parentId,
         parent: {
           tenantId,
-          role: 'PARENT',
+          ...buildRoleMembershipWhere('PARENT'),
         },
         eleve: {
           tenantId,
-          role: 'ELEVE',
+          ...buildRoleMembershipWhere('ELEVE'),
         },
       },
       include: {
@@ -2003,7 +2011,7 @@ export class LegacyCrudService {
   async adminEleveParcours(tenantId: string | undefined, eleveId: string) {
     this.assertUuid(eleveId, 'eleveId');
     const eleve = await this.prisma.user.findFirst({
-      where: { id: eleveId, tenantId, role: 'ELEVE' },
+      where: { id: eleveId, tenantId, ...buildRoleMembershipWhere('ELEVE') },
       select: {
         id: true,
         firstName: true,
@@ -2234,7 +2242,7 @@ export class LegacyCrudService {
   async adminEleveDettes(tenantId: string | undefined, eleveId: string) {
     this.assertUuid(eleveId, 'eleveId');
     const eleve = await this.prisma.user.findFirst({
-      where: { id: eleveId, tenantId, role: 'ELEVE' },
+      where: { id: eleveId, tenantId, ...buildRoleMembershipWhere('ELEVE') },
       select: {
         id: true,
         firstName: true,
@@ -2590,13 +2598,61 @@ export class LegacyCrudService {
     return value;
   }
 
+  private async createOrReuseUserRole(config: CrudConfig, tenantId: string, data: Payload) {
+    const requestedRole = String(config.role ?? data.role ?? '').trim();
+    if (!requestedRole) return this.prisma.user.create({ data: data as never });
+
+    const identityFilters: Payload[] = [];
+    if (typeof data.email === 'string' && data.email) identityFilters.push({ email: data.email });
+    if (typeof data.telephone === 'string' && data.telephone) identityFilters.push({ telephone: data.telephone });
+
+    const existingUser = identityFilters.length > 0
+      ? await this.prisma.user.findFirst({
+          where: { tenantId, OR: identityFilters },
+          select: { id: true, role: true, roles: true },
+        })
+      : null;
+
+    if (!existingUser) {
+      return this.prisma.user.create({ data: data as never });
+    }
+
+    if (hasUserRole(existingUser, requestedRole)) {
+      throw new ConflictException('Un utilisateur avec ce téléphone ou cet email existe déjà pour ce rôle');
+    }
+
+    const updateData: Payload = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (value === undefined) continue;
+      if ([
+        'id',
+        'tenantId',
+        'role',
+        'roles',
+        'username',
+        'email',
+        'telephone',
+        'passwordHash',
+        'mustChangePwd',
+        '__tempPasswordForNotification',
+      ].includes(key)) continue;
+      updateData[key] = value;
+    }
+    updateData.roles = { set: mergeUserRoles(existingUser, requestedRole) };
+
+    return this.prisma.user.update({
+      where: { id: existingUser.id },
+      data: updateData,
+    });
+  }
+
   private fixedWhere(config: CrudConfig, tenantId: string | undefined): Payload {
     if (config.tenantScoped && !tenantId) {
       throw new BadRequestException('tenantId requis');
     }
     return {
       ...(config.tenantScoped ? { tenantId: this.assertUuid(tenantId, 'tenantId') } : {}),
-      ...(config.role ? { role: config.role } : {}),
+      ...(config.role ? buildRoleMembershipWhere(config.role) : {}),
     };
   }
 
@@ -2639,7 +2695,7 @@ export class LegacyCrudService {
     }
 
     if (config.model === 'user') {
-      if (data.email) data.email = String(data.email).trim().toLowerCase();
+      if (data.email !== undefined) data.email = normalizeOptionalEmail(data.email);
       // Normalisation des noms : NOM en MAJUSCULES, Prénom capitalize, lieu de naissance en MAJUSCULES
       if (data.lastName) data.lastName = String(data.lastName).trim().toUpperCase();
       if (data.firstName) data.firstName = String(data.firstName).trim().replace(/\b\w/g, (c: string) => c.toUpperCase());
@@ -2688,7 +2744,6 @@ export class LegacyCrudService {
           String(data.firstName),
           String(data.lastName),
         );
-        data.email ??= `${data.username}@local.edusen`;
         const generatedPassword = String(data.password ?? data.motDePasse ?? this.generateTempPassword());
         data.passwordHash ??= await bcrypt.hash(generatedPassword, 12);
         data.__tempPasswordForNotification = generatedPassword;
@@ -3950,7 +4005,7 @@ export class LegacyCrudService {
     if (rawEnseignant !== undefined && rawEnseignant !== null && String(rawEnseignant).trim() !== '') {
       const enseignantId = this.assertUuid(String(rawEnseignant).trim(), 'enseignantId');
       const enseignant = await this.prisma.user.findFirst({
-        where: { id: enseignantId, tenantId, role: 'ENSEIGNANT' },
+        where: { id: enseignantId, tenantId, ...buildRoleMembershipWhere('ENSEIGNANT') },
         select: { id: true, specialite: true },
       });
       if (!enseignant) {
@@ -4073,7 +4128,7 @@ export class LegacyCrudService {
 
     if (!data.classeId && data.eleveId) {
       const eleve = await this.prisma.user.findFirst({
-        where: { id: String(data.eleveId), tenantId, role: 'ELEVE' },
+        where: { id: String(data.eleveId), tenantId, ...buildRoleMembershipWhere('ELEVE') },
         select: { classeId: true },
       });
       data.classeId = eleve?.classeId;
@@ -4189,28 +4244,49 @@ export class LegacyCrudService {
 
     const firstName = String(data.prenom ?? data.firstName ?? '').trim();
     const lastName = String(data.nom ?? data.lastName ?? '').trim();
-    const incomingEmail = String(data.email ?? '').trim().toLowerCase();
+    const incomingEmail = normalizeOptionalEmail(data.email);
     const role = this.normalizePersonnelRole(data.type);
 
-    if ((!data.utilisateurId || !this.isUuidLike(String(data.utilisateurId))) && (incomingEmail || (create && firstName && lastName))) {
+    if ((!data.utilisateurId || !this.isUuidLike(String(data.utilisateurId))) && (incomingEmail || normalizedTelephone || (create && firstName && lastName))) {
       const email = incomingEmail;
 
-      const existingUser = email
-        ? await this.prisma.user.findFirst({ where: { tenantId, email } })
+      const identityFilters: Payload[] = [];
+      if (email) identityFilters.push({ email });
+      if (normalizedTelephone) identityFilters.push({ telephone: normalizedTelephone });
+
+      const existingUser = identityFilters.length > 0
+        ? await this.prisma.user.findFirst({
+            where: { tenantId, OR: identityFilters },
+            select: { id: true, email: true, telephone: true, role: true, roles: true },
+          })
         : null;
 
       if (existingUser) {
+        if (email && existingUser.email && existingUser.email !== email) {
+          throw new ConflictException('Ce téléphone est déjà associé à un autre email');
+        }
+        if (normalizedTelephone && existingUser.telephone && existingUser.telephone !== normalizedTelephone) {
+          throw new ConflictException('Cet email est déjà associé à un autre téléphone');
+        }
+        if (create) {
+          const existingPersonnel = await this.prisma.personnel.findUnique({
+            where: { utilisateurId: existingUser.id },
+            select: { id: true },
+          });
+          if (existingPersonnel) {
+            throw new ConflictException('Cet utilisateur possède déjà une fiche personnel');
+          }
+        }
         data.utilisateurId = existingUser.id;
       } else if (firstName && lastName) {
         const username = await this.generateUsername(tenantId, firstName, lastName);
-        const generatedEmail = email || `${username}@local.edusen`;
         const generatedPassword = this.generateTempPassword();
         const passwordHash = await bcrypt.hash(generatedPassword, 12);
         const createdUser = await this.prisma.user.create({
           data: {
             tenantId,
             username,
-            email: generatedEmail,
+            email,
             passwordHash,
             firstName,
             lastName,
@@ -4230,17 +4306,21 @@ export class LegacyCrudService {
     }
 
     if (data.utilisateurId && this.isUuidLike(String(data.utilisateurId))) {
+      const linkedUser = await this.prisma.user.findFirst({
+        where: { id: String(data.utilisateurId), tenantId },
+        select: { id: true, email: true, telephone: true, role: true, roles: true },
+      });
       const userUpdate: Record<string, unknown> = {};
       if (firstName) userUpdate['firstName'] = firstName;
       if (lastName) userUpdate['lastName'] = lastName;
-      if (incomingEmail) userUpdate['email'] = incomingEmail;
-      if (normalizedTelephone) userUpdate['telephone'] = normalizedTelephone;
+      if (incomingEmail && !linkedUser?.email) userUpdate['email'] = incomingEmail;
+      if (normalizedTelephone && !linkedUser?.telephone) userUpdate['telephone'] = normalizedTelephone;
       if (data.adresse !== undefined) userUpdate['adresse'] = data.adresse ? String(data.adresse) : null;
       if (data.specialite !== undefined) userUpdate['specialite'] = data.specialite ? String(data.specialite) : null;
-      if (data.type !== undefined) userUpdate['role'] = role;
+      if (linkedUser && !hasUserRole(linkedUser, role)) userUpdate['roles'] = { set: mergeUserRoles(linkedUser, role) };
       if (Object.keys(userUpdate).length > 0) {
-        await this.prisma.user.updateMany({
-          where: { id: String(data.utilisateurId), tenantId },
+        await this.prisma.user.update({
+          where: { id: String(data.utilisateurId) },
           data: userUpdate,
         });
       }
@@ -4789,7 +4869,7 @@ export class LegacyCrudService {
 
   private async syncEleveClasse(eleveId?: string, classeId?: string): Promise<void> {
     if (!eleveId || !classeId) return;
-    await this.prisma.user.updateMany({ where: { id: eleveId, role: 'ELEVE' }, data: { classeId } });
+    await this.prisma.user.updateMany({ where: { id: eleveId, ...buildRoleMembershipWhere('ELEVE') }, data: { classeId } });
   }
 
   private async generateUsername(tenantId: string, firstName: string, lastName: string): Promise<string> {
