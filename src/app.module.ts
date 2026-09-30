@@ -53,6 +53,7 @@ import { DemandeReductionService } from '@/modules/v1/demande-reduction/demande-
 import { EleveDocumentService } from '@/modules/eleve-document.service';
 import { CommunicationService } from '@/modules/communication.service';
 import { RapportDocumentService } from '@/modules/rapport-document.service';
+import { ArchivesService } from '@/modules/archives.service';
 import { FeatureService } from '@/modules/feature/feature.service';
 import { FeatureGuard } from '@/common/guards/feature.guard';
 import { TemplateRendererService } from '@/modules/document/template-renderer.service';
@@ -115,6 +116,7 @@ import { TemplateRendererService } from '@/modules/document/template-renderer.se
     EleveDocumentService,
     CommunicationService,
     RapportDocumentService,
+    ArchivesService,
     FeatureService,
     TemplateRendererService,
     { provide: APP_GUARD, useClass: AppAuthGuard },

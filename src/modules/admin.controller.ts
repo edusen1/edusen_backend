@@ -49,6 +49,7 @@ import { SchoolCardDocumentService } from '@/modules/school-card-document.servic
 import { EleveDocumentService } from '@/modules/eleve-document.service';
 import { CommunicationService } from '@/modules/communication.service';
 import { RapportDocumentService, RapportType } from '@/modules/rapport-document.service';
+import { ArchivesService } from '@/modules/archives.service';
 import { ProgrammeService } from '@/modules/programme/programme.service';
 import { FeatureService } from '@/modules/feature/feature.service';
 import { Prisma, StatutPresence, TypeDocument } from '@prisma/client';
@@ -91,6 +92,7 @@ export class AdminController {
     private readonly eleveDocuments: EleveDocumentService,
     private readonly communications: CommunicationService,
     private readonly rapportDocument: RapportDocumentService,
+    private readonly archives: ArchivesService,
     private readonly programmeService: ProgrammeService,
     private readonly storage: StorageService,
     private readonly featureService: FeatureService,
@@ -881,6 +883,18 @@ export class AdminController {
       },
       generatedAt: new Date(),
     };
+  }
+
+  @Get('archives/:id')
+  async getArchiveDetails(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @Query() query: QueryParams,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    return this.archives.getArchiveDetails(tid, id, query);
   }
 
   @Post('absences-eleves/:id/approuver')
