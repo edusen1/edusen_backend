@@ -525,6 +525,17 @@ model User {
   coursEnseignant            Cours[]             @relation("CoursEnseignant")
 }
 
+model UserPhoneDuplicateAudit {
+  tenantId        String   @db.Uuid
+  telephone       String   @db.VarChar(20)
+  keptUserId      String   @db.Uuid
+  duplicateUserId String   @db.Uuid
+  duplicateRole   UserRole
+  createdAt       DateTime @default(now())
+
+  @@id([tenantId, telephone, keptUserId, duplicateUserId])
+}
+
 // ==================== ELEVE DOCUMENTS ====================
 
 model EleveDocument {
