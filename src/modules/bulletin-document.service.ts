@@ -190,7 +190,7 @@ export class BulletinDocumentService implements OnModuleDestroy {
     const computedAverage = totalCoefficient > 0 ? this.round(weightedTotal / totalCoefficient) : null;
 
     const storedLogo = config?.logoUrl ?? tenant?.logoUrl;
-    const schoolName = config?.nom ?? tenant?.nom ?? 'Noura School';
+    const schoolName = config?.nom ?? tenant?.nom ?? 'EduSen';
     const country = config?.pays ?? 'MR';
     const address = config?.adresse ?? tenant?.adresse ?? '';
     return {
@@ -460,7 +460,7 @@ export class BulletinDocumentService implements OnModuleDestroy {
       const storageKey = url.searchParams.get('key');
       if (storageKey) return storageKey;
       const segments = url.pathname.split('/').filter(Boolean);
-      const bucketIndex = segments.indexOf(process.env.S3_BUCKET ?? 'noura-school-files');
+      const bucketIndex = segments.indexOf(process.env.S3_BUCKET ?? 'edusen-files');
       return bucketIndex >= 0 ? segments.slice(bucketIndex + 1).join('/') || null : null;
     } catch {
       return null;

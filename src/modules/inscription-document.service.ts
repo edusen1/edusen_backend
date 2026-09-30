@@ -84,7 +84,7 @@ export class InscriptionDocumentService implements OnModuleDestroy {
 
     if (!inscription) return null;
 
-    const schoolName = config?.nom ?? tenant?.nom ?? 'Noura School';
+    const schoolName = config?.nom ?? tenant?.nom ?? 'EduSen';
     const words = schoolName.trim().split(/\s+/);
     const initials = (words.length >= 2 ? words[0][0] + words[1][0] : schoolName.slice(0, 2)).toUpperCase();
 

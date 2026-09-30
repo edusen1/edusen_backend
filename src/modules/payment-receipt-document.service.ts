@@ -127,7 +127,7 @@ export class PaymentReceiptDocumentService implements OnModuleDestroy {
       this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { nom: true, adresse: true, telephone: true, logoUrl: true } }),
     ]);
 
-    const schoolName = config?.nom ?? tenant?.nom ?? 'Noura School';
+    const schoolName = config?.nom ?? tenant?.nom ?? 'EduSen';
     const words = schoolName.trim().split(/\s+/);
     const initials = words.length >= 2 ? words[0][0] + words[1][0] : schoolName.slice(0, 2);
 

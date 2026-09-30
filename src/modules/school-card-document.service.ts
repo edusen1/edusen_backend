@@ -123,7 +123,7 @@ export class SchoolCardDocumentService implements OnModuleDestroy {
 
     const model: SchoolCardModel = {
       school: {
-        name: config?.nom ?? tenant?.nom ?? 'Noura School',
+        name: config?.nom ?? tenant?.nom ?? 'EduSen',
         sub: schoolSub,
         logoUrl: this.storage.resolveUrl(config?.logoUrl ?? tenant?.logoUrl) ?? null,
         website: config?.siteWeb ?? '',

@@ -3,7 +3,7 @@ import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '@/config/prisma.service';
 import { StorageService } from '@/infrastructure/storage/storage.service';
-import { MailService } from '@/infrastructure/mail/mail.service';
+import { MailService, SchoolBranding } from '@/infrastructure/mail/mail.service';
 import { WhatsappService } from '@/modules/whatsapp/whatsapp.service';
 import type { JwtUser } from '@/common/types/auth.types';
 import { normalizePhoneForCountry } from '@/common/utils/phone.util';
@@ -2687,7 +2687,7 @@ export class LegacyCrudService {
           String(data.firstName),
           String(data.lastName),
         );
-        data.email ??= `${data.username}@local.noura-school`;
+        data.email ??= `${data.username}@local.edusen`;
         const generatedPassword = String(data.password ?? data.motDePasse ?? this.generateTempPassword());
         data.passwordHash ??= await bcrypt.hash(generatedPassword, 12);
         data.__tempPasswordForNotification = generatedPassword;
@@ -2894,37 +2894,42 @@ export class LegacyCrudService {
       // Générer le PDF (page 1 : fiche d'inscription, page 2 : fournitures) en arrière-plan
       void this.inscriptionDocument.generate(tenantId, eleveId, classeId, items);
 
-      // Mail HTML
+      const { branding: schoolBranding } = await this.resolveSchoolBranding(tenantId);
+
+      // Mail HTML — style identique au reçu de paiement
       const sujetMail = `Liste des fournitures — ${eleveNom} (${classe.nom})`;
       const lignesHtml = items
         .map(
-          (f) =>
-            `<tr><td style="padding:6px 12px;">${f.nom}</td><td style="padding:6px 12px;text-align:center;">${f.quantite}</td><td style="padding:6px 12px;text-align:center;">${f.obligatoire ? 'Oui' : 'Non'}</td><td style="padding:6px 12px;color:#64748b;">${f.description ?? ''}</td></tr>`,
+          (f) => `
+            <tr style="border-bottom:1px solid #f1f5f9;">
+              <td style="padding:10px 14px;font-size:14px;font-weight:600;color:#0f172a;">${f.nom}${f.description ? `<div style="font-size:11px;color:#94a3b8;margin-top:2px;">${f.description}</div>` : ''}</td>
+              <td style="padding:10px 14px;text-align:center;font-size:14px;font-family:'JetBrains Mono',monospace;color:#0f172a;">${f.quantite}</td>
+              <td style="padding:10px 14px;text-align:center;">${f.obligatoire ? '<span style="background:#dbeafe;color:#1d4ed8;font-size:11px;font-weight:700;padding:3px 8px;letter-spacing:.04em;">REQUIS</span>' : '<span style="background:#f1f5f9;color:#64748b;font-size:11px;padding:3px 8px;">Optionnel</span>'}</td>
+            </tr>`,
         )
         .join('');
       const corpsMail = `
-        <h2 style="color:#1E40AF;margin:0 0 16px;">Liste des fournitures scolaires</h2>
-        <p>Bonjour,</p>
-        <p><strong>${eleveNom}</strong> vient d'être inscrit(e) en classe de <strong>${classe.nom}</strong>${anneeLibelle ? ` — année ${anneeLibelle}` : ''}.</p>
-        <table style="border-collapse:collapse;width:100%;margin:16px 0;">
+        <h2 style="color:#0f172a;font-size:18px;font-weight:800;margin:0 0 16px;">Liste des fournitures scolaires</h2>
+        <p style="color:#475569;line-height:1.6;margin:0 0 8px;">Bonjour,</p>
+        <p style="color:#475569;line-height:1.6;margin:0 0 20px;"><strong>${eleveNom}</strong> vient d'être inscrit(e) en classe de <strong>${classe.nom}</strong>${anneeLibelle ? ` — année ${anneeLibelle}` : ''}.</p>
+        <table style="border-collapse:collapse;width:100%;margin:0 0 20px;background:#f8fafc;border:1px solid #e2e8f0;">
           <thead>
-            <tr style="background:#f1f5f9;">
-              <th style="padding:8px 12px;text-align:left;font-size:13px;">Article</th>
-              <th style="padding:8px 12px;text-align:center;font-size:13px;">Quantité</th>
-              <th style="padding:8px 12px;text-align:center;font-size:13px;">Obligatoire</th>
-              <th style="padding:8px 12px;text-align:left;font-size:13px;">Remarque</th>
+            <tr style="background:#0f172a;">
+              <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:600;color:#94a3b8;letter-spacing:.07em;text-transform:uppercase;">Article</th>
+              <th style="padding:10px 14px;text-align:center;font-size:11px;font-weight:600;color:#94a3b8;letter-spacing:.07em;text-transform:uppercase;">Qté</th>
+              <th style="padding:10px 14px;text-align:center;font-size:11px;font-weight:600;color:#94a3b8;letter-spacing:.07em;text-transform:uppercase;">Statut</th>
             </tr>
           </thead>
           <tbody>${lignesHtml}</tbody>
         </table>
-        <p style="color:#64748b;font-size:12px;">Bonne rentrée scolaire !</p>`;
+        <p style="color:#94a3b8;font-size:12px;line-height:1.6;margin:0;">La fiche complète est disponible auprès de l'administration. Bonne rentrée scolaire !</p>`;
 
       for (const parent of parents) {
         const parentPrenom = String(parent.firstName ?? '').trim();
         const parentNom = `${parentPrenom} ${parent.lastName ?? ''}`.trim();
 
         if (parent.email) {
-          this.mailService.sendAsync(parent.email, sujetMail, corpsMail);
+          this.mailService.sendAsyncFromSchool(parent.email, sujetMail, corpsMail, schoolBranding);
         }
 
         if (parent.telephone) {
@@ -3030,7 +3035,22 @@ export class LegacyCrudService {
           }
         }
         if (parent.email) {
-          this.mailService.sendAsync(parent.email, `Identifiants de connexion — ${eleveNom}`, `<p>${msg.replace(/\n/g, '<br>')}</p>`);
+          const { branding: schoolBranding } = await this.resolveSchoolBranding(tenantId);
+          const msgHtml = `
+            <h2 style="color:#0f172a;font-size:18px;font-weight:800;margin:0 0 16px;">Accès élève</h2>
+            <p style="color:#475569;line-height:1.6;">Voici les identifiants de connexion de <strong>${eleveNom}</strong> :</p>
+            <table style="border-collapse:collapse;margin:20px 0;width:100%;background:#f8fafc;border:1px solid #e2e8f0;">
+              <tr>
+                <td style="padding:10px 14px;color:#64748b;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;width:130px;border-bottom:1px solid #e2e8f0;">Identifiant</td>
+                <td style="padding:10px 14px;font-weight:600;font-size:14px;font-family:'JetBrains Mono',monospace;border-bottom:1px solid #e2e8f0;">${loginId}</td>
+              </tr>
+              <tr>
+                <td style="padding:10px 14px;color:#64748b;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;">Mot de passe</td>
+                <td style="padding:10px 14px;font-size:14px;font-family:'JetBrains Mono',monospace;"><span style="background:#fef3c7;padding:4px 10px;font-weight:700;">${tempPwd}</span></td>
+              </tr>
+            </table>
+            <p style="color:#dc2626;font-weight:600;font-size:13px;">L'élève devra modifier ce mot de passe à sa première connexion.</p>`;
+          this.mailService.sendAsyncFromSchool(parent.email, `Identifiants de connexion — ${eleveNom}`, msgHtml, schoolBranding);
           this.logger.log(`[Credentials] Identifiants élève ${eleveId} envoyés au parent ${parent.id} par email`);
         }
       }
@@ -3078,8 +3098,8 @@ export class LegacyCrudService {
     }
 
     if (email) {
-      const from = tenantId ? await this.resolveSchoolSender(tenantId) : undefined;
-      this.mailService.sendCompteCree(email, firstName, lastName, tempPassword, from);
+      const { branding } = tenantId ? await this.resolveSchoolBranding(tenantId) : { branding: undefined };
+      this.mailService.sendCompteCree(email, firstName, lastName, tempPassword, branding);
       this.logger.log(`Identifiants ${audience} envoyés par email user=${String(user.id ?? '')}`);
     }
 
@@ -3577,19 +3597,40 @@ export class LegacyCrudService {
     return rows.map((row) => ({ ...row, personnel: map.get(String(row.personnelId ?? '')) ?? null }));
   }
 
-  private async resolveSchoolSender(tenantId: string): Promise<string | undefined> {
-    if (process.env.RESEND_ALLOW_TENANT_FROM !== 'true') {
-      return undefined;
-    }
-
+  private async resolveSchoolBranding(tenantId: string): Promise<{ branding: SchoolBranding; from?: string }> {
     const [config, tenant] = await Promise.all([
-      this.prisma.ecoleConfig.findUnique({ where: { tenantId }, select: { nom: true } }),
-      this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { nom: true, slug: true } }),
+      this.prisma.ecoleConfig.findUnique({
+        where: { tenantId },
+        select: { nom: true, adresse: true, ville: true, telephone: true, email: true, logoUrl: true },
+      }),
+      this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { nom: true, slug: true, adresse: true, telephone: true, logoUrl: true },
+      }),
     ]);
 
-    const schoolName = config?.nom || tenant?.nom || 'Noura School';
+    const schoolName = config?.nom || tenant?.nom || 'EduSen';
+    const words = schoolName.trim().split(/\s+/);
+    const initials = (words.length >= 2 ? words[0][0] + words[1][0] : schoolName.slice(0, 2)).toUpperCase();
+    const address = [config?.adresse ?? tenant?.adresse, config?.ville].filter(Boolean).join(' · ') || null;
+    const logoUrl = config?.logoUrl ?? tenant?.logoUrl ?? null;
+
+    const branding: SchoolBranding = {
+      name: schoolName,
+      initials,
+      logoUrl: logoUrl ? this.storage.resolveUrl(logoUrl) : null,
+      address,
+      phone: config?.telephone ?? tenant?.telephone ?? null,
+      email: config?.email ?? null,
+    };
+
     const localDomain = tenant?.slug || this.schoolDomainName(schoolName);
-    return `${schoolName} <contact@${localDomain}.minifootapp.com>`;
+    const from =
+      process.env.RESEND_ALLOW_TENANT_FROM === 'true'
+        ? `${schoolName} <contact@${localDomain}.minifootapp.com>`
+        : undefined;
+
+    return { branding, from };
   }
 
   private formatError(error: unknown): string {
@@ -4133,7 +4174,7 @@ export class LegacyCrudService {
         data.utilisateurId = existingUser.id;
       } else if (firstName && lastName) {
         const username = await this.generateUsername(tenantId, firstName, lastName);
-        const generatedEmail = email || `${username}@local.noura-school`;
+        const generatedEmail = email || `${username}@local.edusen`;
         const generatedPassword = this.generateTempPassword();
         const passwordHash = await bcrypt.hash(generatedPassword, 12);
         const createdUser = await this.prisma.user.create({

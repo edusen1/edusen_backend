@@ -26,7 +26,7 @@ export class StorageService {
     const endpoint = process.env.S3_ENDPOINT ?? process.env.S3_ENDPOINT_OVERRIDE ?? undefined;
     const forcePathStyle = (process.env.S3_FORCE_PATH_STYLE ?? 'true') !== 'false';
 
-    this.bucket = process.env.S3_BUCKET ?? 'noura-school-files';
+    this.bucket = process.env.S3_BUCKET ?? 'edusen-files';
     this.presignedTtl = Number(process.env.S3_PRESIGNED_TTL_SECONDS ?? 900);
 
     const accessKeyId = process.env.S3_ACCESS_KEY ?? process.env.AWS_ACCESS_KEY_ID ?? '';

@@ -163,7 +163,7 @@ export class RapportDocumentService implements OnModuleDestroy {
       }),
     ]);
 
-    const schoolName = config?.nom ?? tenant?.nom ?? 'Noura School';
+    const schoolName = config?.nom ?? tenant?.nom ?? 'EduSen';
     const logoKey = config?.logoUrl ?? tenant?.logoUrl ?? null;
 
     let logoUrl: string | null = null;
@@ -1498,7 +1498,7 @@ ${this.renderAnalysis(data.analysis ?? [], c)}
       const key = url.searchParams.get('key');
       if (key) return key;
       const segs = url.pathname.split('/').filter(Boolean);
-      const bucket = segs.indexOf(process.env.S3_BUCKET ?? 'noura-school-files');
+      const bucket = segs.indexOf(process.env.S3_BUCKET ?? 'edusen-files');
       return bucket >= 0 ? segs.slice(bucket + 1).join('/') || null : null;
     } catch {
       return null;

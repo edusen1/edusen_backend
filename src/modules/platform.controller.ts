@@ -158,11 +158,11 @@ export class PlatformController {
         nodeEnv: process.env.NODE_ENV ?? 'development',
         redisConfigured: Boolean(process.env.REDIS_URL),
         s3Configured: this.storage.isConfigured(),
-        s3Bucket: process.env.S3_BUCKET ?? 'noura-school-files',
+        s3Bucket: process.env.S3_BUCKET ?? 'edusen-files',
         s3Endpoint: process.env.S3_ENDPOINT ? process.env.S3_ENDPOINT.replace(/\/\/.*:.*@/, '//***@') : null,
         whatsappProvider: process.env.RELAYIO_BASE_URL ? 'relayio' : null,
         corsOrigins: process.env.ALLOWED_ORIGINS ?? '',
-        jwtIssuer: process.env.JWT_ISSUER ?? 'nouraschool',
+        jwtIssuer: process.env.JWT_ISSUER ?? 'edusen',
         jwtAccessTokenLifespan: process.env.JWT_ACCESS_TOKEN_LIFESPAN ?? '15m',
       },
     };
