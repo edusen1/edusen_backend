@@ -4345,16 +4345,32 @@ export class LegacyCrudService {
       const userUpdate: Record<string, unknown> = {};
       if (firstName) userUpdate['firstName'] = firstName;
       if (lastName) userUpdate['lastName'] = lastName;
-      if (incomingEmail && !linkedUser?.email) userUpdate['email'] = incomingEmail;
-      if (normalizedTelephone && !linkedUser?.telephone) userUpdate['telephone'] = normalizedTelephone;
+      // Toujours propager email et téléphone si fournis et différents (pas seulement quand vides)
+      if (incomingEmail && linkedUser?.email !== incomingEmail) userUpdate['email'] = incomingEmail;
+      if (normalizedTelephone && linkedUser?.telephone !== normalizedTelephone) userUpdate['telephone'] = normalizedTelephone;
       if (data.adresse !== undefined) userUpdate['adresse'] = data.adresse ? String(data.adresse) : null;
       if (data.specialite !== undefined) userUpdate['specialite'] = data.specialite ? String(data.specialite) : null;
-      if (linkedUser && !hasUserRole(linkedUser, role)) userUpdate['roles'] = { set: mergeUserRoles(linkedUser, role) };
+      // Mettre à jour le rôle principal si le User est un personnel web (pas mobile-only) et que le rôle a changé
+      if (linkedUser && !LegacyCrudService.MOBILE_ONLY_ROLES.has(linkedUser.role) && linkedUser.role !== role) {
+        // Ancien rôle conservé dans roles[], nouveau rôle devient le rôle principal
+        const allRoles = [...new Set([linkedUser.role, ...(linkedUser.roles ?? [])])].filter((r) => r !== role) as never[];
+        userUpdate['role'] = role;
+        userUpdate['roles'] = { set: allRoles };
+      } else if (linkedUser && !hasUserRole(linkedUser, role)) {
+        // User mobile-only ou même rôle principal : juste ajouter dans roles[]
+        userUpdate['roles'] = { set: mergeUserRoles(linkedUser, role) };
+      }
       if (Object.keys(userUpdate).length > 0) {
-        await this.prisma.user.update({
-          where: { id: String(data.utilisateurId) },
-          data: userUpdate,
-        });
+        try {
+          await this.prisma.user.update({
+            where: { id: String(data.utilisateurId) },
+            data: userUpdate,
+          });
+        } catch (err: unknown) {
+          const isP2002 = (err as { code?: string }).code === 'P2002';
+          if (isP2002) throw new ConflictException('Ce numéro ou email est déjà utilisé par un autre utilisateur');
+          throw err;
+        }
       }
     }
 
