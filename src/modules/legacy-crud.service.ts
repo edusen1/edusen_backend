@@ -2609,7 +2609,7 @@ export class LegacyCrudService {
     const existingUser = identityFilters.length > 0
       ? await this.prisma.user.findFirst({
           where: { tenantId, OR: identityFilters },
-          select: { id: true, role: true, roles: true },
+          select: { id: true, role: true, roles: true, firstName: true, lastName: true, telephone: true, email: true },
         })
       : null;
 
@@ -2617,8 +2617,22 @@ export class LegacyCrudService {
       return this.prisma.user.create({ data: data as never });
     }
 
+    // Vérifier que c'est bien la même personne (nom + prénom) avant de fusionner les rôles
+    const normalize = (s: unknown) => String(s ?? '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const sameFirstName = normalize(existingUser.firstName) === normalize(data.firstName);
+    const sameLastName = normalize(existingUser.lastName) === normalize(data.lastName);
+    if (!sameFirstName || !sameLastName) {
+      const existingNom = `${existingUser.firstName ?? ''} ${existingUser.lastName ?? ''}`.trim();
+      const conflict = existingUser.telephone ?? existingUser.email ?? '';
+      throw new ConflictException(
+        `Ce contact (${conflict}) appartient déjà à ${existingNom} (${existingUser.role}). Vérifiez le numéro ou l'email saisi.`,
+      );
+    }
+
     if (hasUserRole(existingUser, requestedRole)) {
-      throw new ConflictException('Un utilisateur avec ce téléphone ou cet email existe déjà pour ce rôle');
+      throw new ConflictException(
+        `${existingUser.firstName ?? ''} ${existingUser.lastName ?? ''} a déjà le rôle ${requestedRole}`.trim(),
+      );
     }
 
     const updateData: Payload = {};
@@ -4267,6 +4281,9 @@ export class LegacyCrudService {
         }
         if (normalizedTelephone && existingUser.telephone && existingUser.telephone !== normalizedTelephone) {
           throw new ConflictException('Cet email est déjà associé à un autre téléphone');
+        }
+        if (existingUser.role === 'ELEVE' || existingUser.role === 'PARENT') {
+          throw new ConflictException('Cet email ou téléphone appartient déjà à un élève ou parent');
         }
         if (create) {
           const existingPersonnel = await this.prisma.personnel.findUnique({
