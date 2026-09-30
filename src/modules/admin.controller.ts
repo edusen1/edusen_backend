@@ -1877,6 +1877,18 @@ export class AdminController {
     return this.schoolCards.generateForUser(tid, inscription.eleveId, { inscriptionId: id });
   }
 
+  @Roles('ADMIN', 'CAISSIER')
+  @Post('inscriptions/:id/fournitures-pdf')
+  async generateInscriptionFournituresPdf(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+    return this.crud.generateInscriptionFournituresPdf(tid, id);
+  }
+
   // ----------------------------------------------------------------
   // Statut élève : désactiver / exclure
   // ----------------------------------------------------------------

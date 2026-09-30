@@ -16,6 +16,7 @@ import { FournitureService } from '@/modules/configuration/fourniture.service';
 import { InscriptionDocumentService, FournitureDocItem } from '@/modules/inscription-document.service';
 import { buildDebtDashboardSummary, buildDebtSummary, DebtPaymentRow } from '@/modules/debt-summary.util';
 import { normalizeSerie, resolveClassCoefficients } from '@/common/utils/serie-coefficients.util';
+import { buildFournituresWhatsappMessage } from '@/modules/fournitures-notification-message.util';
 
 type QueryValue = string | string[] | undefined;
 type QueryParams = Record<string, QueryValue>;
@@ -2880,33 +2881,24 @@ export class LegacyCrudService {
       const obligatoires = items.filter((f) => f.obligatoire);
       const facultatifs = items.filter((f) => !f.obligatoire);
 
-      // Générer le PDF (page 1 : fiche d'inscription, page 2 : fournitures) en arrière-plan
-      void this.inscriptionDocument.generate(tenantId, eleveId, classeId, items);
+      // Générer le PDF (page 1 : fiche d'inscription, page 2 : fournitures) pour pouvoir envoyer son lien par WhatsApp/RelayIO.
+      const generatedPdf = await this.inscriptionDocument.generate(tenantId, eleveId, classeId, items, {
+        inscriptionId: inscription?.id ?? null,
+      });
+      const fournituresPdfUrl = generatedPdf?.url ? (this.storage.resolveUrl(generatedPdf.url) ?? generatedPdf.url) : null;
 
       const { branding: schoolBranding } = await this.resolveSchoolBranding(tenantId);
 
       // Construire le message WhatsApp (commun à tous les destinataires)
-      const buildWaMessage = (destinataire: string): string => {
-        const waLines: string[] = [
-          `*${classe.nom} — Liste des fournitures*`,
-          '',
-          `Bonjour${destinataire ? ' ' + destinataire : ''},`,
-          '',
-          `*${eleveNom}* vient d'être inscrit(e) en *${classe.nom}*${anneeLibelle ? ` (année ${anneeLibelle})` : ''}.`,
-          '',
-        ];
-        if (obligatoires.length > 0) {
-          waLines.push('*Fournitures obligatoires :*');
-          obligatoires.forEach((f) => waLines.push(`  • ${f.nom} — qté : ${f.quantite}`));
-        }
-        if (facultatifs.length > 0) {
-          if (obligatoires.length > 0) waLines.push('');
-          waLines.push('_Facultatifs :_');
-          facultatifs.forEach((f) => waLines.push(`  • ${f.nom} — qté : ${f.quantite}`));
-        }
-        waLines.push('', "_La fiche complète est disponible auprès de l'administration._", '_Bonne rentrée scolaire !_');
-        return waLines.join('\n');
-      };
+      const buildWaMessage = (destinataire: string): string => buildFournituresWhatsappMessage({
+        classeNom: classe.nom,
+        eleveNom,
+        anneeLibelle,
+        destinataire,
+        obligatoires,
+        facultatifs,
+        pdfUrl: fournituresPdfUrl,
+      });
 
       // Construire le corps HTML email
       const lignesHtml = items
@@ -2984,6 +2976,30 @@ export class LegacyCrudService {
     } catch (err: unknown) {
       this.logger.warn(`[Fournitures] Erreur notification: ${(err as Error).message}`);
     }
+  }
+
+  async generateInscriptionFournituresPdf(tenantId: string, inscriptionId: string): Promise<{ fournituresPdfUrl: string; url: string; count: number }> {
+    const inscription = await this.prisma.inscription.findFirst({
+      where: { id: inscriptionId, tenantId },
+      include: {
+        classe: { select: { id: true, nom: true, niveauId: true, serie: true } },
+      },
+    });
+    if (!inscription) throw new NotFoundException('Inscription introuvable');
+    if (!inscription.classe?.niveauId) {
+      throw new BadRequestException(`La classe "${inscription.classe?.nom ?? inscription.classeId}" n'a pas de niveau associé`);
+    }
+
+    const fournitures = await this.fournitureService.findForNiveau(tenantId, inscription.classe.niveauId, inscription.classe.serie);
+    const generated = await this.inscriptionDocument.generate(
+      tenantId,
+      inscription.eleveId,
+      inscription.classeId,
+      fournitures as FournitureDocItem[],
+      { inscriptionId },
+    );
+    if (!generated?.url) throw new BadRequestException('PDF fournitures indisponible');
+    return { fournituresPdfUrl: generated.url, url: generated.url, count: fournitures.length };
   }
 
   /**

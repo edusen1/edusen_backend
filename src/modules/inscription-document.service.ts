@@ -49,28 +49,34 @@ export class InscriptionDocumentService implements OnModuleDestroy {
     eleveId: string,
     classeId: string,
     fournitures: FournitureDocItem[],
-  ): Promise<{ buffer: Buffer; filename: string; s3Key: string } | null> {
+    options: { inscriptionId?: string | null } = {},
+  ): Promise<{ buffer: Buffer; filename: string; s3Key: string; url: string } | null> {
     try {
-      const source = await this.buildSource(tenantId, eleveId, classeId);
+      const source = await this.buildSource(tenantId, eleveId, classeId, options.inscriptionId ?? null);
       if (!source) return null;
       const html = this.renderHtml(source, fournitures);
       const buffer = await pdfSemaphore.run(() => this.renderPdf(html));
       const slug = source.numeroInscription.replace(/[^a-zA-Z0-9-]/g, '-').toLowerCase();
       const filename = `fiche-inscription-${slug}.pdf`;
       const s3Key = `${tenantId}/inscriptions/${slug}.pdf`;
-      await this.storage.upload(s3Key, buffer, 'application/pdf');
+      const url = await this.storage.upload(s3Key, buffer, 'application/pdf');
       this.logger.log(`[InscriptionDoc] PDF généré et stocké: ${s3Key}`);
-      return { buffer, filename, s3Key };
+      return { buffer, filename, s3Key, url };
     } catch (err: unknown) {
       this.logger.warn(`[InscriptionDoc] Erreur génération: ${(err as Error).message}`);
       return null;
     }
   }
 
-  private async buildSource(tenantId: string, eleveId: string, classeId: string): Promise<InscriptionSource | null> {
+  private async buildSource(
+    tenantId: string,
+    eleveId: string,
+    classeId: string,
+    inscriptionId: string | null,
+  ): Promise<InscriptionSource | null> {
     const [inscription, eleve, config, tenant] = await Promise.all([
       this.prisma.inscription.findFirst({
-        where: { tenantId, eleveId, classeId, statut: 'ACTIF' },
+        where: inscriptionId ? { id: inscriptionId, tenantId, eleveId, classeId } : { tenantId, eleveId, classeId, statut: 'ACTIF' },
         orderBy: { createdAt: 'desc' },
         include: {
           classe: { select: { nom: true } },

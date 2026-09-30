@@ -6,9 +6,9 @@ import { StorageService } from "@/infrastructure/storage/storage.service";
 import { BulletinDocumentService } from "@/modules/bulletin-document.service";
 import { PaymentReceiptDocumentService } from "@/modules/payment-receipt-document.service";
 import { normalizePhoneForCountry } from "@/common/utils/phone.util";
-import { formatMru } from "@/common/utils/currency.util";
 import { PushNotificationService } from "@/modules/push-notification.service";
 import { buildDebtDashboardSummary, buildDebtSummary, DebtPaymentRow } from "@/modules/debt-summary.util";
+import { buildPaymentReceiptWhatsappMessage } from "@/modules/payment-whatsapp-message.util";
 
 @Injectable()
 export class DomainService {
@@ -1316,14 +1316,13 @@ export class DomainService {
 
     const parent = this.resolvePaymentParent(hydrated);
     const phone = parent?.telephone?.trim() || null;
-    if (phone) {
-      const caption = `Votre paiement de ${formatMru(hydrated.montant)} a été validé. Veuillez trouver ci-joint votre reçu PDF.`;
-      await this.whatsapp.sendDocument(hydrated.tenantId, phone, {
-        filename: generated.filename,
-        mimeType: 'application/pdf',
-        data: generated.buffer,
-        caption,
-      }).catch((error: unknown) => {
+    if (phone && receiptPdfUrl) {
+      const message = buildPaymentReceiptWhatsappMessage({
+        amount: hydrated.montant,
+        reference: hydrated.reference,
+        receiptUrl: this.storage.resolveUrl(receiptPdfUrl) ?? receiptPdfUrl,
+      });
+      await this.whatsapp.sendMessage(hydrated.tenantId, phone, message).catch((error: unknown) => {
         this.logger.warn(`WhatsApp reçu paiement ${hydrated.reference}: ${error instanceof Error ? error.message : String(error)}`);
       });
     }
