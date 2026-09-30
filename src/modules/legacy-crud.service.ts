@@ -2850,42 +2850,31 @@ export class LegacyCrudService {
   private async sendFournituresNotification(tenantId: string, eleveId: string, classeId: string): Promise<void> {
     try {
       const [classe, eleve, inscription, parentLinks] = await Promise.all([
-        this.prisma.classe.findUnique({ where: { id: classeId }, select: { niveauId: true, nom: true } }),
-        this.prisma.user.findUnique({ where: { id: eleveId }, select: { firstName: true, lastName: true } }),
+        this.prisma.classe.findUnique({ where: { id: classeId }, select: { niveauId: true, nom: true, serie: true } }),
+        this.prisma.user.findUnique({ where: { id: eleveId }, select: { firstName: true, lastName: true, telephone: true, email: true } }),
         this.prisma.inscription.findFirst({
-          where: { tenantId, eleveId, classeId, statut: 'ACTIF' },
+          where: { tenantId, eleveId, classeId },
           orderBy: { createdAt: 'desc' },
           include: { anneeAcademique: { select: { libelle: true } } },
         }),
         this.prisma.eleveParent.findMany({ where: { eleveId } }),
       ]);
 
+      this.logger.log(`[Fournitures] classeId=${classeId} niveauId=${classe?.niveauId ?? 'NULL'} eleveId=${eleveId} parents=${parentLinks.length}`);
+
       if (!classe?.niveauId) {
-        this.logger.warn(`[Fournitures] classe ${classeId} sans niveauId — notification annulée`);
+        this.logger.warn(`[Fournitures] La classe "${classe?.nom ?? classeId}" n'a pas de niveau associé. Configurez le niveau de la classe pour activer l'envoi des fournitures.`);
         return;
       }
 
-      const fournitures = await this.fournitureService.findForNiveau(tenantId, classe.niveauId);
+      const fournitures = await this.fournitureService.findForNiveau(tenantId, classe.niveauId, classe.serie);
+      this.logger.log(`[Fournitures] niveauId=${classe.niveauId} série=${classe.serie ?? 'null'} → ${fournitures.length} fourniture(s)`);
       if (fournitures.length === 0) {
-        this.logger.warn(`[Fournitures] aucune fourniture configurée pour niveauId=${classe.niveauId} (classe ${classeId}) — notification annulée`);
+        this.logger.warn(`[Fournitures] Aucune fourniture configurée pour le niveau de la classe "${classe.nom}". Ajoutez des fournitures dans Configuration → Fournitures.`);
         return;
       }
 
-      if (parentLinks.length === 0) {
-        this.logger.warn(`[Fournitures] aucun parent lié à l'élève ${eleveId} — notification annulée`);
-        return;
-      }
-      const parentIds = parentLinks.map((l) => l.parentId);
-      const parents = await this.prisma.user.findMany({
-        where: { id: { in: parentIds } },
-        select: { firstName: true, lastName: true, email: true, telephone: true },
-      });
-      if (parents.length === 0) {
-        this.logger.warn(`[Fournitures] parents ${parentIds.join(',')} introuvables en base — notification annulée`);
-        return;
-      }
-
-      const eleveNom = eleve ? `${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim() : 'Votre enfant';
+      const eleveNom = eleve ? `${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim() : 'L\'élève';
       const anneeLibelle = inscription?.anneeAcademique?.libelle ?? '';
       const items = fournitures as FournitureDocItem[];
       const obligatoires = items.filter((f) => f.obligatoire);
@@ -2896,8 +2885,30 @@ export class LegacyCrudService {
 
       const { branding: schoolBranding } = await this.resolveSchoolBranding(tenantId);
 
-      // Mail HTML — style identique au reçu de paiement
-      const sujetMail = `Liste des fournitures — ${eleveNom} (${classe.nom})`;
+      // Construire le message WhatsApp (commun à tous les destinataires)
+      const buildWaMessage = (destinataire: string): string => {
+        const waLines: string[] = [
+          `*${classe.nom} — Liste des fournitures*`,
+          '',
+          `Bonjour${destinataire ? ' ' + destinataire : ''},`,
+          '',
+          `*${eleveNom}* vient d'être inscrit(e) en *${classe.nom}*${anneeLibelle ? ` (année ${anneeLibelle})` : ''}.`,
+          '',
+        ];
+        if (obligatoires.length > 0) {
+          waLines.push('*Fournitures obligatoires :*');
+          obligatoires.forEach((f) => waLines.push(`  • ${f.nom} — qté : ${f.quantite}`));
+        }
+        if (facultatifs.length > 0) {
+          if (obligatoires.length > 0) waLines.push('');
+          waLines.push('_Facultatifs :_');
+          facultatifs.forEach((f) => waLines.push(`  • ${f.nom} — qté : ${f.quantite}`));
+        }
+        waLines.push('', "_La fiche complète est disponible auprès de l'administration._", '_Bonne rentrée scolaire !_');
+        return waLines.join('\n');
+      };
+
+      // Construire le corps HTML email
       const lignesHtml = items
         .map(
           (f) => `
@@ -2908,9 +2919,10 @@ export class LegacyCrudService {
             </tr>`,
         )
         .join('');
-      const corpsMail = `
+      const sujetMail = `Liste des fournitures — ${eleveNom} (${classe.nom})`;
+      const buildCorpsMail = (salutation: string): string => `
         <h2 style="color:#0f172a;font-size:18px;font-weight:800;margin:0 0 16px;">Liste des fournitures scolaires</h2>
-        <p style="color:#475569;line-height:1.6;margin:0 0 8px;">Bonjour,</p>
+        <p style="color:#475569;line-height:1.6;margin:0 0 8px;">${salutation}</p>
         <p style="color:#475569;line-height:1.6;margin:0 0 20px;"><strong>${eleveNom}</strong> vient d'être inscrit(e) en classe de <strong>${classe.nom}</strong>${anneeLibelle ? ` — année ${anneeLibelle}` : ''}.</p>
         <table style="border-collapse:collapse;width:100%;margin:0 0 20px;background:#f8fafc;border:1px solid #e2e8f0;">
           <thead>
@@ -2924,49 +2936,50 @@ export class LegacyCrudService {
         </table>
         <p style="color:#94a3b8;font-size:12px;line-height:1.6;margin:0;">La fiche complète est disponible auprès de l'administration. Bonne rentrée scolaire !</p>`;
 
-      for (const parent of parents) {
-        const parentPrenom = String(parent.firstName ?? '').trim();
-        const parentNom = `${parentPrenom} ${parent.lastName ?? ''}`.trim();
-
-        if (parent.email) {
-          this.mailService.sendAsyncFromSchool(parent.email, sujetMail, corpsMail, schoolBranding);
-        }
-
-        if (parent.telephone) {
-          const waLines: string[] = [
-            `*${classe.nom} — Liste des fournitures*`,
-            '',
-            `Bonjour${parentPrenom ? ' ' + parentPrenom : ''},`,
-            '',
-            `*${eleveNom}* vient d'être inscrit(e) en *${classe.nom}*${anneeLibelle ? ` (année ${anneeLibelle})` : ''}.`,
-            '',
-          ];
-
-          if (obligatoires.length > 0) {
-            waLines.push('*Fournitures obligatoires :*');
-            obligatoires.forEach((f) => waLines.push(`  • ${f.nom} — qté : ${f.quantite}`));
-          }
-
-          if (facultatifs.length > 0) {
-            if (obligatoires.length > 0) waLines.push('');
-            waLines.push('_Facultatifs :_');
-            facultatifs.forEach((f) => waLines.push(`  • ${f.nom} — qté : ${f.quantite}`));
-          }
-
-          waLines.push('', '_La fiche complète est disponible auprès de l\'administration._', '_Bonne rentrée scolaire !_');
-
-          const whatsappMessage = waLines.join('\n');
+      const sendToContact = async (nom: string, telephone: string | null | undefined, email: string | null | undefined, label: string): Promise<void> => {
+        const salutation = `Bonjour${nom ? ' ' + nom : ''},`;
+        if (telephone) {
           try {
-            const phone = normalizePhoneForCountry(parent.telephone);
+            const phone = normalizePhoneForCountry(telephone);
             if (phone) {
-              await this.whatsappService.sendMessage(tenantId, phone, whatsappMessage);
+              await this.whatsappService.sendMessage(tenantId, phone, buildWaMessage(nom));
+              this.logger.log(`[Fournitures] WhatsApp envoyé à ${label} (${phone}) pour ${eleveNom}`);
             }
-          } catch {
-            // WhatsApp non connecté — on continue silencieusement
+          } catch (e: unknown) {
+            this.logger.warn(`[Fournitures] WhatsApp ${label} échec: ${(e as Error).message}`);
           }
         }
+        if (email) {
+          this.mailService.sendAsyncFromSchool(email, sujetMail, buildCorpsMail(salutation), schoolBranding);
+          this.logger.log(`[Fournitures] Email envoyé à ${label} (${email}) pour ${eleveNom}`);
+        }
+        if (!telephone && !email) {
+          this.logger.warn(`[Fournitures] ${label} sans téléphone ni email — notification ignorée`);
+        }
+      };
 
-        this.logger.log(`[Fournitures] Notification envoyée au parent ${parentNom} pour élève ${eleveNom}`);
+      // Notifier les parents
+      if (parentLinks.length > 0) {
+        const parentIds = parentLinks.map((l) => l.parentId);
+        const parents = await this.prisma.user.findMany({
+          where: { id: { in: parentIds } },
+          select: { id: true, firstName: true, lastName: true, email: true, telephone: true },
+        });
+        for (const parent of parents) {
+          await sendToContact(
+            `${parent.firstName ?? ''} ${parent.lastName ?? ''}`.trim(),
+            parent.telephone,
+            parent.email,
+            `parent ${parent.id}`,
+          );
+        }
+      } else {
+        this.logger.warn(`[Fournitures] Aucun parent lié à l'élève ${eleveId} — notification envoyée à l'élève directement`);
+      }
+
+      // Notifier l'élève directement (en plus des parents, ou à défaut)
+      if (eleve) {
+        await sendToContact(eleveNom, eleve.telephone, eleve.email, `élève ${eleveId}`);
       }
     } catch (err: unknown) {
       this.logger.warn(`[Fournitures] Erreur notification: ${(err as Error).message}`);
