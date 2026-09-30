@@ -87,10 +87,13 @@ export class AuthService {
     refreshExpiresIn: number;
     passwordChangeRequired: boolean;
   } | null> {
-    // Login par username ou matricule (les deux sont uniques)
+    // Login par username, matricule, email ou téléphone
+    const phoneVariants = this.phoneLoginVariants(rawLogin);
     const loginConditions: Prisma.UserWhereInput[] = [
       { username: { equals: normalizedLogin, mode: Prisma.QueryMode.insensitive } },
       { matricule: { equals: normalizedLogin, mode: Prisma.QueryMode.insensitive } },
+      { email: { equals: normalizedLogin, mode: Prisma.QueryMode.insensitive } },
+      ...(phoneVariants.length > 0 ? [{ telephone: { in: phoneVariants } }] : []),
     ];
 
     const candidates = await this.prisma.user.findMany({
