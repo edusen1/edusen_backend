@@ -13,6 +13,7 @@ import { AppCacheService } from '@/infrastructure/cache/app-cache.service';
 import { BulletinDocumentService } from '@/modules/bulletin-document.service';
 import { PushNotificationService } from '@/modules/push-notification.service';
 import { FournitureService } from '@/modules/configuration/fourniture.service';
+import { InscriptionDocumentService, FournitureDocItem } from '@/modules/inscription-document.service';
 import { buildDebtDashboardSummary, buildDebtSummary, DebtPaymentRow } from '@/modules/debt-summary.util';
 import { normalizeSerie, resolveClassCoefficients } from '@/common/utils/serie-coefficients.util';
 
@@ -122,6 +123,7 @@ export class LegacyCrudService {
     private readonly bulletinDocument: BulletinDocumentService,
     private readonly pushNotifications: PushNotificationService,
     private readonly fournitureService: FournitureService,
+    private readonly inscriptionDocument: InscriptionDocumentService,
   ) {}
 
   async resolveTenantId(tenantId: string | undefined, user?: JwtUser): Promise<string | undefined> {
@@ -2845,26 +2847,22 @@ export class LegacyCrudService {
 
   private async sendFournituresNotification(tenantId: string, eleveId: string, classeId: string): Promise<void> {
     try {
-      // Récupère le niveau de la classe
-      const classe = await this.prisma.classe.findUnique({
-        where: { id: classeId },
-        select: { niveauId: true, nom: true },
-      });
+      const [classe, eleve, inscription, parentLinks] = await Promise.all([
+        this.prisma.classe.findUnique({ where: { id: classeId }, select: { niveauId: true, nom: true } }),
+        this.prisma.user.findUnique({ where: { id: eleveId }, select: { firstName: true, lastName: true } }),
+        this.prisma.inscription.findFirst({
+          where: { tenantId, eleveId, classeId, statut: 'ACTIF' },
+          orderBy: { createdAt: 'desc' },
+          include: { anneeAcademique: { select: { libelle: true } } },
+        }),
+        this.prisma.eleveParent.findMany({ where: { eleveId } }),
+      ]);
+
       if (!classe?.niveauId) return;
 
-      // Récupère les fournitures pour ce niveau
       const fournitures = await this.fournitureService.findForNiveau(tenantId, classe.niveauId);
       if (fournitures.length === 0) return;
 
-      // Récupère l'élève
-      const eleve = await this.prisma.user.findUnique({
-        where: { id: eleveId },
-        select: { firstName: true, lastName: true },
-      });
-      const eleveNom = eleve ? `${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim() : 'Votre enfant';
-
-      // Récupère les parents avec leurs coordonnées
-      const parentLinks = await this.prisma.eleveParent.findMany({ where: { eleveId } });
       if (parentLinks.length === 0) return;
       const parentIds = parentLinks.map((l) => l.parentId);
       const parents = await this.prisma.user.findMany({
@@ -2873,22 +2871,27 @@ export class LegacyCrudService {
       });
       if (parents.length === 0) return;
 
-      // Construit le message
-      type FournitureItem = { nom: string; quantite: number; obligatoire: boolean; description?: string | null };
-      const lignes = (fournitures as FournitureItem[])
-        .map((f) => `• ${f.nom} (x${f.quantite})${f.obligatoire ? '' : ' — facultatif'}`)
-        .join('\n');
-      const whatsappMessage = `Bonjour,\n\n*${eleveNom}* vient d'être inscrit(e) en classe de *${classe.nom}*.\n\nVoici la liste des fournitures scolaires requises :\n\n${lignes}\n\n_Bonne rentrée !_\n\n— EduSen`;
+      const eleveNom = eleve ? `${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim() : 'Votre enfant';
+      const anneeLibelle = inscription?.anneeAcademique?.libelle ?? '';
+      const items = fournitures as FournitureDocItem[];
+      const obligatoires = items.filter((f) => f.obligatoire);
+      const facultatifs = items.filter((f) => !f.obligatoire);
 
+      // Générer le PDF (page 1 : fiche d'inscription, page 2 : fournitures) en arrière-plan
+      void this.inscriptionDocument.generate(tenantId, eleveId, classeId, items);
+
+      // Mail HTML
       const sujetMail = `Liste des fournitures — ${eleveNom} (${classe.nom})`;
-      const lignesHtml = (fournitures as FournitureItem[])
-        .map((f) => `<tr><td style="padding:6px 12px;">${f.nom}</td><td style="padding:6px 12px;text-align:center;">${f.quantite}</td><td style="padding:6px 12px;text-align:center;">${f.obligatoire ? 'Oui' : 'Non'}</td>${f.description ? `<td style="padding:6px 12px;color:#64748b;">${f.description}</td>` : '<td></td>'}</tr>`)
+      const lignesHtml = items
+        .map(
+          (f) =>
+            `<tr><td style="padding:6px 12px;">${f.nom}</td><td style="padding:6px 12px;text-align:center;">${f.quantite}</td><td style="padding:6px 12px;text-align:center;">${f.obligatoire ? 'Oui' : 'Non'}</td><td style="padding:6px 12px;color:#64748b;">${f.description ?? ''}</td></tr>`,
+        )
         .join('');
       const corpsMail = `
         <h2 style="color:#1E40AF;margin:0 0 16px;">Liste des fournitures scolaires</h2>
         <p>Bonjour,</p>
-        <p><strong>${eleveNom}</strong> vient d'être inscrit(e) en classe de <strong>${classe.nom}</strong>.</p>
-        <p>Voici la liste des fournitures scolaires :</p>
+        <p><strong>${eleveNom}</strong> vient d'être inscrit(e) en classe de <strong>${classe.nom}</strong>${anneeLibelle ? ` — année ${anneeLibelle}` : ''}.</p>
         <table style="border-collapse:collapse;width:100%;margin:16px 0;">
           <thead>
             <tr style="background:#f1f5f9;">
@@ -2900,26 +2903,47 @@ export class LegacyCrudService {
           </thead>
           <tbody>${lignesHtml}</tbody>
         </table>
-        <p style="color:#64748b;font-size:12px;">Bonne rentrée !</p>
-      `;
+        <p style="color:#64748b;font-size:12px;">Bonne rentrée scolaire !</p>`;
 
       for (const parent of parents) {
-        const parentNom = `${parent.firstName ?? ''} ${parent.lastName ?? ''}`.trim();
+        const parentPrenom = String(parent.firstName ?? '').trim();
+        const parentNom = `${parentPrenom} ${parent.lastName ?? ''}`.trim();
 
-        // Mail
         if (parent.email) {
           this.mailService.sendAsync(parent.email, sujetMail, corpsMail);
         }
 
-        // WhatsApp
         if (parent.telephone) {
+          const waLines: string[] = [
+            `*${classe.nom} — Liste des fournitures*`,
+            '',
+            `Bonjour${parentPrenom ? ' ' + parentPrenom : ''},`,
+            '',
+            `*${eleveNom}* vient d'être inscrit(e) en *${classe.nom}*${anneeLibelle ? ` (année ${anneeLibelle})` : ''}.`,
+            '',
+          ];
+
+          if (obligatoires.length > 0) {
+            waLines.push('*Fournitures obligatoires :*');
+            obligatoires.forEach((f) => waLines.push(`  • ${f.nom} — qté : ${f.quantite}`));
+          }
+
+          if (facultatifs.length > 0) {
+            if (obligatoires.length > 0) waLines.push('');
+            waLines.push('_Facultatifs :_');
+            facultatifs.forEach((f) => waLines.push(`  • ${f.nom} — qté : ${f.quantite}`));
+          }
+
+          waLines.push('', '_La fiche complète est disponible auprès de l\'administration._', '_Bonne rentrée scolaire !_');
+
+          const whatsappMessage = waLines.join('\n');
           try {
             const phone = normalizePhoneForCountry(parent.telephone);
             if (phone) {
               await this.whatsappService.sendMessage(tenantId, phone, whatsappMessage);
             }
           } catch {
-            // WhatsApp non connecté ou erreur — on continue silencieusement
+            // WhatsApp non connecté — on continue silencieusement
           }
         }
 
@@ -3232,6 +3256,7 @@ export class LegacyCrudService {
     if (config.model === 'paiement' && ['classeId', 'niveauId', 'eleveId', 'dateFrom', 'dateTo'].includes(key)) return true;
     if (config.model === 'inscription' && key === 'statut') return true;
     if (config.model === 'user' && key === 'statut') return true;
+    if (config.model === 'personnel' && key === 'role') return true;
 
     return false;
   }
@@ -3316,6 +3341,16 @@ export class LegacyCrudService {
         const statut = this.first(query.statut);
         if (statut === 'actif') where.actif = true;
         else if (statut === 'inactif') where.actif = false;
+        break;
+      }
+      case 'personnel': {
+        const role = this.first(query.role);
+        if (role) {
+          where.utilisateur = {
+            ...((where.utilisateur as Payload | undefined) ?? {}),
+            role,
+          };
+        }
         break;
       }
       default:

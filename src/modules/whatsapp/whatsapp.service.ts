@@ -912,8 +912,8 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       const response = await this.relayioRequest<RelayioMessagePayload>(msgPath, {
         method: 'POST',
         body: {
-          to: plainPhone,
-          text: content,
+          chatId: this.toRelayioChatId(plainPhone),
+          body: content,
         },
         idempotencyKey,
       });
@@ -973,7 +973,7 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
       const response = await this.relayioRequest<RelayioMessagePayload>(filePath, {
         method: 'POST',
         body: {
-          to: plainPhone,
+          chatId: this.toRelayioChatId(plainPhone),
           mediaId: media.id,
           filename,
           caption: caption || undefined,
@@ -1338,6 +1338,11 @@ export class WhatsappService implements OnApplicationBootstrap, OnApplicationShu
     }
     if (digits.length < 11) return null;
     return `+${digits}`;
+  }
+
+  /** Convertit un numéro +221XXXXXXXXX en chatId Relayio : 221XXXXXXXXX@c.us */
+  private toRelayioChatId(plainPhone: string): string {
+    return `${plainPhone.replace(/^\+/, '')}@c.us`;
   }
 
   private getRelayioSessionBindingKey(tenantId: string): string {

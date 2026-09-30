@@ -45,6 +45,7 @@ import { ProgrammeService } from '@/modules/programme/programme.service';
 import { BulletinDocumentService } from '@/modules/bulletin-document.service';
 import { PaymentReceiptDocumentService } from '@/modules/payment-receipt-document.service';
 import { SchoolCardDocumentService } from '@/modules/school-card-document.service';
+import { InscriptionDocumentService } from '@/modules/inscription-document.service';
 import { PresenceProfesseurService } from '@/modules/presence-professeur.service';
 import { CycleScopeService } from '@/modules/cycle-scope.service';
 import { PushNotificationService } from '@/modules/push-notification.service';
@@ -102,6 +103,7 @@ import { TemplateRendererService } from '@/modules/document/template-renderer.se
     BulletinDocumentService,
     PaymentReceiptDocumentService,
     SchoolCardDocumentService,
+    InscriptionDocumentService,
     PresenceProfesseurService,
     CycleScopeService,
     BibliothequeService,

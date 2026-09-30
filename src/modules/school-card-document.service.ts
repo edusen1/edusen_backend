@@ -221,7 +221,7 @@ body{font-family:Arial,sans-serif;background:transparent;-webkit-font-smoothing:
 .qrframe{width:104px;height:104px;border:1px solid #e2e8f0;padding:6px;background:#fff}
 .qrframe img{width:100%;height:100%;display:block}
 .foot{flex:none;padding:0 24px 10px;display:flex;align-items:center;justify-content:space-between}
-.cond{font-size:8.5px;color:#94a3b8;line-height:1.45;max-width:340px}
+.cond{font-size:8.5px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .website{font-size:9px;font-weight:700;color:#475569;flex:none}
 </style></head><body>
 <div class="card">
