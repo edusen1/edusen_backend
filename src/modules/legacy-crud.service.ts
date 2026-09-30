@@ -2598,6 +2598,9 @@ export class LegacyCrudService {
     return value;
   }
 
+  // Rôles accessibles uniquement depuis l'app mobile (edusen_mobile)
+  private static readonly MOBILE_ONLY_ROLES = new Set(['ELEVE', 'PARENT']);
+
   private async createOrReuseUserRole(config: CrudConfig, tenantId: string, data: Payload) {
     const requestedRole = String(config.role ?? data.role ?? '').trim();
     if (!requestedRole) return this.prisma.user.create({ data: data as never });
@@ -2615,6 +2618,18 @@ export class LegacyCrudService {
 
     if (!existingUser) {
       return this.prisma.user.create({ data: data as never });
+    }
+
+    // Bloquer la fusion cross-platform (mobile ↔ web)
+    const existingIsMobile = LegacyCrudService.MOBILE_ONLY_ROLES.has(existingUser.role);
+    const requestedIsMobile = LegacyCrudService.MOBILE_ONLY_ROLES.has(requestedRole);
+    if (existingIsMobile !== requestedIsMobile) {
+      const existingNom = `${existingUser.firstName ?? ''} ${existingUser.lastName ?? ''}`.trim();
+      const contact = existingUser.telephone ?? existingUser.email ?? '';
+      const platform = existingIsMobile ? 'app mobile (élève/parent)' : 'plateforme web';
+      throw new ConflictException(
+        `Ce contact (${contact}) est déjà enregistré comme ${existingUser.role} sur la ${platform}. Utilisez un numéro ou email différent pour ce compte ${requestedRole}.`,
+      );
     }
 
     // Vérifier que c'est bien la même personne (nom + prénom) avant de fusionner les rôles
