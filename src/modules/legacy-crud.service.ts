@@ -2860,18 +2860,30 @@ export class LegacyCrudService {
         this.prisma.eleveParent.findMany({ where: { eleveId } }),
       ]);
 
-      if (!classe?.niveauId) return;
+      if (!classe?.niveauId) {
+        this.logger.warn(`[Fournitures] classe ${classeId} sans niveauId — notification annulée`);
+        return;
+      }
 
       const fournitures = await this.fournitureService.findForNiveau(tenantId, classe.niveauId);
-      if (fournitures.length === 0) return;
+      if (fournitures.length === 0) {
+        this.logger.warn(`[Fournitures] aucune fourniture configurée pour niveauId=${classe.niveauId} (classe ${classeId}) — notification annulée`);
+        return;
+      }
 
-      if (parentLinks.length === 0) return;
+      if (parentLinks.length === 0) {
+        this.logger.warn(`[Fournitures] aucun parent lié à l'élève ${eleveId} — notification annulée`);
+        return;
+      }
       const parentIds = parentLinks.map((l) => l.parentId);
       const parents = await this.prisma.user.findMany({
         where: { id: { in: parentIds } },
         select: { firstName: true, lastName: true, email: true, telephone: true },
       });
-      if (parents.length === 0) return;
+      if (parents.length === 0) {
+        this.logger.warn(`[Fournitures] parents ${parentIds.join(',')} introuvables en base — notification annulée`);
+        return;
+      }
 
       const eleveNom = eleve ? `${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim() : 'Votre enfant';
       const anneeLibelle = inscription?.anneeAcademique?.libelle ?? '';
@@ -2957,38 +2969,70 @@ export class LegacyCrudService {
   }
 
   /**
-   * À la création d'une inscription : envoie les identifiants de connexion
-   * à l'élève et à ses parents (WhatsApp puis email en fallback).
-   * Utile quand les comptes existaient avant cette inscription (réinscription).
+   * À la création d'une inscription : envoie les identifiants de connexion de l'élève.
+   * - Si l'élève a un numéro de téléphone → on lui envoie directement (WhatsApp, puis email fallback).
+   * - Sinon → on envoie les identifiants de l'élève au premier parent disponible.
+   * Le compte parent reçoit ses propres identifiants lors de sa création, pas ici.
    */
   private async resendCredentialsToEleveParents(tenantId: string, eleveId: string): Promise<void> {
     try {
-      const [eleve, parentLinks] = await Promise.all([
-        this.prisma.user.findUnique({ where: { id: eleveId }, select: { id: true, firstName: true, lastName: true, telephone: true, email: true, username: true, matricule: true, role: true, mustChangePwd: true } }),
-        this.prisma.eleveParent.findMany({ where: { eleveId } }),
-      ]);
-
-      // Envoyer seulement si l'élève doit encore changer son mot de passe (compte récent)
-      if (eleve?.mustChangePwd) {
-        const tempPwd = this.generateTempPassword();
-        const hash = await (await import('bcrypt')).hash(tempPwd, 12);
-        await this.prisma.user.update({ where: { id: eleveId }, data: { passwordHash: hash } });
-        await this.sendUserCredentials(tenantId, eleve as unknown as Payload, tempPwd, 'élève');
-      }
-
-      if (parentLinks.length === 0) return;
-      const parentIds = parentLinks.map((l) => l.parentId);
-      const parents = await this.prisma.user.findMany({
-        where: { id: { in: parentIds } },
+      const eleve = await this.prisma.user.findUnique({
+        where: { id: eleveId },
         select: { id: true, firstName: true, lastName: true, telephone: true, email: true, username: true, matricule: true, role: true, mustChangePwd: true },
       });
 
-      for (const parent of parents) {
-        if (!parent.mustChangePwd) continue; // compte déjà configuré
-        const tempPwd = this.generateTempPassword();
-        const hash = await (await import('bcrypt')).hash(tempPwd, 12);
-        await this.prisma.user.update({ where: { id: parent.id }, data: { passwordHash: hash } });
-        await this.sendUserCredentials(tenantId, parent as unknown as Payload, tempPwd, 'parent');
+      if (!eleve?.mustChangePwd) return; // compte déjà activé, pas besoin de renvoyer
+
+      const tempPwd = this.generateTempPassword();
+      const hash = await bcrypt.hash(tempPwd, 12);
+      await this.prisma.user.update({ where: { id: eleveId }, data: { passwordHash: hash } });
+
+      const telephone = String(eleve.telephone ?? '').trim();
+      if (telephone) {
+        // Élève a un numéro → envoi direct à l'élève
+        await this.sendUserCredentials(tenantId, eleve as unknown as Payload, tempPwd, 'élève');
+      } else {
+        // Pas de numéro → envoyer les identifiants de l'élève au premier parent disponible
+        const parentLinks = await this.prisma.eleveParent.findMany({ where: { eleveId } });
+        if (parentLinks.length === 0) {
+          // Fallback email si aucun parent
+          await this.sendUserCredentials(tenantId, eleve as unknown as Payload, tempPwd, 'élève');
+          return;
+        }
+        const parentIds = parentLinks.map((l) => l.parentId);
+        const parents = await this.prisma.user.findMany({
+          where: { id: { in: parentIds }, telephone: { not: null } },
+          select: { id: true, firstName: true, lastName: true, telephone: true, email: true },
+          take: 1,
+        });
+        const parent = parents[0];
+        if (!parent) {
+          await this.sendUserCredentials(tenantId, eleve as unknown as Payload, tempPwd, 'élève');
+          return;
+        }
+        // Message aux identifiants de l'élève, envoyé au numéro du parent
+        const eleveNom = `${eleve.firstName ?? ''} ${eleve.lastName ?? ''}`.trim();
+        const loginId = this.buildPreferredLoginIdentifier(eleve as unknown as Payload);
+        const msg = [
+          `Edusen - Accès élève`,
+          `Élève : ${eleveNom}`,
+          `Identifiant : ${loginId}`,
+          `Mot de passe provisoire : ${tempPwd}`,
+          `L'élève devra modifier ce mot de passe lors de sa première connexion.`,
+        ].join('\n');
+        const phone = normalizePhoneForCountry(String(parent.telephone ?? ''));
+        if (phone && tenantId) {
+          try {
+            await this.whatsappService.sendMessage(tenantId, phone, msg);
+            this.logger.log(`[Credentials] Identifiants élève ${eleveId} envoyés au parent ${parent.id} par WhatsApp`);
+          } catch (e: unknown) {
+            this.logger.warn(`[Credentials] WhatsApp parent ${parent.id} échec: ${(e as Error).message}`);
+          }
+        }
+        if (parent.email) {
+          this.mailService.sendAsync(parent.email, `Identifiants de connexion — ${eleveNom}`, `<p>${msg.replace(/\n/g, '<br>')}</p>`);
+          this.logger.log(`[Credentials] Identifiants élève ${eleveId} envoyés au parent ${parent.id} par email`);
+        }
       }
     } catch (err: unknown) {
       this.logger.warn(`[Credentials] Erreur renvoi identifiants inscription eleveId=${eleveId}: ${(err as Error).message}`);
@@ -3028,9 +3072,8 @@ export class LegacyCrudService {
       try {
         await this.whatsappService.sendMessage(tenantId, telephone, message);
         this.logger.log(`Identifiants ${audience} envoyés par WhatsApp user=${String(user.id ?? '')}`);
-        return;
       } catch (error: unknown) {
-        this.logger.warn(`WhatsApp échec identifiants ${audience} user=${String(user.id ?? '')}: ${this.formatError(error)} — tentative email`);
+        this.logger.warn(`WhatsApp échec identifiants ${audience} user=${String(user.id ?? '')}: ${this.formatError(error)}`);
       }
     }
 
@@ -3038,10 +3081,11 @@ export class LegacyCrudService {
       const from = tenantId ? await this.resolveSchoolSender(tenantId) : undefined;
       this.mailService.sendCompteCree(email, firstName, lastName, tempPassword, from);
       this.logger.log(`Identifiants ${audience} envoyés par email user=${String(user.id ?? '')}`);
-      return;
     }
 
-    this.logger.warn(`Identifiants ${audience} non envoyés: aucun téléphone WhatsApp ni email user=${String(user.id ?? '')}`);
+    if (!telephone && !email) {
+      this.logger.warn(`Identifiants ${audience} non envoyés: aucun téléphone WhatsApp ni email user=${String(user.id ?? '')}`);
+    }
   }
 
   private buildPreferredLoginIdentifier(user: Payload): string {
