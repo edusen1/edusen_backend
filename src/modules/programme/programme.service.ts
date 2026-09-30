@@ -182,9 +182,8 @@ export class ProgrammeService {
   async addChapitre(tenantId: string, programmeId: string, dto: {
     titre: string; description?: string; objectifs?: string; competences?: string;
     ressources?: string; prerequis?: string; periode: string;
-    semaineDebut?: number; semaineFin?: number; dateLimite: string;
+    semaineDebut?: number; semaineFin?: number; dateLimite?: string | null;
     volumeHoraire?: number; nbSeances?: number;
-    evaluationPrevue?: boolean; typeEvaluation?: string;
   }) {
     const prog = await this.prisma.programmePedagogique.findFirst({ where: { id: programmeId, tenantId } });
     if (!prog) throw new NotFoundException('Programme introuvable');
@@ -209,11 +208,11 @@ export class ProgrammeService {
         periode: dto.periode,
         semaineDebut: dto.semaineDebut ?? null,
         semaineFin: dto.semaineFin ?? null,
-        dateLimite: new Date(dto.dateLimite),
+        dateLimite: dto.dateLimite ? new Date(dto.dateLimite) : null,
         volumeHoraire: dto.volumeHoraire ?? null,
         nbSeances: dto.nbSeances ?? null,
-        evaluationPrevue: dto.evaluationPrevue ?? false,
-        typeEvaluation: dto.typeEvaluation || null,
+        evaluationPrevue: false,
+        typeEvaluation: null,
       },
     });
   }
@@ -221,9 +220,8 @@ export class ProgrammeService {
   async updateChapitre(tenantId: string, programmeId: string, chapitreId: string, dto: Partial<{
     titre: string; description: string; objectifs: string; competences: string;
     ressources: string; prerequis: string; periode: string; numero: number;
-    semaineDebut: number; semaineFin: number; dateLimite: string;
+    semaineDebut: number; semaineFin: number; dateLimite: string | null;
     volumeHoraire: number; nbSeances: number;
-    evaluationPrevue: boolean; typeEvaluation: string;
   }>) {
     const prog = await this.prisma.programmePedagogique.findFirst({ where: { id: programmeId, tenantId } });
     if (!prog) throw new NotFoundException('Programme introuvable');
@@ -239,11 +237,9 @@ export class ProgrammeService {
     if (dto.numero !== undefined) data.numero = dto.numero;
     if (dto.semaineDebut !== undefined) data.semaineDebut = dto.semaineDebut;
     if (dto.semaineFin !== undefined) data.semaineFin = dto.semaineFin;
-    if (dto.dateLimite !== undefined) data.dateLimite = new Date(dto.dateLimite);
+    if (dto.dateLimite !== undefined) data.dateLimite = dto.dateLimite ? new Date(dto.dateLimite) : null;
     if (dto.volumeHoraire !== undefined) data.volumeHoraire = dto.volumeHoraire;
     if (dto.nbSeances !== undefined) data.nbSeances = dto.nbSeances;
-    if (dto.evaluationPrevue !== undefined) data.evaluationPrevue = dto.evaluationPrevue;
-    if (dto.typeEvaluation !== undefined) data.typeEvaluation = dto.typeEvaluation || null;
 
     return this.prisma.chapitreProgamme.update({ where: { id: chapitreId }, data });
   }
@@ -314,12 +310,12 @@ export class ProgrammeService {
       const pourcentage = totalChapitres > 0 ? Math.round((chapitresTraites / totalChapitres) * 100) : 0;
 
       const chapitresEnRetard = prog.chapitres.filter((ch: any) =>
-        ch.statut !== 'TERMINE' && ch.dateLimite < today && ch.cahiersTexte.length === 0,
+        ch.statut !== 'TERMINE' && ch.dateLimite && ch.dateLimite < today && ch.cahiersTexte.length === 0,
       ).length;
 
       const chapitresDetail = prog.chapitres.map((ch: any) => {
         const traite = ch.statut === 'TERMINE' || ch.cahiersTexte.length > 0;
-        const enRetard = !traite && ch.dateLimite < today;
+        const enRetard = !traite && !!ch.dateLimite && ch.dateLimite < today;
         const joursRetard = enRetard ? Math.floor((today.getTime() - ch.dateLimite.getTime()) / (1000 * 60 * 60 * 24)) : 0;
         return {
           id: ch.id,

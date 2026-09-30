@@ -1169,7 +1169,7 @@ model ChapitreProgamme {
   periode          String                @db.VarChar(20)
   semaineDebut     Int?
   semaineFin       Int?
-  dateLimite       DateTime              @db.Date
+  dateLimite       DateTime?             @db.Date
   volumeHoraire    Float?
   nbSeances        Int?
   evaluationPrevue Boolean               @default(false)
