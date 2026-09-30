@@ -925,7 +925,9 @@ export class LegacyCrudService {
 
     if (config.model === 'inscription') {
       await this.syncEleveClasse(created.eleveId, created.classeId);
-      void this.sendFournituresNotification(tenantId ?? String(created.tenantId ?? ''), created.eleveId, created.classeId);
+      const tid = tenantId ?? String(created.tenantId ?? '');
+      void this.sendFournituresNotification(tid, created.eleveId, created.classeId);
+      void this.resendCredentialsToEleveParents(tid, created.eleveId);
       return this.findOne(config, tenantId, created.id);
     }
 
@@ -2954,6 +2956,45 @@ export class LegacyCrudService {
     }
   }
 
+  /**
+   * À la création d'une inscription : envoie les identifiants de connexion
+   * à l'élève et à ses parents (WhatsApp puis email en fallback).
+   * Utile quand les comptes existaient avant cette inscription (réinscription).
+   */
+  private async resendCredentialsToEleveParents(tenantId: string, eleveId: string): Promise<void> {
+    try {
+      const [eleve, parentLinks] = await Promise.all([
+        this.prisma.user.findUnique({ where: { id: eleveId }, select: { id: true, firstName: true, lastName: true, telephone: true, email: true, username: true, matricule: true, role: true, mustChangePwd: true } }),
+        this.prisma.eleveParent.findMany({ where: { eleveId } }),
+      ]);
+
+      // Envoyer seulement si l'élève doit encore changer son mot de passe (compte récent)
+      if (eleve?.mustChangePwd) {
+        const tempPwd = this.generateTempPassword();
+        const hash = await (await import('bcrypt')).hash(tempPwd, 12);
+        await this.prisma.user.update({ where: { id: eleveId }, data: { passwordHash: hash } });
+        await this.sendUserCredentials(tenantId, eleve as unknown as Payload, tempPwd, 'élève');
+      }
+
+      if (parentLinks.length === 0) return;
+      const parentIds = parentLinks.map((l) => l.parentId);
+      const parents = await this.prisma.user.findMany({
+        where: { id: { in: parentIds } },
+        select: { id: true, firstName: true, lastName: true, telephone: true, email: true, username: true, matricule: true, role: true, mustChangePwd: true },
+      });
+
+      for (const parent of parents) {
+        if (!parent.mustChangePwd) continue; // compte déjà configuré
+        const tempPwd = this.generateTempPassword();
+        const hash = await (await import('bcrypt')).hash(tempPwd, 12);
+        await this.prisma.user.update({ where: { id: parent.id }, data: { passwordHash: hash } });
+        await this.sendUserCredentials(tenantId, parent as unknown as Payload, tempPwd, 'parent');
+      }
+    } catch (err: unknown) {
+      this.logger.warn(`[Credentials] Erreur renvoi identifiants inscription eleveId=${eleveId}: ${(err as Error).message}`);
+    }
+  }
+
   private async sendPersonnelCredentials(
     tenantId: string | undefined,
     utilisateurId: string,
@@ -2984,16 +3025,19 @@ export class LegacyCrudService {
     ].join('\n');
 
     if (tenantId && telephone) {
-      this.whatsappService.sendMessage(tenantId, telephone, message).catch((error: unknown) => {
-        this.logger.warn(`Identifiants ${audience} non envoyés par WhatsApp user=${String(user.id ?? '')}: ${this.formatError(error)}`);
-      });
-      return;
+      try {
+        await this.whatsappService.sendMessage(tenantId, telephone, message);
+        this.logger.log(`Identifiants ${audience} envoyés par WhatsApp user=${String(user.id ?? '')}`);
+        return;
+      } catch (error: unknown) {
+        this.logger.warn(`WhatsApp échec identifiants ${audience} user=${String(user.id ?? '')}: ${this.formatError(error)} — tentative email`);
+      }
     }
 
     if (email) {
       const from = tenantId ? await this.resolveSchoolSender(tenantId) : undefined;
       this.mailService.sendCompteCree(email, firstName, lastName, tempPassword, from);
-      this.logger.warn(`Fallback email utilisé pour les identifiants ${audience} user=${String(user.id ?? '')} faute de téléphone WhatsApp`);
+      this.logger.log(`Identifiants ${audience} envoyés par email user=${String(user.id ?? '')}`);
       return;
     }
 
