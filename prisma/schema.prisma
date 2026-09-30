@@ -474,6 +474,7 @@ model User {
 
   // ENSEIGNANT
   specialite            String?
+  typeEnseignant        String?   @db.VarChar(30)
   dateEmbauche          DateTime? @db.Date
   numeroCNPS            String?   @db.VarChar(50)
   modeCalculNotes       String?   @db.VarChar(20)  // MOYENNE ou MEILLEURE_NOTE
