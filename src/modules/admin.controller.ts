@@ -56,6 +56,20 @@ import type { FastifyReply } from 'fastify';
 
 type QueryParams = Record<string, string | string[] | undefined>;
 type Payload = Record<string, unknown>;
+type ArchiveType = 'ANNEE_SCOLAIRE' | 'BULLETIN' | 'PAIEMENT';
+
+interface ArchiveRow {
+  id: string;
+  type: ArchiveType;
+  titre: string;
+  description: string;
+  anneeScolaire: string;
+  dateReference: Date | null;
+  nbElements: number;
+  montant?: number;
+  statut?: string;
+  details: Record<string, unknown>;
+}
 
 @Roles('ADMIN', 'SURVEILLANT', 'CAISSIER', 'COMPTABLE', 'RH', 'SECURITE')
 @Controller('admin')
@@ -85,6 +99,22 @@ export class AdminController {
 
   private resolveTenantId(tenantId: string | undefined, user?: JwtUser) {
     return this.crud.resolveTenantId(tenantId, user);
+  }
+
+  private increment(map: Map<string, number>, key: string, by = 1): void {
+    map.set(key, (map.get(key) ?? 0) + by);
+  }
+
+  private mapToEntries(map: Map<string, number>) {
+    return [...map.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([label, total]) => ({ label, total }));
+  }
+
+  private latestDate(current: Date | null, candidate: Date | null | undefined): Date | null {
+    if (!candidate) return current;
+    if (!current || candidate.getTime() > current.getTime()) return candidate;
+    return current;
   }
 
   /**
@@ -615,6 +645,242 @@ export class AdminController {
     @CurrentUser() user?: JwtUser,
   ) {
     return this.bulletinService.genererDuplicata(tenantId!, id, user?.sub ?? 'admin');
+  }
+
+  @Get('archives')
+  async getArchives(
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    const tid = await this.resolveTenantId(tenantId, user);
+    if (!tid) throw new BadRequestException('Tenant introuvable');
+
+    const [annees, inscriptions, bulletins, paiements] = await Promise.all([
+      this.prisma.anneeAcademique.findMany({
+        where: { tenantId: tid },
+        select: {
+          id: true,
+          libelle: true,
+          dateDebut: true,
+          dateFin: true,
+          estCourante: true,
+          actif: true,
+          classesDupliquees: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+        orderBy: { dateDebut: 'desc' },
+      }),
+      this.prisma.inscription.findMany({
+        where: { tenantId: tid },
+        select: {
+          anneeAcademique: { select: { libelle: true } },
+          classe: { select: { nom: true, serie: true } },
+          statut: true,
+          updatedAt: true,
+        },
+      }),
+      this.prisma.bulletin.findMany({
+        where: { tenantId: tid },
+        select: {
+          anneeScolaire: true,
+          trimestre: true,
+          statut: true,
+          moyenne: true,
+          fichierPdfUrl: true,
+          updatedAt: true,
+          createdAt: true,
+          classe: { select: { nom: true, serie: true } },
+        },
+      }),
+      this.prisma.paiement.findMany({
+        where: { tenantId: tid },
+        select: {
+          anneeScolaire: true,
+          typePaiement: true,
+          modePaiement: true,
+          statut: true,
+          montant: true,
+          datePaiement: true,
+          createdAt: true,
+        },
+      }),
+    ]);
+
+    const inscriptionsByYear = new Map<string, {
+      total: number;
+      latest: Date | null;
+      statuts: Map<string, number>;
+      classes: Map<string, number>;
+      series: Map<string, number>;
+    }>();
+    for (const inscription of inscriptions) {
+      const year = inscription.anneeAcademique.libelle;
+      const bucket = inscriptionsByYear.get(year) ?? {
+        total: 0,
+        latest: null,
+        statuts: new Map<string, number>(),
+        classes: new Map<string, number>(),
+        series: new Map<string, number>(),
+      };
+      bucket.total += 1;
+      bucket.latest = this.latestDate(bucket.latest, inscription.updatedAt);
+      this.increment(bucket.statuts, inscription.statut);
+      this.increment(bucket.classes, inscription.classe.nom);
+      if (inscription.classe.serie) this.increment(bucket.series, inscription.classe.serie);
+      inscriptionsByYear.set(year, bucket);
+    }
+
+    const bulletinsByYear = new Map<string, {
+      total: number;
+      latest: Date | null;
+      statuts: Map<string, number>;
+      trimestres: Map<string, number>;
+      classes: Map<string, number>;
+      series: Map<string, number>;
+      avecPdf: number;
+      avecMoyenne: number;
+      moyenneSum: number;
+    }>();
+    for (const bulletin of bulletins) {
+      const bucket = bulletinsByYear.get(bulletin.anneeScolaire) ?? {
+        total: 0,
+        latest: null,
+        statuts: new Map<string, number>(),
+        trimestres: new Map<string, number>(),
+        classes: new Map<string, number>(),
+        series: new Map<string, number>(),
+        avecPdf: 0,
+        avecMoyenne: 0,
+        moyenneSum: 0,
+      };
+      bucket.total += 1;
+      bucket.latest = this.latestDate(bucket.latest, bulletin.updatedAt ?? bulletin.createdAt);
+      this.increment(bucket.statuts, bulletin.statut);
+      this.increment(bucket.trimestres, bulletin.trimestre);
+      this.increment(bucket.classes, bulletin.classe.nom);
+      if (bulletin.classe.serie) this.increment(bucket.series, bulletin.classe.serie);
+      if (bulletin.fichierPdfUrl) bucket.avecPdf += 1;
+      if (typeof bulletin.moyenne === 'number') {
+        bucket.avecMoyenne += 1;
+        bucket.moyenneSum += bulletin.moyenne;
+      }
+      bulletinsByYear.set(bulletin.anneeScolaire, bucket);
+    }
+
+    const paiementsByYear = new Map<string, {
+      total: number;
+      latest: Date | null;
+      statuts: Map<string, number>;
+      types: Map<string, number>;
+      modes: Map<string, number>;
+      montantTotal: number;
+      montantValide: number;
+      montantEnAttente: number;
+    }>();
+    for (const paiement of paiements) {
+      const bucket = paiementsByYear.get(paiement.anneeScolaire) ?? {
+        total: 0,
+        latest: null,
+        statuts: new Map<string, number>(),
+        types: new Map<string, number>(),
+        modes: new Map<string, number>(),
+        montantTotal: 0,
+        montantValide: 0,
+        montantEnAttente: 0,
+      };
+      bucket.total += 1;
+      bucket.latest = this.latestDate(bucket.latest, paiement.datePaiement ?? paiement.createdAt);
+      this.increment(bucket.statuts, paiement.statut);
+      this.increment(bucket.types, paiement.typePaiement);
+      this.increment(bucket.modes, paiement.modePaiement);
+      bucket.montantTotal += paiement.montant;
+      if (paiement.statut === 'VALIDE') bucket.montantValide += paiement.montant;
+      if (paiement.statut === 'EN_ATTENTE') bucket.montantEnAttente += paiement.montant;
+      paiementsByYear.set(paiement.anneeScolaire, bucket);
+    }
+
+    const rows: ArchiveRow[] = [];
+    for (const annee of annees) {
+      if (annee.estCourante) continue;
+      const inscriptionStats = inscriptionsByYear.get(annee.libelle);
+      rows.push({
+        id: `annee-${annee.id}`,
+        type: 'ANNEE_SCOLAIRE',
+        titre: `Année scolaire ${annee.libelle}`,
+        description: 'Année scolaire clôturée avec ses inscriptions et classes associées.',
+        anneeScolaire: annee.libelle,
+        dateReference: annee.dateFin ?? inscriptionStats?.latest ?? annee.updatedAt,
+        nbElements: inscriptionStats?.total ?? 0,
+        statut: annee.actif ? 'CLOTUREE' : 'INACTIVE',
+        details: {
+          dateDebut: annee.dateDebut,
+          dateFin: annee.dateFin,
+          classesDupliquees: annee.classesDupliquees,
+          inscriptions: inscriptionStats?.total ?? 0,
+          inscriptionsParStatut: this.mapToEntries(inscriptionStats?.statuts ?? new Map()),
+          classes: this.mapToEntries(inscriptionStats?.classes ?? new Map()),
+          series: this.mapToEntries(inscriptionStats?.series ?? new Map()),
+        },
+      });
+    }
+
+    for (const [year, stats] of bulletinsByYear) {
+      rows.push({
+        id: `bulletins-${year}`,
+        type: 'BULLETIN',
+        titre: `Bulletins ${year}`,
+        description: 'Bulletins enregistrés pour cette année scolaire.',
+        anneeScolaire: year,
+        dateReference: stats.latest,
+        nbElements: stats.total,
+        details: {
+          bulletins: stats.total,
+          bulletinsAvecPdf: stats.avecPdf,
+          bulletinsAvecMoyenne: stats.avecMoyenne,
+          moyenneGenerale: stats.avecMoyenne > 0 ? Math.round((stats.moyenneSum / stats.avecMoyenne) * 100) / 100 : null,
+          parStatut: this.mapToEntries(stats.statuts),
+          parTrimestre: this.mapToEntries(stats.trimestres),
+          classes: this.mapToEntries(stats.classes),
+          series: this.mapToEntries(stats.series),
+        },
+      });
+    }
+
+    for (const [year, stats] of paiementsByYear) {
+      rows.push({
+        id: `paiements-${year}`,
+        type: 'PAIEMENT',
+        titre: `Paiements ${year}`,
+        description: 'Historique financier enregistré pour cette année scolaire.',
+        anneeScolaire: year,
+        dateReference: stats.latest,
+        nbElements: stats.total,
+        montant: stats.montantTotal,
+        details: {
+          transactions: stats.total,
+          montantTotal: stats.montantTotal,
+          montantValide: stats.montantValide,
+          montantEnAttente: stats.montantEnAttente,
+          parStatut: this.mapToEntries(stats.statuts),
+          parTypePaiement: this.mapToEntries(stats.types),
+          parModePaiement: this.mapToEntries(stats.modes),
+        },
+      });
+    }
+
+    rows.sort((a, b) => b.anneeScolaire.localeCompare(a.anneeScolaire) || a.type.localeCompare(b.type));
+    return {
+      content: rows,
+      stats: {
+        totalArchives: rows.length,
+        anneesCloturees: rows.filter((row) => row.type === 'ANNEE_SCOLAIRE').length,
+        totalBulletins: rows.filter((row) => row.type === 'BULLETIN').reduce((sum, row) => sum + row.nbElements, 0),
+        totalPaiements: rows.filter((row) => row.type === 'PAIEMENT').reduce((sum, row) => sum + row.nbElements, 0),
+        montantPaiements: rows.filter((row) => row.type === 'PAIEMENT').reduce((sum, row) => sum + (row.montant ?? 0), 0),
+      },
+      generatedAt: new Date(),
+    };
   }
 
   @Post('absences-eleves/:id/approuver')
