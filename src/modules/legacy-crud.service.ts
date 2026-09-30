@@ -984,10 +984,13 @@ export class LegacyCrudService {
     }
 
     if (config.model === 'personnel') {
+      const createdPersonnelId = String((created as { id: string }).id);
       if (personnelAllCycles && personnelAffectationType === 'SURVEILLANT_GENERAL') {
         await this.replaceSurveillantForAllCycles(tenantId ?? String(data.tenantId ?? ''), String(created.utilisateurId));
+        await this.prisma.personnelNiveauAffectation.deleteMany({ where: { personnelId: createdPersonnelId, tenantId: tenantId ?? String(data.tenantId ?? '') } });
       } else if (personnelSectionId && (personnelAffectationType === 'SURVEILLANT' || personnelAffectationType === 'SECRETAIRE_SURVEILLANT')) {
         await this.replaceSurveillantForCycle(tenantId ?? String(data.tenantId ?? ''), personnelSectionId, String(created.utilisateurId));
+        await this.replacePersonnelNiveauAffectationsForCycle(tenantId ?? String(data.tenantId ?? ''), createdPersonnelId, personnelSectionId, personnelAffectationType);
       }
 
       if (tempPassword) {
@@ -1077,10 +1080,12 @@ export class LegacyCrudService {
     if (config.model === 'personnel' && personnelUpdateAllCycles && personnelUpdateAffectationType === 'SURVEILLANT_GENERAL') {
       const utilisateurId = String((updated as { utilisateurId: string }).utilisateurId);
       await this.replaceSurveillantForAllCycles(tenantId ?? '', utilisateurId);
+      await this.prisma.personnelNiveauAffectation.deleteMany({ where: { personnelId: id, tenantId: tenantId ?? '' } });
     } else if (config.model === 'personnel' && personnelUpdateSectionId && (personnelUpdateAffectationType === 'SURVEILLANT' || personnelUpdateAffectationType === 'SECRETAIRE_SURVEILLANT')) {
       const utilisateurId = String((updated as { utilisateurId: string }).utilisateurId);
       await this.prisma.surveillantCycle.deleteMany({ where: { surveillantId: utilisateurId } });
       await this.replaceSurveillantForCycle(tenantId ?? '', personnelUpdateSectionId, utilisateurId);
+      await this.replacePersonnelNiveauAffectationsForCycle(tenantId ?? '', id, personnelUpdateSectionId, personnelUpdateAffectationType);
     }
 
     return this.sanitizeEntity(config.model, updated);
@@ -4421,6 +4426,29 @@ export class LegacyCrudService {
     delete data.specialite;
     delete data.cycleId;
     delete data.matieres;
+  }
+
+  private async replacePersonnelNiveauAffectationsForCycle(
+    tenantId: string,
+    personnelId: string,
+    cycleId: string,
+    type: string,
+  ): Promise<void> {
+    const niveaux = await this.prisma.niveau.findMany({
+      where: { cycleId, tenantId, actif: true },
+      select: { id: true },
+      orderBy: { ordre: 'asc' },
+    });
+    await this.prisma.personnelNiveauAffectation.deleteMany({ where: { personnelId, tenantId } });
+    if (niveaux.length > 0) {
+      await this.prisma.personnelNiveauAffectation.deleteMany({
+        where: { tenantId, niveauId: { in: niveaux.map((n) => n.id) }, type },
+      });
+      await this.prisma.personnelNiveauAffectation.createMany({
+        data: niveaux.map((n, idx) => ({ tenantId, personnelId, niveauId: n.id, type, ordre: idx + 1 })),
+        skipDuplicates: true,
+      });
+    }
   }
 
   private async replaceSurveillantForCycle(tenantId: string, cycleId: string, newSurveillantId: string): Promise<void> {
