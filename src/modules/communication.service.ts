@@ -135,26 +135,34 @@ export class CommunicationService {
     const documents = await this.storeMultipleDocuments(tenantId, payload);
     const firstDoc = documents[0] ?? null;
 
-    const [row] = await this.prisma.$queryRaw<CommunicationRow[]>`
-      INSERT INTO "communications" (
-        "tenantId", "titre", "contenu", "canal", "statut", "cibleType", "cible",
-        "roles", "classeIds", "niveauIds", "cycleIds", "utilisateurIds",
-        "inclureParents", "inclureEleves", "nbDestinataires", "datePlanifiee",
-        "envoyeLe", "auteurId", "documentUrl", "documentNom", "documentMimeType",
-        "documentTaille", "documents", "anneeAcademiqueId", "updatedAt"
-      )
-      VALUES (
-        ${tenantId}::uuid, ${titre}, ${contenu}, ${canal}, ${statut}, ${normalized.cibleType}, ${normalized.cible},
-        ${JSON.stringify(normalized.roles)}::jsonb, ${JSON.stringify(normalized.classeIds)}::jsonb,
-        ${JSON.stringify(normalized.niveauIds)}::jsonb, ${JSON.stringify(normalized.cycleIds)}::jsonb,
-        ${JSON.stringify(normalized.utilisateurIds)}::jsonb, ${normalized.inclureParents}, ${normalized.inclureEleves},
-        ${recipients.length}, ${datePlanifiee ? new Date(datePlanifiee) : null},
-        ${envoiImmediat ? new Date() : null}, ${safeAuteurId}::uuid, ${firstDoc?.url ?? null},
-        ${firstDoc?.nom ?? null}, ${firstDoc?.mimeType ?? null}, ${firstDoc?.taille ?? null},
-        ${JSON.stringify(documents)}::jsonb, ${anneeAcademiqueId}::uuid, NOW()
-      )
-      RETURNING *
-    `;
+    const row = await this.prisma.communication.create({
+      data: {
+        tenantId,
+        titre,
+        contenu,
+        canal,
+        statut,
+        cibleType: normalized.cibleType,
+        cible: normalized.cible,
+        roles: normalized.roles,
+        classeIds: normalized.classeIds,
+        niveauIds: normalized.niveauIds,
+        cycleIds: normalized.cycleIds,
+        utilisateurIds: normalized.utilisateurIds,
+        inclureParents: normalized.inclureParents,
+        inclureEleves: normalized.inclureEleves,
+        nbDestinataires: recipients.length,
+        datePlanifiee: datePlanifiee ? new Date(datePlanifiee) : null,
+        envoyeLe: envoiImmediat ? new Date() : null,
+        auteurId: safeAuteurId,
+        documentUrl: firstDoc?.url ?? null,
+        documentNom: firstDoc?.nom ?? null,
+        documentMimeType: firstDoc?.mimeType ?? null,
+        documentTaille: firstDoc?.taille ?? null,
+        documents,
+        anneeAcademiqueId,
+      },
+    });
 
     if (envoiImmediat && recipients.length) {
       await this.createNotifications(tenantId, row.id, titre, contenu, recipients, canal, row.documentUrl);

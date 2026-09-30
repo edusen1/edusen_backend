@@ -1222,6 +1222,8 @@ model Communication {
   documentNom     String?  @db.VarChar(300)
   documentMimeType String? @db.VarChar(120)
   documentTaille  Int?
+  documents       Json?
+  anneeAcademiqueId String? @db.Uuid
   datePlanifiee   DateTime?
   envoyeLe        DateTime?
   auteurId        String?  @db.Uuid
